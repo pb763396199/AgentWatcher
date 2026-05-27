@@ -1,0 +1,806 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AgentWatcher Prototype</title>
+  <style>
+    :root {
+      --vscode-bg: #1e1e1e;
+      --vscode-panel: #252526;
+      --vscode-panel-2: #2d2d30;
+      --vscode-activity: #333333;
+      --vscode-border: #3c3c3c;
+      --vscode-text: #cccccc;
+      --vscode-muted: #8b949e;
+      --vscode-blue: #007acc;
+      --vscode-focus: #0e639c;
+      --waiting: #f14c4c;
+      --waiting-bg: rgba(241, 76, 76, 0.12);
+      --running: #3794ff;
+      --running-bg: rgba(55, 148, 255, 0.12);
+      --idle: #6a9955;
+      --idle-bg: rgba(106, 153, 85, 0.12);
+      --shadow: 0 16px 42px rgba(0, 0, 0, 0.34);
+      --font: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #181818;
+      color: var(--vscode-text);
+      font-family: var(--font);
+      font-size: 13px;
+      letter-spacing: 0;
+    }
+
+    button {
+      font: inherit;
+    }
+
+    .stage {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      min-width: 980px;
+      min-height: 680px;
+      background: var(--vscode-bg);
+    }
+
+    .mock-vscode {
+      position: absolute;
+      inset: 24px;
+      overflow: hidden;
+      border: 1px solid #2b2b2b;
+      background: var(--vscode-bg);
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.32);
+    }
+
+    .titlebar {
+      height: 32px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 12px;
+      border-bottom: 1px solid #2b2b2b;
+      background: #3c3c3c;
+      color: #dedede;
+      font-size: 12px;
+    }
+
+    .title-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #007acc;
+    }
+
+    .vscode-body {
+      display: grid;
+      grid-template-columns: 48px 238px 1fr;
+      height: calc(100% - 32px);
+    }
+
+    .activitybar {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      padding-top: 12px;
+      background: var(--vscode-activity);
+    }
+
+    .activity-icon {
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      border: 1px solid #626262;
+      opacity: 0.82;
+    }
+
+    .activity-icon.active {
+      border-color: #ffffff;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .sidebar {
+      border-right: 1px solid #2b2b2b;
+      background: var(--vscode-panel);
+    }
+
+    .side-head {
+      height: 36px;
+      padding: 11px 12px 0;
+      color: #bbbbbb;
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+
+    .tree-row {
+      height: 24px;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      color: #c9c9c9;
+    }
+
+    .tree-row.dim {
+      color: #858585;
+    }
+
+    .editor {
+      display: grid;
+      grid-template-rows: 35px 1fr 22px;
+      min-width: 0;
+    }
+
+    .tabs {
+      display: flex;
+      align-items: flex-end;
+      border-bottom: 1px solid #2b2b2b;
+      background: #252526;
+    }
+
+    .tab {
+      height: 35px;
+      min-width: 148px;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      border-right: 1px solid #2b2b2b;
+      background: #1e1e1e;
+      color: #d4d4d4;
+    }
+
+    .editor-code {
+      padding: 18px 24px;
+      color: #9cdcfe;
+      font-family: Consolas, "Courier New", monospace;
+      line-height: 1.8;
+    }
+
+    .line {
+      white-space: nowrap;
+      opacity: 0.72;
+    }
+
+    .statusbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      background: var(--vscode-blue);
+      color: #ffffff;
+      font-size: 12px;
+    }
+
+    .agent-shell {
+      position: absolute;
+      right: 96px;
+      top: 76px;
+      width: 336px;
+      height: 560px;
+      border: 1px solid var(--vscode-border);
+      border-radius: 8px;
+      background: var(--vscode-panel);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      transition: width 160ms ease, height 160ms ease, border-radius 160ms ease;
+    }
+
+    .agent-shell.compact {
+      width: 52px;
+      height: 184px;
+      border-radius: 7px;
+    }
+
+    .agent-topbar {
+      height: 36px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      padding: 0 8px 0 12px;
+      border-bottom: 1px solid var(--vscode-border);
+      background: #202020;
+      user-select: none;
+    }
+
+    .agent-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      font-weight: 600;
+      color: #e5e5e5;
+    }
+
+    .agent-mark {
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      border: 1px solid var(--vscode-blue);
+      background: linear-gradient(135deg, rgba(0, 122, 204, 0.7), rgba(55, 148, 255, 0.18));
+    }
+
+    .agent-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .icon-btn {
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: #bbbbbb;
+      cursor: pointer;
+    }
+
+    .icon-btn:hover,
+    .icon-btn:focus-visible {
+      outline: none;
+      background: var(--vscode-panel-2);
+      color: #ffffff;
+    }
+
+    .summary {
+      height: 54px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      padding: 8px;
+      border-bottom: 1px solid var(--vscode-border);
+    }
+
+    .summary-tile {
+      min-width: 0;
+      padding: 6px 7px;
+      border: 1px solid var(--vscode-border);
+      border-radius: 6px;
+      background: #202020;
+    }
+
+    .summary-tile.waiting {
+      border-color: rgba(241, 76, 76, 0.72);
+      background: var(--waiting-bg);
+    }
+
+    .summary-tile.running {
+      border-color: rgba(55, 148, 255, 0.72);
+      background: var(--running-bg);
+    }
+
+    .summary-tile.idle {
+      border-color: rgba(106, 153, 85, 0.66);
+      background: var(--idle-bg);
+    }
+
+    .summary-count {
+      font-size: 17px;
+      line-height: 17px;
+      font-weight: 700;
+    }
+
+    .summary-label {
+      margin-top: 2px;
+      overflow: hidden;
+      color: var(--vscode-muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .session-area {
+      height: calc(100% - 90px);
+      overflow: auto;
+      padding: 8px 8px 10px;
+      scrollbar-color: #555 transparent;
+      scrollbar-width: thin;
+    }
+
+    .section {
+      margin-bottom: 9px;
+    }
+
+    .section-head {
+      height: 26px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 4px;
+      color: #c7c7c7;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    .section-head span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .waiting .status-dot {
+      color: var(--waiting);
+      animation: pulse-dot 1.6s ease-in-out infinite;
+    }
+
+    .running .status-dot {
+      color: var(--running);
+    }
+
+    .idle .status-dot {
+      color: var(--idle);
+    }
+
+    .session-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .session-card {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      padding: 8px;
+      border: 1px solid var(--vscode-border);
+      border-radius: 6px;
+      background: #1f1f1f;
+      color: var(--vscode-text);
+      cursor: pointer;
+      overflow: hidden;
+    }
+
+    .session-card:hover,
+    .session-card:focus-visible {
+      outline: 1px solid var(--vscode-focus);
+      background: #262626;
+    }
+
+    .session-card.waiting {
+      border-color: rgba(241, 76, 76, 0.82);
+    }
+
+    .session-card.running {
+      border-color: rgba(55, 148, 255, 0.82);
+    }
+
+    .session-card.idle {
+      border-color: rgba(106, 153, 85, 0.62);
+      opacity: 0.78;
+    }
+
+    .card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 7px;
+    }
+
+    .provider {
+      width: 22px;
+      height: 22px;
+      display: grid;
+      place-items: center;
+      border-radius: 5px;
+      border: 1px solid var(--vscode-border);
+      background: #2b2b2b;
+      color: #ffffff;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .provider.copilot {
+      border-color: #4ec9b0;
+      color: #4ec9b0;
+    }
+
+    .provider.claude {
+      border-color: #ce9178;
+      color: #ce9178;
+    }
+
+    .elapsed {
+      color: var(--vscode-muted);
+      font-size: 10px;
+      line-height: 1;
+    }
+
+    .workspace {
+      overflow: hidden;
+      color: #ffffff;
+      font-size: 12px;
+      font-weight: 650;
+      line-height: 15px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .task {
+      display: -webkit-box;
+      height: 30px;
+      margin-top: 3px;
+      overflow: hidden;
+      color: #bdbdbd;
+      font-size: 11px;
+      line-height: 15px;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
+
+    .card-bottom {
+      position: absolute;
+      left: 8px;
+      right: 8px;
+      bottom: 7px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      color: var(--vscode-muted);
+      font-size: 10px;
+    }
+
+    .mini-bar {
+      position: relative;
+      width: 32px;
+      height: 3px;
+      overflow: hidden;
+      border-radius: 99px;
+      background: #3a3a3a;
+    }
+
+    .mini-bar::after {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 62%;
+      border-radius: inherit;
+      background: var(--running);
+      animation: run-bar 1.4s ease-in-out infinite alternate;
+    }
+
+    .waiting .mini-bar::after {
+      width: 100%;
+      background: var(--waiting);
+      animation: pulse-bar 1.6s ease-in-out infinite;
+    }
+
+    .idle .mini-bar::after {
+      width: 28%;
+      background: var(--idle);
+      animation: none;
+    }
+
+    .collapsed-view {
+      display: none;
+      height: 100%;
+      padding: 6px 0;
+      background: #202020;
+    }
+
+    .agent-shell.compact .expanded-view {
+      display: none;
+    }
+
+    .agent-shell.compact .collapsed-view {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .rail-mark {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--vscode-blue);
+      border-radius: 6px;
+      color: #ffffff;
+      font-weight: 700;
+    }
+
+    .rail-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .rail-pill {
+      width: 34px;
+      height: 28px;
+      display: grid;
+      grid-template-columns: 8px 1fr;
+      align-items: center;
+      gap: 5px;
+      padding: 0 5px;
+      border: 1px solid var(--vscode-border);
+      border-radius: 5px;
+      background: #252526;
+      color: #ffffff;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .rail-pill::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .rail-pill.waiting {
+      color: var(--waiting);
+    }
+
+    .rail-pill.running {
+      color: var(--running);
+    }
+
+    .rail-pill.idle {
+      color: var(--idle);
+    }
+
+    .rail-pill span {
+      color: #dcdcdc;
+    }
+
+    .rail-expand {
+      width: 34px;
+      height: 26px;
+      border: 0;
+      border-radius: 5px;
+      background: var(--vscode-panel-2);
+      color: #cfcfcf;
+      cursor: pointer;
+    }
+
+    .rail-expand:hover {
+      background: #3a3d41;
+      color: #ffffff;
+    }
+
+    .toast {
+      position: absolute;
+      right: 96px;
+      bottom: 42px;
+      width: 300px;
+      min-height: 56px;
+      display: none;
+      align-items: center;
+      padding: 10px 12px;
+      border: 1px solid var(--vscode-border);
+      border-radius: 7px;
+      background: #252526;
+      color: #dcdcdc;
+      box-shadow: var(--shadow);
+      font-size: 12px;
+    }
+
+    .toast.show {
+      display: flex;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 0.45; }
+      50% { opacity: 1; }
+    }
+
+    @keyframes pulse-bar {
+      0%, 100% { opacity: 0.32; }
+      50% { opacity: 0.95; }
+    }
+
+    @keyframes run-bar {
+      from { transform: translateX(-18%); }
+      to { transform: translateX(18%); }
+    }
+
+    @media (max-width: 1020px) {
+      .agent-shell {
+        right: 40px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="stage" aria-label="AgentWatcher prototype">
+    <section class="mock-vscode" aria-label="VS Code background mock">
+      <div class="titlebar"><span class="title-dot"></span><span>AgentWatcher - Visual Studio Code</span></div>
+      <div class="vscode-body">
+        <aside class="activitybar" aria-hidden="true">
+          <div class="activity-icon active"></div>
+          <div class="activity-icon"></div>
+          <div class="activity-icon"></div>
+          <div class="activity-icon"></div>
+        </aside>
+        <aside class="sidebar">
+          <div class="side-head">Explorer</div>
+          <div class="tree-row">AgentWatcher</div>
+          <div class="tree-row dim">src</div>
+          <div class="tree-row dim">collectors</div>
+          <div class="tree-row dim">ui</div>
+          <div class="tree-row dim">README.md</div>
+        </aside>
+        <section class="editor">
+          <div class="tabs"><div class="tab">SessionState.cs</div></div>
+          <div class="editor-code" aria-hidden="true">
+            <div class="line">public enum AgentSessionState</div>
+            <div class="line">{</div>
+            <div class="line">    WaitingUser,</div>
+            <div class="line">    Running,</div>
+            <div class="line">    Idle,</div>
+            <div class="line">    Unknown</div>
+            <div class="line">}</div>
+          </div>
+          <div class="statusbar"><span>main</span><span>AgentWatcher ready</span></div>
+        </section>
+      </div>
+    </section>
+
+    <section class="agent-shell" id="agentShell" aria-label="AgentWatcher floating window">
+      <div class="expanded-view">
+        <header class="agent-topbar">
+          <div class="agent-title">
+            <span class="agent-mark" aria-hidden="true"></span>
+            <span class="agent-name">AgentWatcher</span>
+          </div>
+          <div class="top-actions">
+            <button class="icon-btn" type="button" aria-label="Toggle compact mode" id="compactButton">-</button>
+            <button class="icon-btn" type="button" aria-label="Open settings">...</button>
+          </div>
+        </header>
+
+        <div class="summary" aria-label="Session summary">
+          <div class="summary-tile waiting"><div class="summary-count">3</div><div class="summary-label">Waiting</div></div>
+          <div class="summary-tile running"><div class="summary-count">2</div><div class="summary-label">Running</div></div>
+          <div class="summary-tile idle"><div class="summary-count">7</div><div class="summary-label">Idle</div></div>
+        </div>
+
+        <div class="session-area">
+          <section class="section waiting">
+            <div class="section-head"><span><i class="status-dot"></i>Waiting 3</span><span>v</span></div>
+            <div class="session-grid">
+              <button class="session-card waiting" type="button" data-target="AesWorld">
+                <div class="card-top"><span class="provider claude">C</span><span class="elapsed">02:14</span></div>
+                <div class="workspace">AesWorld</div>
+                <div class="task">Review required</div>
+                <div class="card-bottom"><span>User input</span><span class="mini-bar"></span></div>
+              </button>
+              <button class="session-card waiting" type="button" data-target="AgentWatcher">
+                <div class="card-top"><span class="provider copilot">GH</span><span class="elapsed">00:42</span></div>
+                <div class="workspace">AgentWatcher</div>
+                <div class="task">Pick UI path</div>
+                <div class="card-bottom"><span>Decision</span><span class="mini-bar"></span></div>
+              </button>
+              <button class="session-card waiting" type="button" data-target="UE Master">
+                <div class="card-top"><span class="provider claude">C</span><span class="elapsed">05:06</span></div>
+                <div class="workspace">UE Master</div>
+                <div class="task">Permission hold</div>
+                <div class="card-bottom"><span>Confirm</span><span class="mini-bar"></span></div>
+              </button>
+            </div>
+          </section>
+
+          <section class="section running">
+            <div class="section-head"><span><i class="status-dot"></i>Running 2</span><span>v</span></div>
+            <div class="session-grid">
+              <button class="session-card running" type="button" data-target="Terrain">
+                <div class="card-top"><span class="provider claude">C</span><span class="elapsed">live</span></div>
+                <div class="workspace">Terrain</div>
+                <div class="task">Build fix loop</div>
+                <div class="card-bottom"><span>Writing</span><span class="mini-bar"></span></div>
+              </button>
+              <button class="session-card running" type="button" data-target="Tools">
+                <div class="card-top"><span class="provider copilot">GH</span><span class="elapsed">01:18</span></div>
+                <div class="workspace">Tools</div>
+                <div class="task">Index scanner</div>
+                <div class="card-bottom"><span>Scanning</span><span class="mini-bar"></span></div>
+              </button>
+            </div>
+          </section>
+
+          <section class="section idle">
+            <div class="section-head"><span><i class="status-dot"></i>Idle 7</span><span>&gt;</span></div>
+            <div class="session-grid">
+              <button class="session-card idle" type="button" data-target="RuntimeShader">
+                <div class="card-top"><span class="provider claude">C</span><span class="elapsed">18m</span></div>
+                <div class="workspace">RuntimeShader</div>
+                <div class="task">No activity</div>
+                <div class="card-bottom"><span>Idle</span><span class="mini-bar"></span></div>
+              </button>
+              <button class="session-card idle" type="button" data-target="Prefab">
+                <div class="card-top"><span class="provider copilot">GH</span><span class="elapsed">24m</span></div>
+                <div class="workspace">Prefab</div>
+                <div class="task">Done</div>
+                <div class="card-bottom"><span>Archive</span><span class="mini-bar"></span></div>
+              </button>
+              <button class="session-card idle" type="button" data-target="Marker">
+                <div class="card-top"><span class="provider claude">C</span><span class="elapsed">31m</span></div>
+                <div class="workspace">Marker</div>
+                <div class="task">Paused</div>
+                <div class="card-bottom"><span>Idle</span><span class="mini-bar"></span></div>
+              </button>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div class="collapsed-view" aria-label="AgentWatcher compact rail">
+        <div class="rail-mark">AW</div>
+        <div class="rail-stack">
+          <button class="rail-pill waiting" type="button" aria-label="Waiting sessions"><span>3</span></button>
+          <button class="rail-pill running" type="button" aria-label="Running sessions"><span>2</span></button>
+          <button class="rail-pill idle" type="button" aria-label="Idle sessions"><span>7</span></button>
+        </div>
+        <button class="rail-expand" id="expandButton" type="button" aria-label="Expand AgentWatcher">&gt;</button>
+      </div>
+    </section>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </main>
+
+  <script>
+    const shell = document.getElementById('agentShell');
+    const compactButton = document.getElementById('compactButton');
+    const expandButton = document.getElementById('expandButton');
+    const toast = document.getElementById('toast');
+    let toastTimer = 0;
+
+    function setCompact(value) {
+      shell.classList.toggle('compact', value);
+    }
+
+    function showToast(message) {
+      window.clearTimeout(toastTimer);
+      toast.textContent = message;
+      toast.classList.add('show');
+      toastTimer = window.setTimeout(() => toast.classList.remove('show'), 2200);
+    }
+
+    compactButton.addEventListener('click', () => setCompact(true));
+    expandButton.addEventListener('click', () => setCompact(false));
+
+    document.querySelectorAll('.session-card').forEach(card => {
+      card.addEventListener('click', () => {
+        showToast('Opening VS Code workspace: ' + card.dataset.target);
+      });
+    });
+
+    document.querySelectorAll('.rail-pill').forEach(item => {
+      item.addEventListener('click', () => setCompact(false));
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,1508 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AgentWatcher Windows Prototype</title>
+  <style>
+    :root {
+      --desktop: #171717;
+      --vscode: #1e1e1e;
+      --vscode-side: #252526;
+      --surface: #202020;
+      --surface-2: #252526;
+      --surface-3: #2d2d30;
+      --border: #3c3c3c;
+      --text: #d4d4d4;
+      --muted: #9a9a9a;
+      --soft: #6f6f6f;
+      --accent: #0078d4;
+      --focus: #0e639c;
+      --waiting: #f14c4c;
+      --running: #3794ff;
+      --idle: #6a9955;
+      --card: #1f1f1f;
+      --shadow: 0 18px 48px rgba(0, 0, 0, 0.46);
+      --font: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      --columns: 2;
+      --tile-padding: 8px;
+      --tile-title: 12px;
+      --tile-meta: 11px;
+      --tile-provider: 22px;
+    }
+
+    body[data-theme="light"] {
+      --desktop: #e8e8e8;
+      --vscode: #ffffff;
+      --vscode-side: #f3f3f3;
+      --surface: #f8f8f8;
+      --surface-2: #ffffff;
+      --surface-3: #eeeeee;
+      --border: #d0d0d0;
+      --text: #1f1f1f;
+      --muted: #616161;
+      --soft: #767676;
+      --card: #ffffff;
+      --shadow: 0 18px 48px rgba(0, 0, 0, 0.18);
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: var(--desktop);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 13px;
+      letter-spacing: 0;
+    }
+
+    body[data-theme="light"] .desktop {
+      background:
+        linear-gradient(90deg, rgba(0, 0, 0, 0.045) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(0, 0, 0, 0.032) 1px, transparent 1px),
+        #ececec;
+      background-size: 36px 36px, 36px 36px, auto;
+    }
+
+    body[data-theme="light"] .vscode-window,
+    body[data-theme="light"] .editor,
+    body[data-theme="light"] .code {
+      background: #ffffff;
+      color: #0451a5;
+    }
+
+    body[data-theme="light"] .vscode-titlebar {
+      background: #dddddd;
+      color: #1f1f1f;
+    }
+
+    body[data-theme="light"] .activity {
+      background: #f3f3f3;
+    }
+
+    body[data-theme="light"] .sidebar,
+    body[data-theme="light"] .watcher-window,
+    body[data-theme="light"] .compact-rail,
+    body[data-theme="light"] .toast {
+      background: #f8f8f8;
+      color: #1f1f1f;
+    }
+
+    body[data-theme="light"] .native-titlebar,
+    body[data-theme="light"] .app-header,
+    body[data-theme="light"] .segmented,
+    body[data-theme="light"] .control-strip,
+    body[data-theme="light"] .queue-shell,
+    body[data-theme="light"] .overflow-footer,
+    body[data-theme="light"] .status-row {
+      background: #f8f8f8;
+    }
+
+    body[data-theme="light"] .segment,
+    body[data-theme="light"] .workspace-select,
+    body[data-theme="light"] .preset-btn,
+    body[data-theme="light"] .title-tool,
+    body[data-theme="light"] .session-card,
+    body[data-theme="light"] .rail-count,
+    body[data-theme="light"] .rail-logo {
+      background: #ffffff;
+      color: #1f1f1f;
+    }
+
+    body[data-theme="light"] .lane-header {
+      background: rgba(248, 248, 248, 0.96);
+    }
+
+    body[data-theme="light"] .workspace,
+    body[data-theme="light"] .app-name strong,
+    body[data-theme="light"] .window-title {
+      color: #1f1f1f;
+    }
+
+    body[data-theme="light"] .session-title,
+    body[data-theme="light"] .card-foot,
+    body[data-theme="light"] .app-name span,
+    body[data-theme="light"] .control-label,
+    body[data-theme="light"] .queue-meta,
+    body[data-theme="light"] .overflow-footer,
+    body[data-theme="light"] .status-row,
+    body[data-theme="light"] .size-value {
+      color: #616161;
+    }
+
+    body[data-theme="light"] .urgent-chip {
+      background: #fde7e9;
+      color: #a4262c;
+      border-color: #d13438;
+    }
+
+    body[data-theme="light"] .lane.waiting .lane-label,
+    body[data-theme="light"] .lane.waiting .lane-note {
+      color: #a4262c;
+    }
+
+    body[data-theme="light"] .lane.running .lane-label,
+    body[data-theme="light"] .lane.running .lane-note {
+      color: #005a9e;
+    }
+
+    body[data-theme="light"] .lane.idle .lane-label,
+    body[data-theme="light"] .lane.idle .lane-note {
+      color: #3c6c1f;
+    }
+
+    body[data-theme="light"] .queue-meta strong,
+    body[data-theme="light"] .status-row strong {
+      color: #1f1f1f;
+    }
+
+    button { font: inherit; }
+
+    .desktop {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      min-width: 0;
+      min-height: 680px;
+      background:
+        linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+        #171717;
+      background-size: 36px 36px, 36px 36px, auto;
+    }
+
+    .vscode-window {
+      position: absolute;
+      left: 28px;
+      top: 38px;
+      right: 28px;
+      bottom: 56px;
+      display: grid;
+      grid-template-rows: 34px 1fr 22px;
+      overflow: hidden;
+      border: 1px solid #2b2b2b;
+      background: var(--vscode);
+      box-shadow: 0 14px 44px rgba(0, 0, 0, 0.36);
+    }
+
+    .vscode-titlebar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 12px;
+      background: #3c3c3c;
+      color: #e5e5e5;
+      font-size: 12px;
+    }
+
+    .vscode-title-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .vscode-main {
+      display: grid;
+      grid-template-columns: 48px 240px 1fr;
+      min-height: 0;
+    }
+
+    .activity {
+      display: flex;
+      flex-direction: column;
+      gap: 13px;
+      align-items: center;
+      padding-top: 13px;
+      background: #333333;
+    }
+
+    .activity span {
+      width: 24px;
+      height: 24px;
+      border: 1px solid #646464;
+      border-radius: 5px;
+    }
+
+    .activity span:first-child { border-color: #ffffff; }
+
+    .sidebar {
+      padding-top: 14px;
+      border-right: 1px solid #303030;
+      background: var(--vscode-side);
+    }
+
+    .sidebar-title {
+      padding: 0 12px 20px;
+      color: #bbbbbb;
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+
+    .tree-row {
+      height: 25px;
+      padding: 0 12px;
+      color: #c9c9c9;
+    }
+
+    .tree-row.dim { color: #858585; }
+
+    .editor {
+      display: grid;
+      grid-template-rows: 36px 1fr;
+      min-width: 0;
+    }
+
+    .tab {
+      width: 210px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      padding-left: 14px;
+      border-right: 1px solid #2c2c2c;
+      border-bottom: 1px solid #2c2c2c;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      font-size: 13px;
+    }
+
+    .code {
+      padding: 26px 28px;
+      color: #9cdcfe;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 15px;
+      line-height: 1.9;
+      opacity: 0.72;
+    }
+
+    .vscode-status {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      background: #007acc;
+      color: #ffffff;
+      font-size: 12px;
+    }
+
+    .taskbar {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 42px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(30, 30, 30, 0.94);
+    }
+
+    .taskbar-icon {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border-radius: 6px;
+      background: #2d2d30;
+      color: #dcdcdc;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .watcher-window {
+      position: absolute;
+      right: 36px;
+      top: 72px;
+      width: 320px;
+      height: 548px;
+      min-width: 286px;
+      min-height: 420px;
+      max-width: min(720px, calc(100vw - 96px));
+      max-height: calc(100vh - 132px);
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .native-titlebar {
+      height: 32px;
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      background: #1b1b1b;
+      user-select: none;
+    }
+
+    .drag-region {
+      height: 32px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-left: 11px;
+      min-width: 0;
+    }
+
+    .app-icon {
+      width: 15px;
+      height: 15px;
+      border: 1px solid #1784d8;
+      border-radius: 4px;
+      background: linear-gradient(135deg, #0e639c, #252526 70%);
+    }
+
+    .window-title {
+      overflow: hidden;
+      color: #e7e7e7;
+      font-size: 12px;
+      font-weight: 600;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .title-tools {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding-right: 6px;
+    }
+
+    .title-tool {
+      height: 22px;
+      min-width: 36px;
+      padding: 0 8px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: #252526;
+      color: #dcdcdc;
+      cursor: pointer;
+      font-size: 11px;
+      line-height: 20px;
+    }
+
+    .title-tool:hover,
+    .title-tool:focus-visible {
+      outline: none;
+      border-color: var(--focus);
+      background: rgba(14, 99, 156, 0.25);
+      color: #ffffff;
+    }
+
+    .window-controls {
+      display: grid;
+      grid-template-columns: repeat(3, 44px);
+      height: 32px;
+    }
+
+    .win-btn {
+      border: 0;
+      background: transparent;
+      color: #bbbbbb;
+      cursor: default;
+    }
+
+    .win-btn:hover { background: #303030; color: #ffffff; }
+    .win-btn.close:hover { background: #c42b1c; color: #ffffff; }
+
+    .watcher-body {
+      height: calc(100% - 32px);
+      display: grid;
+      grid-template-rows: 76px 40px 58px 1fr 30px;
+      min-height: 0;
+    }
+
+    .app-header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 12px 10px 10px;
+      border-bottom: 1px solid var(--border);
+      background: #202020;
+    }
+
+    .app-name {
+      min-width: 0;
+    }
+
+    .app-name strong {
+      display: block;
+      overflow: hidden;
+      color: #ffffff;
+      font-size: 15px;
+      line-height: 20px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .app-name span {
+      display: block;
+      overflow: hidden;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 11px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .urgent-chip {
+      width: 104px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 9px;
+      border: 1px solid rgba(241, 76, 76, 0.72);
+      border-radius: 6px;
+      background: rgba(241, 76, 76, 0.13);
+      color: #ffd0d0;
+      font-size: 12px;
+      font-weight: 650;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .urgent-chip::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--waiting);
+      animation: waitingPulse 1.5s ease-in-out infinite;
+    }
+
+    .segmented {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 5px;
+      padding: 7px 10px 6px;
+      border-bottom: 1px solid var(--border);
+      background: #1f1f1f;
+    }
+
+    .segment {
+      height: 26px;
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: #252526;
+      color: #cfcfcf;
+      cursor: pointer;
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .segment.active {
+      border-color: var(--focus);
+      background: rgba(14, 99, 156, 0.25);
+      color: #ffffff;
+    }
+
+    .control-strip {
+      display: grid;
+      grid-template-rows: 27px 30px;
+      gap: 0;
+      padding: 4px 10px 6px;
+      border-bottom: 1px solid var(--border);
+      background: #202020;
+    }
+
+    .workspace-row,
+    .size-row {
+      display: grid;
+      grid-template-columns: 68px 1fr;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .control-label {
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 11px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .workspace-select {
+      width: 100%;
+      height: 23px;
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: #252526;
+      color: #dcdcdc;
+      font: inherit;
+      font-size: 11px;
+    }
+
+    .size-tools {
+      display: grid;
+      grid-template-columns: 76px 1fr 40px;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+    }
+
+    .preset-btn {
+      height: 23px;
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: #252526;
+      color: #dcdcdc;
+      cursor: pointer;
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .preset-btn:hover,
+    .preset-btn:focus-visible {
+      outline: none;
+      border-color: var(--focus);
+      background: rgba(14, 99, 156, 0.25);
+      color: #ffffff;
+    }
+
+    .size-range {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+
+    .size-value {
+      color: var(--muted);
+      font-size: 11px;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .queue-shell {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: 26px 1fr 28px;
+      background: #1f1f1f;
+    }
+
+    .queue-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .queue-meta strong {
+      color: #d7d7d7;
+      font-weight: 650;
+    }
+
+    .session-scroll {
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 0 10px 10px;
+      scrollbar-width: thin;
+      scrollbar-color: #5f5f5f #252526;
+    }
+
+    .session-scroll::-webkit-scrollbar { width: 10px; }
+    .session-scroll::-webkit-scrollbar-track { background: #252526; }
+    .session-scroll::-webkit-scrollbar-thumb {
+      border: 2px solid #252526;
+      border-radius: 999px;
+      background: #5f5f5f;
+    }
+
+    .lane {
+      margin-bottom: 10px;
+    }
+
+    .lane-header {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 0 -10px 8px;
+      padding: 0 12px;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      background: rgba(31, 31, 31, 0.96);
+      backdrop-filter: blur(10px);
+      color: #dcdcdc;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .lane-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+    }
+
+    .lane-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .lane.waiting .lane-label { color: #ffb7b7; }
+    .lane.running .lane-label { color: #b9dcff; }
+    .lane.idle .lane-label { color: #c5e8bb; }
+    .lane.waiting .lane-dot { color: var(--waiting); }
+    .lane.running .lane-dot { color: var(--running); }
+    .lane.idle .lane-dot { color: var(--idle); }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(var(--columns), minmax(0, 1fr));
+      gap: 7px;
+    }
+
+    .session-card {
+      position: relative;
+      width: 100%;
+      height: auto;
+      aspect-ratio: 1 / 1;
+      min-width: 0;
+      padding: var(--tile-padding);
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--card);
+      color: var(--text);
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .session-card[hidden],
+    .lane.is-hidden {
+      display: none;
+    }
+
+    .session-card:hover,
+    .session-card:focus-visible {
+      outline: 1px solid var(--focus);
+      background: #262626;
+    }
+
+    .session-card.waiting { border-color: rgba(241, 76, 76, 0.82); }
+    .session-card.running { border-color: rgba(55, 148, 255, 0.82); }
+    .session-card.idle { border-color: rgba(106, 153, 85, 0.62); opacity: 0.82; }
+
+    .watcher-window.compact-cards .session-card {
+      padding: 7px;
+    }
+
+    .watcher-window.compact-cards .card-head {
+      margin-bottom: 5px;
+    }
+
+    .watcher-window.compact-cards .workspace {
+      margin-top: 5px;
+      font-size: 11px;
+      line-height: 14px;
+    }
+
+    .watcher-window.compact-cards .session-title {
+      display: block;
+      height: 14px;
+      overflow: hidden;
+      font-size: 10px;
+      line-height: 14px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      -webkit-line-clamp: initial;
+    }
+
+    .watcher-window.compact-cards .card-foot {
+      bottom: 7px;
+      justify-content: flex-end;
+    }
+
+    .watcher-window.compact-cards .card-foot span:first-child {
+      display: none;
+    }
+
+    .watcher-window.compact-cards .meter {
+      width: 42px;
+    }
+
+    .watcher-window.micro-cards .session-title {
+      display: none;
+    }
+
+    .watcher-window.micro-cards .provider {
+      width: 18px;
+      height: 18px;
+      font-size: 9px;
+    }
+
+    .card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+  min-width: 0;
+    }
+
+    .provider {
+      width: var(--tile-provider);
+      height: var(--tile-provider);
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: #2b2b2b;
+      font-size: max(9px, calc(var(--tile-provider) * 0.45));
+      font-weight: 700;
+    }
+
+    .provider.gh { color: #4ec9b0; border-color: #4ec9b0; }
+    .provider.cl { color: #ce9178; border-color: #ce9178; }
+    .time {
+      overflow: hidden;
+      color: var(--muted);
+      font-size: max(9px, calc(var(--tile-meta) - 1px));
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .workspace {
+      margin-top: 8px;
+      overflow: hidden;
+      color: #ffffff;
+      font-size: var(--tile-title);
+      font-weight: 700;
+      line-height: calc(var(--tile-title) + 3px);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .session-title {
+      display: -webkit-box;
+      height: calc((var(--tile-meta) + 4px) * 2);
+      margin-top: 3px;
+      overflow: hidden;
+      color: #c0c0c0;
+      font-size: var(--tile-meta);
+      line-height: calc(var(--tile-meta) + 4px);
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
+
+    .card-foot {
+      position: absolute;
+      left: var(--tile-padding);
+      right: var(--tile-padding);
+      bottom: var(--tile-padding);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      color: var(--muted);
+      font-size: max(9px, calc(var(--tile-meta) - 1px));
+      min-width: 0;
+    }
+
+    .card-foot span:first-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .meter {
+      position: relative;
+      width: 34px;
+      height: 3px;
+      flex: 0 0 auto;
+      overflow: hidden;
+      border-radius: 99px;
+      background: #3a3a3a;
+    }
+
+    .meter::after {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 56%;
+      border-radius: inherit;
+      background: currentColor;
+    }
+
+    .session-card.waiting .meter { color: var(--waiting); }
+    .session-card.running .meter { color: var(--running); }
+    .session-card.idle .meter { color: var(--idle); }
+    .session-card.running .meter::after { animation: runningMeter 1.2s ease-in-out infinite alternate; }
+    .session-card.waiting .meter::after { width: 100%; animation: waitingMeter 1.4s ease-in-out infinite; }
+
+    .overflow-footer {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 10px;
+      padding: 0 12px;
+      border-top: 1px solid var(--border);
+      background: #202020;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .overflow-map {
+      width: 90px;
+      height: 8px;
+      display: grid;
+      grid-template-columns: 8fr 12fr 31fr;
+      overflow: hidden;
+      border: 1px solid #444444;
+      border-radius: 99px;
+      background: #2b2b2b;
+    }
+
+    .overflow-map span:nth-child(1) { background: var(--waiting); }
+    .overflow-map span:nth-child(2) { background: var(--running); }
+    .overflow-map span:nth-child(3) { background: var(--idle); }
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      border-top: 1px solid var(--border);
+      background: #1b1b1b;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .status-row strong { color: #dcdcdc; font-weight: 600; }
+
+    .compact-rail {
+      position: absolute;
+      right: auto;
+      top: 72px;
+      width: 52px;
+      height: 184px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #202020;
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.34);
+      transition: opacity 120ms ease;
+    }
+
+    .rail-logo {
+      width: 30px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      color: #ffffff;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .rail-counts {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    .rail-count {
+      width: 34px;
+      height: 27px;
+      display: grid;
+      grid-template-columns: 7px 1fr;
+      align-items: center;
+      gap: 5px;
+      padding: 0 5px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: #252526;
+      color: #dcdcdc;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .rail-count::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .rail-count.waiting { color: var(--waiting); }
+    .rail-count.running { color: var(--running); }
+    .rail-count.idle { color: var(--idle); }
+    .rail-count span { color: #dcdcdc; }
+
+    .toast {
+      position: absolute;
+      right: 36px;
+      top: 634px;
+      width: 320px;
+      min-height: 42px;
+      display: none;
+      align-items: center;
+      padding: 9px 12px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: #252526;
+      color: #dcdcdc;
+      box-shadow: var(--shadow);
+      font-size: 12px;
+    }
+
+    .toast.show { display: flex; }
+
+    .resize-handle {
+      position: absolute;
+      z-index: 5;
+      width: 16px;
+      height: 16px;
+      border: 0;
+      background: transparent;
+      opacity: 0.82;
+    }
+
+    .resize-handle::after {
+      content: "";
+      position: absolute;
+      inset: 3px;
+      border-color: #777777;
+      border-style: solid;
+      opacity: 0.9;
+    }
+
+    .resize-handle.nw {
+      left: 0;
+      top: 0;
+      cursor: nwse-resize;
+    }
+
+    .resize-handle.ne {
+      right: 0;
+      top: 0;
+      cursor: nesw-resize;
+    }
+
+    .resize-handle.sw {
+      left: 0;
+      bottom: 0;
+      cursor: nesw-resize;
+    }
+
+    .resize-handle.se {
+      right: 0;
+      bottom: 0;
+      cursor: nwse-resize;
+    }
+
+    .resize-handle.nw::after { border-width: 1px 0 0 1px; }
+    .resize-handle.ne::after { border-width: 1px 1px 0 0; }
+    .resize-handle.sw::after { border-width: 0 0 1px 1px; }
+    .resize-handle.se::after { border-width: 0 1px 1px 0; }
+
+    .resize-handle:hover,
+    .resize-handle:focus-visible {
+      outline: none;
+      opacity: 1;
+    }
+
+    @keyframes waitingPulse {
+      0%, 100% { opacity: 0.45; }
+      50% { opacity: 1; }
+    }
+
+    @keyframes waitingMeter {
+      0%, 100% { opacity: 0.34; }
+      50% { opacity: 0.95; }
+    }
+
+    @keyframes runningMeter {
+      from { transform: translateX(-14%); }
+      to { transform: translateX(18%); }
+    }
+  </style>
+</head>
+<body data-theme="dark" data-lang="en">
+  <main class="desktop" aria-label="Windows desktop prototype">
+    <section class="vscode-window" aria-label="VS Code background window">
+      <div class="vscode-titlebar"><span class="vscode-title-dot"></span><span>AgentWatcher - Visual Studio Code</span></div>
+      <div class="vscode-main">
+        <aside class="activity" aria-hidden="true"><span></span><span></span><span></span><span></span></aside>
+        <aside class="sidebar">
+          <div class="sidebar-title">Explorer</div>
+          <div class="tree-row">AgentWatcher</div>
+          <div class="tree-row dim">src</div>
+          <div class="tree-row dim">collectors</div>
+          <div class="tree-row dim">desktop</div>
+          <div class="tree-row dim">README.md</div>
+        </aside>
+        <section class="editor">
+          <div class="tab">SessionQueue.cs</div>
+          <div class="code">
+            <div>public sealed class SessionQueue</div>
+            <div>{</div>
+            <div>    public int Waiting { get; init; }</div>
+            <div>    public int Running { get; init; }</div>
+            <div>    public int Idle { get; init; }</div>
+            <div>}</div>
+          </div>
+        </section>
+      </div>
+      <div class="vscode-status"><span>main</span><span>AgentWatcher scanner ready</span></div>
+    </section>
+
+    <aside class="compact-rail" aria-label="Compact floating rail preview">
+      <div class="rail-logo">AW</div>
+      <div class="rail-counts">
+        <div class="rail-count waiting"><span>8</span></div>
+        <div class="rail-count running"><span>12</span></div>
+        <div class="rail-count idle"><span>31</span></div>
+      </div>
+    </aside>
+
+    <section class="watcher-window" aria-label="AgentWatcher Windows app window">
+      <header class="native-titlebar">
+        <div class="drag-region"><span class="app-icon"></span><span class="window-title">AgentWatcher</span></div>
+        <div class="title-tools" aria-label="Window display options">
+          <button class="title-tool" id="languageToggle" type="button" aria-label="Switch language">中文</button>
+          <button class="title-tool" id="themeToggle" type="button" aria-label="Switch color theme">Light</button>
+        </div>
+        <div class="window-controls">
+          <button class="win-btn" type="button" aria-label="Minimize">_</button>
+          <button class="win-btn" type="button" aria-label="Maximize">[]</button>
+          <button class="win-btn close" type="button" aria-label="Close">x</button>
+        </div>
+      </header>
+
+      <div class="watcher-body">
+        <section class="app-header">
+          <div class="app-name">
+            <strong>All agent sessions</strong>
+            <span>83 workspaces watched</span>
+          </div>
+          <div class="urgent-chip" id="urgentChip">8 waiting</div>
+        </section>
+
+        <nav class="segmented" aria-label="Session filters">
+          <button class="segment active" type="button" data-status="all">All 51</button>
+          <button class="segment" type="button" data-status="waiting">Wait 8</button>
+          <button class="segment" type="button" data-status="running">Run 12</button>
+          <button class="segment" type="button" data-status="idle">Idle 31</button>
+        </nav>
+
+        <section class="control-strip" aria-label="Display controls">
+          <label class="workspace-row">
+            <span class="control-label" id="workspaceLabel">Workspace</span>
+            <select class="workspace-select" id="workspaceFilter" aria-label="Filter by workspace">
+              <option value="">All workspaces</option>
+            </select>
+          </label>
+          <div class="size-row">
+            <span class="control-label" id="perRowLabel">Per row</span>
+            <div class="size-tools">
+              <button class="preset-btn" id="sizePreset" type="button">2 / row</button>
+              <input class="size-range" id="sizeRange" type="range" min="1" max="6" step="1" value="2" aria-label="Icons per row" />
+              <span class="size-value" id="sizeValue">2 cols</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="queue-shell">
+          <div class="queue-meta"><span><strong id="visibleNow">9</strong> <span id="visibleLabel">visible now</span></span><span><strong id="queueNow">42</strong> <span id="queueLabel">in scroll queue</span></span></div>
+          <div class="session-scroll" id="sessionScroll" aria-label="Scrollable session queue">
+            <section class="lane waiting" data-status="waiting" data-total="8">
+              <div class="lane-header"><span class="lane-label"><span class="lane-dot"></span><span class="lane-name" data-lane-name="waiting">Waiting</span> <span class="lane-count">8</span></span><span class="lane-note" data-lane-note="priority">priority</span></div>
+              <div class="cards">
+                <button class="session-card waiting" type="button" data-open="AesWorld"><div class="card-head"><span class="provider cl">C</span><span class="time">02:14</span></div><div class="workspace">AesWorld</div><div class="session-title">Review required</div><div class="card-foot"><span>User input</span><i class="meter"></i></div></button>
+                <button class="session-card waiting" type="button" data-open="AgentWatcher"><div class="card-head"><span class="provider gh">GH</span><span class="time">00:42</span></div><div class="workspace">AgentWatcher</div><div class="session-title">Pick UI path</div><div class="card-foot"><span>Decision</span><i class="meter"></i></div></button>
+                <button class="session-card waiting" type="button" data-open="UE Master"><div class="card-head"><span class="provider cl">C</span><span class="time">05:06</span></div><div class="workspace">UE Master</div><div class="session-title">Permission hold</div><div class="card-foot"><span>Confirm</span><i class="meter"></i></div></button>
+                <button class="session-card waiting" type="button" data-open="Prefab"><div class="card-head"><span class="provider gh">GH</span><span class="time">07:30</span></div><div class="workspace">Prefab</div><div class="session-title">Choose variant</div><div class="card-foot"><span>Waiting</span><i class="meter"></i></div></button>
+                <button class="session-card waiting" type="button" data-open="Marker"><div class="card-head"><span class="provider cl">C</span><span class="time">09:02</span></div><div class="workspace">Marker</div><div class="session-title">Needs answer</div><div class="card-foot"><span>Waiting</span><i class="meter"></i></div></button>
+                <button class="session-card waiting" type="button" data-open="RoadMask"><div class="card-head"><span class="provider gh">GH</span><span class="time">11:48</span></div><div class="workspace">RoadMask</div><div class="session-title">Resolve prompt</div><div class="card-foot"><span>Waiting</span><i class="meter"></i></div></button>
+                <button class="session-card waiting" type="button" data-open="SubLevels"><div class="card-head"><span class="provider cl">C</span><span class="time">13:25</span></div><div class="workspace">SubLevels</div><div class="session-title">Select option</div><div class="card-foot"><span>Waiting</span><i class="meter"></i></div></button>
+                <button class="session-card waiting" type="button" data-open="Runtime"><div class="card-head"><span class="provider gh">GH</span><span class="time">15:00</span></div><div class="workspace">Runtime</div><div class="session-title">Approve run</div><div class="card-foot"><span>Waiting</span><i class="meter"></i></div></button>
+              </div>
+            </section>
+
+            <section class="lane running" data-status="running" data-total="12">
+              <div class="lane-header"><span class="lane-label"><span class="lane-dot"></span><span class="lane-name" data-lane-name="running">Running</span> <span class="lane-count">12</span></span><span class="lane-note" data-lane-note="live">live</span></div>
+              <div class="cards">
+                <button class="session-card running" type="button" data-open="Terrain"><div class="card-head"><span class="provider cl">C</span><span class="time">live</span></div><div class="workspace">Terrain</div><div class="session-title">Build fix loop</div><div class="card-foot"><span>Writing</span><i class="meter"></i></div></button>
+                <button class="session-card running" type="button" data-open="Tools"><div class="card-head"><span class="provider gh">GH</span><span class="time">01:18</span></div><div class="workspace">Tools</div><div class="session-title">Index scanner</div><div class="card-foot"><span>Scanning</span><i class="meter"></i></div></button>
+                <button class="session-card running" type="button" data-open="Docs"><div class="card-head"><span class="provider cl">C</span><span class="time">03:44</span></div><div class="workspace">Docs</div><div class="session-title">Research report</div><div class="card-foot"><span>Reading</span><i class="meter"></i></div></button>
+                <button class="session-card running" type="button" data-open="BuildHost"><div class="card-head"><span class="provider gh">GH</span><span class="time">04:12</span></div><div class="workspace">BuildHost</div><div class="session-title">Compile branch</div><div class="card-foot"><span>Running</span><i class="meter"></i></div></button>
+                <button class="session-card running" type="button" data-open="Shader"><div class="card-head"><span class="provider cl">C</span><span class="time">05:50</span></div><div class="workspace">Shader</div><div class="session-title">Shader compile</div><div class="card-foot"><span>Running</span><i class="meter"></i></div></button>
+                <button class="session-card running" type="button" data-open="Tests"><div class="card-head"><span class="provider gh">GH</span><span class="time">06:17</span></div><div class="workspace">Tests</div><div class="session-title">Smoke suite</div><div class="card-foot"><span>Running</span><i class="meter"></i></div></button>
+                <button class="session-card running" type="button" data-open="Atlas"><div class="card-head"><span class="provider cl">C</span><span class="time">07:01</span></div><div class="workspace">Atlas</div><div class="session-title">Review diff</div><div class="card-foot"><span>Running</span><i class="meter"></i></div></button>
+                <button class="session-card running" type="button" data-open="Voxels"><div class="card-head"><span class="provider gh">GH</span><span class="time">07:36</span></div><div class="workspace">Voxels</div><div class="session-title">Generate patch</div><div class="card-foot"><span>Running</span><i class="meter"></i></div></button>
+                <button class="session-card running" type="button" data-open="Bridge"><div class="card-head"><span class="provider cl">C</span><span class="time">08:05</span></div><div class="workspace">Bridge</div><div class="session-title">VS Code API probe</div><div class="card-foot"><span>Running</span><i class="meter"></i></div></button>
+                <button class="session-card running" type="button" data-open="Watcher"><div class="card-head"><span class="provider gh">GH</span><span class="time">08:40</span></div><div class="workspace">Watcher</div><div class="session-title">Parser test</div><div class="card-foot"><span>Running</span><i class="meter"></i></div></button>
+                <button class="session-card running" type="button" data-open="Hooks"><div class="card-head"><span class="provider cl">C</span><span class="time">09:31</span></div><div class="workspace">Hooks</div><div class="session-title">Event sink</div><div class="card-foot"><span>Running</span><i class="meter"></i></div></button>
+                <button class="session-card running" type="button" data-open="Cache"><div class="card-head"><span class="provider gh">GH</span><span class="time">10:14</span></div><div class="workspace">Cache</div><div class="session-title">SQLite model</div><div class="card-foot"><span>Running</span><i class="meter"></i></div></button>
+              </div>
+            </section>
+
+            <section class="lane idle" data-status="idle" data-total="31">
+              <div class="lane-header"><span class="lane-label"><span class="lane-dot"></span><span class="lane-name" data-lane-name="idle">Idle</span> <span class="lane-count">31</span></span><span class="lane-note" data-lane-note="quiet">quiet</span></div>
+              <div class="cards">
+                <button class="session-card idle" type="button" data-open="RuntimeShader"><div class="card-head"><span class="provider cl">C</span><span class="time">18m</span></div><div class="workspace">RuntimeShader</div><div class="session-title">No activity</div><div class="card-foot"><span>Idle</span><i class="meter"></i></div></button>
+                <button class="session-card idle" type="button" data-open="Nanite"><div class="card-head"><span class="provider gh">GH</span><span class="time">24m</span></div><div class="workspace">Nanite</div><div class="session-title">Completed</div><div class="card-foot"><span>Idle</span><i class="meter"></i></div></button>
+                <button class="session-card idle" type="button" data-open="Vegetation"><div class="card-head"><span class="provider cl">C</span><span class="time">31m</span></div><div class="workspace">Vegetation</div><div class="session-title">Paused</div><div class="card-foot"><span>Idle</span><i class="meter"></i></div></button>
+                <button class="session-card idle" type="button" data-open="Buildings"><div class="card-head"><span class="provider gh">GH</span><span class="time">44m</span></div><div class="workspace">Buildings</div><div class="session-title">Archived</div><div class="card-foot"><span>Idle</span><i class="meter"></i></div></button>
+                <button class="session-card idle" type="button" data-open="Traffic"><div class="card-head"><span class="provider cl">C</span><span class="time">52m</span></div><div class="workspace">Traffic</div><div class="session-title">Idle</div><div class="card-foot"><span>Idle</span><i class="meter"></i></div></button>
+                <button class="session-card idle" type="button" data-open="Import"><div class="card-head"><span class="provider gh">GH</span><span class="time">1h</span></div><div class="workspace">Import</div><div class="session-title">No activity</div><div class="card-foot"><span>Idle</span><i class="meter"></i></div></button>
+              </div>
+            </section>
+          </div>
+          <div class="overflow-footer"><span id="overflowText">Scroll continues by priority: waiting, running, idle</span><div class="overflow-map"><span></span><span></span><span></span></div></div>
+        </section>
+
+        <footer class="status-row"><span><strong id="sessionTotal">51</strong> <span id="sessionLabel">sessions</span></span><span id="filterState">Updated 2s ago</span></footer>
+      </div>
+      <button class="resize-handle nw" data-resize="nw" type="button" aria-label="Resize from top left"></button>
+      <button class="resize-handle ne" data-resize="ne" type="button" aria-label="Resize from top right"></button>
+      <button class="resize-handle sw" data-resize="sw" type="button" aria-label="Resize from bottom left"></button>
+      <button class="resize-handle se" data-resize="se" type="button" aria-label="Resize from bottom right"></button>
+    </section>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <nav class="taskbar" aria-label="Windows taskbar mock">
+      <div class="taskbar-icon">AW</div>
+      <div class="taskbar-icon">VS</div>
+      <div class="taskbar-icon">PS</div>
+    </nav>
+  </main>
+
+  <script>
+    const root = document.documentElement;
+    const toast = document.getElementById('toast');
+    const sessionScroll = document.getElementById('sessionScroll');
+    const workspaceFilter = document.getElementById('workspaceFilter');
+    const sizePreset = document.getElementById('sizePreset');
+    const sizeRange = document.getElementById('sizeRange');
+    const sizeValue = document.getElementById('sizeValue');
+    const watcherWindow = document.querySelector('.watcher-window');
+    const compactRail = document.querySelector('.compact-rail');
+    const resizeHandles = Array.from(document.querySelectorAll('.resize-handle'));
+    const languageToggle = document.getElementById('languageToggle');
+    const themeToggle = document.getElementById('themeToggle');
+    const urgentChip = document.getElementById('urgentChip');
+    const workspaceLabel = document.getElementById('workspaceLabel');
+    const perRowLabel = document.getElementById('perRowLabel');
+    const visibleLabel = document.getElementById('visibleLabel');
+    const queueLabel = document.getElementById('queueLabel');
+    const overflowText = document.getElementById('overflowText');
+    const sessionLabel = document.getElementById('sessionLabel');
+    const visibleNow = document.getElementById('visibleNow');
+    const queueNow = document.getElementById('queueNow');
+    const sessionTotal = document.getElementById('sessionTotal');
+    const filterState = document.getElementById('filterState');
+    const appTitle = document.querySelector('.app-name strong');
+    const appSubtitle = document.querySelector('.app-name span');
+    const cards = Array.from(document.querySelectorAll('.session-card'));
+    const lanes = Array.from(document.querySelectorAll('.lane'));
+    const logicalTotals = { all: 51, waiting: 8, running: 12, idle: 31 };
+    const columnPresets = [1, 2, 3, 4, 5, 6];
+    const i18n = {
+      en: {
+        langButton: '中文', lightButton: 'Light', darkButton: 'Dark', allSessions: 'All agent sessions', watched: '83 workspaces watched', filterActive: 'Workspace filter active', waitingChip: '8 waiting', workspace: 'Workspace', allWorkspaces: 'All workspaces', perRow: 'Per row', visibleNow: 'visible now', inQueue: 'in scroll queue', sessions: 'sessions', updated: 'Updated 2s ago', workspacePrefix: 'Workspace: ', overflow: 'Scroll continues by priority: waiting, running, idle', priority: 'priority', live: 'live', quiet: 'quiet', waiting: 'Waiting', running: 'Running', idle: 'Idle', all: 'All', wait: 'Wait', run: 'Run', col: 'col', cols: 'cols', perRowButton: '/ row', iconsPerRow: 'icons per row', windowSize: 'Window size', openWorkspace: 'Open VS Code workspace: ', themeLight: 'Light theme', themeDark: 'Dark theme'
+      },
+      zh: {
+        langButton: 'EN', lightButton: '浅色', darkButton: '深色', allSessions: '全部 Agent 会话', watched: '已监控 83 个 workspace', filterActive: '已启用 workspace 过滤', waitingChip: '8 待回复', workspace: 'Workspace', allWorkspaces: '全部 workspace', perRow: '每排数量', visibleNow: '当前可见', inQueue: '在滚动队列', sessions: '个会话', updated: '2 秒前更新', workspacePrefix: 'Workspace：', overflow: '按优先级继续滚动：待回复、运行中、闲置', priority: '优先', live: '实时', quiet: '静默', waiting: '待回复', running: '运行中', idle: '闲置', all: '全部', wait: '待回', run: '运行', col: '列', cols: '列', perRowButton: '/ 排', iconsPerRow: '个/排', windowSize: '窗口尺寸', openWorkspace: '打开 VS Code workspace：', themeLight: '浅色主题', themeDark: '深色主题'
+      }
+    };
+    let currentLang = document.body.dataset.lang || 'en';
+    let toastTimer = 0;
+
+    function t(key) {
+      return i18n[currentLang][key];
+    }
+
+    function showToast(message) {
+      window.clearTimeout(toastTimer);
+      toast.textContent = message;
+      toast.classList.add('show');
+      toastTimer = window.setTimeout(() => toast.classList.remove('show'), 2200);
+    }
+
+    function updateSegmentLabels() {
+      document.querySelector('.segment[data-status="all"]').textContent = t('all') + ' ' + logicalTotals.all;
+      document.querySelector('.segment[data-status="waiting"]').textContent = t('wait') + ' ' + logicalTotals.waiting;
+      document.querySelector('.segment[data-status="running"]').textContent = t('run') + ' ' + logicalTotals.running;
+      document.querySelector('.segment[data-status="idle"]').textContent = t('idle') + ' ' + logicalTotals.idle;
+    }
+
+    function updateWorkspaceOptionLabel() {
+      const allOption = workspaceFilter.querySelector('option[value=""]');
+      if (allOption) allOption.textContent = t('allWorkspaces');
+    }
+
+    function applyLanguage() {
+      document.body.dataset.lang = currentLang;
+      languageToggle.textContent = t('langButton');
+      themeToggle.textContent = document.body.dataset.theme === 'dark' ? t('lightButton') : t('darkButton');
+      urgentChip.textContent = t('waitingChip');
+      workspaceLabel.textContent = t('workspace');
+      perRowLabel.textContent = t('perRow');
+      visibleLabel.textContent = t('visibleNow');
+      queueLabel.textContent = t('inQueue');
+      overflowText.textContent = t('overflow');
+      sessionLabel.textContent = t('sessions');
+      document.querySelectorAll('.lane-name').forEach(name => name.textContent = t(name.dataset.laneName));
+      document.querySelectorAll('.lane-note').forEach(note => note.textContent = t(note.dataset.laneNote));
+      updateSegmentLabels();
+      updateWorkspaceOptionLabel();
+    }
+
+    function syncCompactRail() {
+      const rect = watcherWindow.getBoundingClientRect();
+      const railWidth = compactRail.getBoundingClientRect().width || 52;
+      const gap = 10;
+      compactRail.style.left = Math.round(rect.left - railWidth - gap) + 'px';
+      compactRail.style.top = Math.round(rect.top) + 'px';
+      compactRail.style.height = Math.round(Math.min(184, Math.max(156, rect.height * 0.34))) + 'px';
+    }
+
+    function cardStatus(card) {
+      if (card.classList.contains('waiting')) return 'waiting';
+      if (card.classList.contains('running')) return 'running';
+      return 'idle';
+    }
+
+    function activeStatus() {
+      return document.querySelector('.segment.active')?.dataset.status || 'all';
+    }
+
+    function syncCardScale() {
+      const visibleCard = cards.find(card => !card.hidden) || cards[0];
+      if (!visibleCard) return;
+      const cardWidth = visibleCard.getBoundingClientRect().width || 126;
+      root.style.setProperty('--tile-padding', Math.max(6, Math.round(cardWidth * 0.064)) + 'px');
+      root.style.setProperty('--tile-title', Math.max(11, Math.min(18, Math.round(cardWidth * 0.095))) + 'px');
+      root.style.setProperty('--tile-meta', Math.max(10, Math.min(15, Math.round(cardWidth * 0.082))) + 'px');
+      root.style.setProperty('--tile-provider', Math.max(18, Math.min(32, Math.round(cardWidth * 0.18))) + 'px');
+    }
+
+    function setIconsPerRow(value, announce) {
+      const nextColumns = Math.max(1, Math.min(6, Math.round(Number(value))));
+      root.style.setProperty('--columns', String(nextColumns));
+      watcherWindow.classList.toggle('compact-cards', nextColumns >= 3);
+      watcherWindow.classList.toggle('micro-cards', nextColumns >= 5);
+      sizeRange.value = String(nextColumns);
+      sizePreset.textContent = nextColumns + ' ' + t('perRowButton');
+      sizeValue.textContent = nextColumns + ' ' + (nextColumns === 1 ? t('col') : t('cols'));
+      requestAnimationFrame(syncCardScale);
+      if (announce) showToast(nextColumns + ' ' + t('iconsPerRow'));
+    }
+
+    function resizeWatcherFromPointer(event) {
+      const direction = event.currentTarget.dataset.resize;
+      const rect = watcherWindow.getBoundingClientRect();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startLeft = rect.left;
+      const startTop = rect.top;
+      const startRight = rect.right;
+      const startBottom = rect.bottom;
+      const startWidth = rect.width;
+      const startHeight = rect.height;
+      const minWidth = 286;
+      const minHeight = 420;
+      const padding = 18;
+
+      watcherWindow.style.left = Math.round(startLeft) + 'px';
+      watcherWindow.style.top = Math.round(startTop) + 'px';
+      watcherWindow.style.right = 'auto';
+      watcherWindow.style.bottom = 'auto';
+
+      function onMove(moveEvent) {
+        const deltaX = moveEvent.clientX - startX;
+        const deltaY = moveEvent.clientY - startY;
+        let nextLeft = startLeft;
+        let nextTop = startTop;
+        let nextWidth = startWidth;
+        let nextHeight = startHeight;
+
+        if (direction.includes('e')) {
+          nextWidth = startWidth + deltaX;
+          nextWidth = Math.min(nextWidth, window.innerWidth - padding - startLeft);
+        }
+
+        if (direction.includes('s')) {
+          nextHeight = startHeight + deltaY;
+          nextHeight = Math.min(nextHeight, window.innerHeight - padding - startTop);
+        }
+
+        if (direction.includes('w')) {
+          nextLeft = startLeft + deltaX;
+          nextLeft = Math.max(padding, Math.min(nextLeft, startRight - minWidth));
+          nextWidth = startRight - nextLeft;
+        }
+
+        if (direction.includes('n')) {
+          nextTop = startTop + deltaY;
+          nextTop = Math.max(padding, Math.min(nextTop, startBottom - minHeight));
+          nextHeight = startBottom - nextTop;
+        }
+
+        nextWidth = Math.max(minWidth, Math.min(720, nextWidth));
+        nextHeight = Math.max(minHeight, Math.min(window.innerHeight - padding - nextTop, nextHeight));
+
+        if (direction.includes('w')) {
+          nextLeft = startRight - nextWidth;
+          nextLeft = Math.max(padding, nextLeft);
+        }
+
+        if (direction.includes('n')) {
+          nextTop = startBottom - nextHeight;
+          nextTop = Math.max(padding, nextTop);
+        }
+
+        watcherWindow.style.left = Math.round(nextLeft) + 'px';
+        watcherWindow.style.top = Math.round(nextTop) + 'px';
+        watcherWindow.style.width = nextWidth + 'px';
+        watcherWindow.style.height = nextHeight + 'px';
+        requestAnimationFrame(syncCardScale);
+        requestAnimationFrame(syncCompactRail);
+      }
+
+      function onUp() {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        showToast(t('windowSize') + ': ' + Math.round(watcherWindow.offsetWidth) + ' x ' + Math.round(watcherWindow.offsetHeight));
+      }
+
+      event.preventDefault();
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp, { once: true });
+    }
+
+    function applyFilters() {
+      const selectedWorkspace = workspaceFilter.value;
+      const selectedStatus = activeStatus();
+      const laneCounts = { waiting: 0, running: 0, idle: 0 };
+      let actualVisible = 0;
+
+      cards.forEach(card => {
+        const workspace = card.dataset.workspace;
+        const status = cardStatus(card);
+        const matchesWorkspace = !selectedWorkspace || workspace === selectedWorkspace;
+        const matchesStatus = selectedStatus === 'all' || selectedStatus === status;
+        const shouldShow = matchesWorkspace && matchesStatus;
+        card.hidden = !shouldShow;
+        if (shouldShow) {
+          actualVisible += 1;
+          laneCounts[status] += 1;
+        }
+      });
+
+      lanes.forEach(lane => {
+        const status = lane.dataset.status;
+        const laneTotal = selectedWorkspace ? laneCounts[status] : Number(lane.dataset.total);
+        const laneAllowed = selectedStatus === 'all' || selectedStatus === status;
+        const count = laneAllowed ? laneTotal : 0;
+        lane.querySelector('.lane-count').textContent = String(count);
+        lane.classList.toggle('is-hidden', count === 0);
+      });
+
+      const logicalTotal = selectedWorkspace ? actualVisible : logicalTotals[selectedStatus];
+      const visibleCount = Math.min(9, logicalTotal);
+      const queueCount = Math.max(0, logicalTotal - visibleCount);
+
+      visibleNow.textContent = String(visibleCount);
+      queueNow.textContent = String(queueCount);
+      sessionTotal.textContent = String(logicalTotal);
+      appTitle.textContent = selectedWorkspace || t('allSessions');
+      appSubtitle.textContent = selectedWorkspace ? t('filterActive') : t('watched');
+      filterState.textContent = selectedWorkspace ? t('workspacePrefix') + selectedWorkspace : t('updated');
+      sessionScroll.scrollTop = 0;
+      requestAnimationFrame(syncCardScale);
+    }
+
+    cards.forEach(card => {
+      card.dataset.workspace = card.dataset.open;
+    });
+
+    [...new Set(cards.map(card => card.dataset.workspace))]
+      .sort((left, right) => left.localeCompare(right))
+      .forEach(workspace => {
+        const option = document.createElement('option');
+        option.value = workspace;
+        option.textContent = workspace;
+        workspaceFilter.appendChild(option);
+      });
+
+    document.querySelectorAll('.session-card').forEach(card => {
+      card.addEventListener('click', () => showToast(t('openWorkspace') + card.dataset.open));
+    });
+
+    document.querySelectorAll('.segment').forEach(segment => {
+      segment.addEventListener('click', () => {
+        document.querySelectorAll('.segment').forEach(item => item.classList.remove('active'));
+        segment.classList.add('active');
+        applyFilters();
+      });
+    });
+
+    workspaceFilter.addEventListener('change', applyFilters);
+    sizeRange.addEventListener('input', event => setIconsPerRow(event.target.value, false));
+    sizePreset.addEventListener('click', () => {
+      const current = Number(sizeRange.value);
+      const nextColumns = columnPresets[(columnPresets.indexOf(current) + 1) % columnPresets.length];
+      setIconsPerRow(nextColumns, true);
+    });
+    languageToggle.addEventListener('click', () => {
+      currentLang = currentLang === 'en' ? 'zh' : 'en';
+      applyLanguage();
+      setIconsPerRow(sizeRange.value, false);
+      applyFilters();
+    });
+    themeToggle.addEventListener('click', () => {
+      const nextTheme = document.body.dataset.theme === 'dark' ? 'light' : 'dark';
+      document.body.dataset.theme = nextTheme;
+      applyLanguage();
+      showToast(nextTheme === 'light' ? t('themeLight') : t('themeDark'));
+    });
+    resizeHandles.forEach(handle => handle.addEventListener('pointerdown', resizeWatcherFromPointer));
+
+    new ResizeObserver(() => {
+      requestAnimationFrame(syncCardScale);
+      requestAnimationFrame(syncCompactRail);
+    }).observe(watcherWindow);
+    window.addEventListener('resize', () => requestAnimationFrame(syncCompactRail));
+    applyLanguage();
+    setIconsPerRow(sizeRange.value, false);
+    applyFilters();
+    syncCompactRail();
+  </script>
+</body>
+</html>

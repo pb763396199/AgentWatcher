@@ -1,0 +1,15 @@
+.history/
+.vs/
+.vscode/
+bin/
+obj/
+TestResults/
+*.user
+*.suo
+*.log
+*.tmp
+*.cache
+*.nupkg
+*.snupkg
+publish/
+artifacts/
