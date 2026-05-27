@@ -213,7 +213,7 @@
     .native-titlebar {
       height: 32px;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto auto;
+      grid-template-columns: minmax(0, 1fr) auto;
       align-items: center;
       border-bottom: 1px solid var(--border);
       background: #1b1b1b;
@@ -247,14 +247,6 @@
       white-space: nowrap;
     }
 
-    .title-tools {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      min-width: 0;
-      padding-right: 4px;
-    }
-
     .title-tool {
       height: 22px;
       min-width: 32px;
@@ -278,7 +270,7 @@
 
     .window-controls {
       display: grid;
-      grid-template-columns: repeat(2, 30px);
+      grid-template-columns: repeat(3, 30px);
       height: 32px;
     }
 
@@ -290,7 +282,96 @@
     }
 
     .win-btn:hover { background: #303030; color: #ffffff; }
+    .win-btn.is-active { background: rgba(14, 99, 156, 0.32); color: #ffffff; }
     .win-btn.close:hover { background: #c42b1c; color: #ffffff; }
+
+    .settings-panel {
+      position: absolute;
+      z-index: 8;
+      top: 36px;
+      right: 8px;
+      width: min(316px, calc(100% - 16px));
+      max-height: calc(100% - 48px);
+      overflow: auto;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--surface-2);
+      box-shadow: var(--shadow);
+    }
+
+    .settings-panel[hidden] { display: none; }
+
+    .settings-group + .settings-group {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+    }
+
+    .settings-group-title {
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .setting-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      min-height: 30px;
+      color: var(--text);
+      font-size: 12px;
+    }
+
+    .setting-row + .setting-row { margin-top: 7px; }
+
+    .setting-row label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .setting-toggle,
+    .setting-number,
+    .setting-check {
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: var(--surface-3);
+      color: var(--text);
+    }
+
+    .setting-toggle {
+      height: 24px;
+      min-width: 46px;
+      padding: 0 8px;
+      cursor: pointer;
+      font-size: 11px;
+    }
+
+    .setting-toggle.is-active {
+      border-color: var(--focus);
+      background: rgba(14, 99, 156, 0.36);
+      color: #ffffff;
+    }
+
+    .setting-toggle + .setting-toggle { margin-left: 4px; }
+
+    .setting-number {
+      width: 74px;
+      height: 26px;
+      padding: 0 7px;
+      font-size: 12px;
+    }
+
+    .setting-check {
+      width: 17px;
+      height: 17px;
+      accent-color: var(--accent);
+    }
 
     .watcher-body {
       height: calc(100% - 32px);
@@ -995,15 +1076,62 @@
     <section class="watcher-window" aria-label="AgentWatcher Windows app window">
       <header class="native-titlebar" data-tauri-drag-region>
         <div class="drag-region" data-tauri-drag-region><span class="app-icon"></span><span class="window-title">AgentWatcher</span></div>
-        <div class="title-tools" aria-label="Window display options">
-          <button class="title-tool" id="languageToggle" type="button" aria-label="Switch language">中文</button>
-          <button class="title-tool" id="themeToggle" type="button" aria-label="Switch color theme">Light</button>
-        </div>
         <div class="window-controls">
+          <button class="win-btn" id="settingsToggle" type="button" aria-label="Settings">⚙</button>
           <button class="win-btn" type="button" data-window-action="minimize" aria-label="Collapse to rail">_</button>
           <button class="win-btn close" type="button" data-window-action="close" aria-label="Close">x</button>
         </div>
       </header>
+
+      <section class="settings-panel" id="settingsPanel" aria-label="AgentWatcher settings" hidden>
+        <div class="settings-group">
+          <div class="settings-group-title" data-i18n="appearance">Appearance</div>
+          <div class="setting-row">
+            <label id="languageSettingLabel" data-i18n="language">Language</label>
+            <div aria-labelledby="languageSettingLabel">
+              <button class="setting-toggle" type="button" data-setting-lang="en">EN</button>
+              <button class="setting-toggle" type="button" data-setting-lang="zh">中文</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <label id="themeSettingLabel" data-i18n="theme">Theme</label>
+            <div aria-labelledby="themeSettingLabel">
+              <button class="setting-toggle" type="button" data-setting-theme="dark">Dark</button>
+              <button class="setting-toggle" type="button" data-setting-theme="light">Light</button>
+            </div>
+          </div>
+        </div>
+        <div class="settings-group">
+          <div class="settings-group-title" data-i18n="dataSources">Data</div>
+          <div class="setting-row">
+            <label for="includeCopilot" data-i18n="includeCopilot">Copilot sessions</label>
+            <input class="setting-check" id="includeCopilot" type="checkbox" checked />
+          </div>
+          <div class="setting-row">
+            <label for="includeClaude" data-i18n="includeClaude">Claude sessions</label>
+            <input class="setting-check" id="includeClaude" type="checkbox" checked />
+          </div>
+          <div class="setting-row">
+            <label for="hideArchived" data-i18n="hideArchived">Hide archived</label>
+            <input class="setting-check" id="hideArchived" type="checkbox" checked />
+          </div>
+        </div>
+        <div class="settings-group">
+          <div class="settings-group-title" data-i18n="scanLimits">Scan limits</div>
+          <div class="setting-row">
+            <label for="activeWindowDays" data-i18n="activeWindowDays">Active window (days)</label>
+            <input class="setting-number" id="activeWindowDays" type="number" min="1" max="30" step="1" value="7" />
+          </div>
+          <div class="setting-row">
+            <label for="maxSessions" data-i18n="maxSessions">Max sessions</label>
+            <input class="setting-number" id="maxSessions" type="number" min="10" max="300" step="10" value="80" />
+          </div>
+          <div class="setting-row">
+            <label for="refreshIntervalSeconds" data-i18n="refreshInterval">Refresh interval (sec)</label>
+            <input class="setting-number" id="refreshIntervalSeconds" type="number" min="5" max="120" step="5" value="15" />
+          </div>
+        </div>
+      </section>
 
       <div class="watcher-body">
         <section class="app-header">
@@ -1103,14 +1231,17 @@
   <script type="module">
     let tauriWindow = null;
     let PhysicalPositionClass = null;
+    let tauriInvoke = null;
 
     if (window.__TAURI_INTERNALS__) {
-      const [dpiApi, windowApi] = await Promise.all([
+      const [dpiApi, windowApi, coreApi] = await Promise.all([
         import('@tauri-apps/api/dpi'),
-        import('@tauri-apps/api/window')
+        import('@tauri-apps/api/window'),
+        import('@tauri-apps/api/core')
       ]);
       PhysicalPositionClass = dpiApi.PhysicalPosition;
       tauriWindow = windowApi.getCurrentWindow();
+      tauriInvoke = coreApi.invoke;
     }
     const root = document.documentElement;
     const toast = document.getElementById('toast');
@@ -1126,8 +1257,16 @@
     const dragRegion = document.querySelector('.drag-region');
     const appHeader = document.querySelector('.app-header');
     const windowActionButtons = Array.from(document.querySelectorAll('[data-window-action]'));
-    const languageToggle = document.getElementById('languageToggle');
-    const themeToggle = document.getElementById('themeToggle');
+    const settingsToggle = document.getElementById('settingsToggle');
+    const settingsPanel = document.getElementById('settingsPanel');
+    const settingLangButtons = Array.from(document.querySelectorAll('[data-setting-lang]'));
+    const settingThemeButtons = Array.from(document.querySelectorAll('[data-setting-theme]'));
+    const includeCopilot = document.getElementById('includeCopilot');
+    const includeClaude = document.getElementById('includeClaude');
+    const hideArchived = document.getElementById('hideArchived');
+    const activeWindowDays = document.getElementById('activeWindowDays');
+    const maxSessions = document.getElementById('maxSessions');
+    const refreshIntervalSeconds = document.getElementById('refreshIntervalSeconds');
     const urgentChip = document.getElementById('urgentChip');
     const workspaceLabel = document.getElementById('workspaceLabel');
     const perRowLabel = document.getElementById('perRowLabel');
@@ -1141,23 +1280,134 @@
     const filterState = document.getElementById('filterState');
     const appTitle = document.querySelector('.app-name strong');
     const appSubtitle = document.querySelector('.app-name span');
-    const cards = Array.from(document.querySelectorAll('.session-card'));
+    let cards = Array.from(document.querySelectorAll('.session-card'));
     const lanes = Array.from(document.querySelectorAll('.lane'));
-    const logicalTotals = { all: 51, waiting: 8, running: 12, idle: 31 };
+    let logicalTotals = { all: 51, waiting: 8, running: 12, idle: 31 };
+    let sessionData = new Map();
+    let lastRefreshMs = 0;
+    let lastSessionSignature = '';
+    let refreshTimer = 0;
+    const defaultSettings = {
+      language: document.body.dataset.lang || 'en',
+      theme: document.body.dataset.theme || 'dark',
+      includeCopilot: true,
+      includeClaude: true,
+      hideArchived: true,
+      activeWindowDays: 7,
+      maxSessions: 80,
+      refreshIntervalSeconds: 15
+    };
+    let settings = loadSettings();
     const columnPresets = [1, 2, 3, 4, 5, 6];
     const i18n = {
       en: {
-        langButton: '中文', lightButton: 'Light', darkButton: 'Dark', allSessions: 'All agent sessions', watched: '83 workspaces watched', filterActive: 'Workspace filter active', waitingChip: '8 waiting', workspace: 'Workspace', allWorkspaces: 'All workspaces', perRow: 'Per row', visibleNow: 'visible now', inQueue: 'in scroll queue', sessions: 'sessions', updated: 'Updated 2s ago', workspacePrefix: 'Workspace: ', overflow: 'Scroll continues by priority: waiting, running, idle', priority: 'priority', live: 'live', quiet: 'quiet', waiting: 'Waiting', running: 'Running', idle: 'Idle', all: 'All', wait: 'Wait', run: 'Run', col: 'col', cols: 'cols', perRowButton: '/ row', iconsPerRow: 'icons per row', windowSize: 'Window size', openWorkspace: 'Open VS Code workspace: ', themeLight: 'Light theme', themeDark: 'Dark theme'
+        allSessions: 'All agent sessions', watched: '83 workspaces watched', filterActive: 'Workspace filter active', waitingChip: '8 waiting', workspace: 'Workspace', allWorkspaces: 'All workspaces', perRow: 'Per row', visibleNow: 'visible now', inQueue: 'in scroll queue', sessions: 'sessions', updated: 'Updated 2s ago', workspacePrefix: 'Workspace: ', overflow: 'Scroll continues by priority: waiting, running, idle', priority: 'priority', live: 'live', quiet: 'quiet', waiting: 'Waiting', running: 'Running', idle: 'Idle', all: 'All', wait: 'Wait', run: 'Run', col: 'col', cols: 'cols', perRowButton: '/ row', iconsPerRow: 'icons per row', windowSize: 'Window size', openWorkspace: 'Open VS Code workspace: ', openingAgents: 'Opening agents...', openedAgents: 'Agents page opened', themeLight: 'Light theme', themeDark: 'Dark theme', settings: 'Settings', appearance: 'Appearance', language: 'Language', theme: 'Theme', dataSources: 'Data', includeCopilot: 'Copilot sessions', includeClaude: 'Claude sessions', hideArchived: 'Hide archived', scanLimits: 'Scan limits', activeWindowDays: 'Active window (days)', maxSessions: 'Max sessions', refreshInterval: 'Refresh interval (sec)', settingsSaved: 'Settings updated'
       },
       zh: {
-        langButton: 'EN', lightButton: '浅色', darkButton: '深色', allSessions: '全部 Agent 会话', watched: '已监控 83 个 workspace', filterActive: '已启用 workspace 过滤', waitingChip: '8 待回复', workspace: 'Workspace', allWorkspaces: '全部 workspace', perRow: '每排数量', visibleNow: '当前可见', inQueue: '在滚动队列', sessions: '个会话', updated: '2 秒前更新', workspacePrefix: 'Workspace：', overflow: '按优先级继续滚动：待回复、运行中、闲置', priority: '优先', live: '实时', quiet: '静默', waiting: '待回复', running: '运行中', idle: '闲置', all: '全部', wait: '待回', run: '运行', col: '列', cols: '列', perRowButton: '/ 排', iconsPerRow: '个/排', windowSize: '窗口尺寸', openWorkspace: '打开 VS Code workspace：', themeLight: '浅色主题', themeDark: '深色主题'
+        allSessions: '全部 Agent 会话', watched: '已监控 83 个 workspace', filterActive: '已启用 workspace 过滤', waitingChip: '8 待回复', workspace: 'Workspace', allWorkspaces: '全部 workspace', perRow: '每排数量', visibleNow: '当前可见', inQueue: '在滚动队列', sessions: '个会话', updated: '2 秒前更新', workspacePrefix: 'Workspace：', overflow: '按优先级继续滚动：待回复、运行中、闲置', priority: '优先', live: '实时', quiet: '静默', waiting: '待回复', running: '运行中', idle: '闲置', all: '全部', wait: '待回', run: '运行', col: '列', cols: '列', perRowButton: '/ 排', iconsPerRow: '个/排', windowSize: '窗口尺寸', openWorkspace: '打开 VS Code workspace：', openingAgents: '正在打开 agents...', openedAgents: '已打开 Agents 页', themeLight: '浅色主题', themeDark: '深色主题', settings: '设置', appearance: '外观', language: '语言', theme: '主题', dataSources: '数据', includeCopilot: 'Copilot 会话', includeClaude: 'Claude 会话', hideArchived: '隐藏归档', scanLimits: '扫描限制', activeWindowDays: '活跃窗口（天）', maxSessions: '最大会话数', refreshInterval: '刷新间隔（秒）', settingsSaved: '设置已更新'
       }
     };
-    let currentLang = document.body.dataset.lang || 'en';
+    let currentLang = settings.language;
+    document.body.dataset.lang = settings.language;
+    document.body.dataset.theme = settings.theme;
     let toastTimer = 0;
 
     function t(key) {
       return i18n[currentLang][key];
+    }
+
+    function clampNumber(value, min, max, fallback) {
+      const numberValue = Number(value);
+      if (!Number.isFinite(numberValue)) return fallback;
+      return Math.max(min, Math.min(max, Math.round(numberValue)));
+    }
+
+    function loadSettings() {
+      try {
+        const savedSettings = JSON.parse(localStorage.getItem('agentwatcher.settings') || '{}');
+        return {
+          language: ['en', 'zh'].includes(savedSettings.language) ? savedSettings.language : defaultSettings.language,
+          theme: ['dark', 'light'].includes(savedSettings.theme) ? savedSettings.theme : defaultSettings.theme,
+          includeCopilot: savedSettings.includeCopilot !== false,
+          includeClaude: savedSettings.includeClaude !== false,
+          hideArchived: savedSettings.hideArchived !== false,
+          activeWindowDays: clampNumber(savedSettings.activeWindowDays, 1, 30, defaultSettings.activeWindowDays),
+          maxSessions: clampNumber(savedSettings.maxSessions, 10, 300, defaultSettings.maxSessions),
+          refreshIntervalSeconds: clampNumber(savedSettings.refreshIntervalSeconds, 5, 120, defaultSettings.refreshIntervalSeconds)
+        };
+      } catch (error) {
+        return { ...defaultSettings };
+      }
+    }
+
+    function saveSettings() {
+      localStorage.setItem('agentwatcher.settings', JSON.stringify(settings));
+    }
+
+    function scanOptions() {
+      return {
+        includeCopilot: settings.includeCopilot,
+        includeClaude: settings.includeClaude,
+        hideArchived: settings.hideArchived,
+        activeWindowDays: settings.activeWindowDays,
+        maxSessions: settings.maxSessions
+      };
+    }
+
+    function applySettingsControls() {
+      currentLang = settings.language;
+      document.body.dataset.lang = settings.language;
+      document.body.dataset.theme = settings.theme;
+      settingLangButtons.forEach(button => button.classList.toggle('is-active', button.dataset.settingLang === settings.language));
+      settingThemeButtons.forEach(button => button.classList.toggle('is-active', button.dataset.settingTheme === settings.theme));
+      includeCopilot.checked = settings.includeCopilot;
+      includeClaude.checked = settings.includeClaude;
+      hideArchived.checked = settings.hideArchived;
+      activeWindowDays.value = String(settings.activeWindowDays);
+      maxSessions.value = String(settings.maxSessions);
+      refreshIntervalSeconds.value = String(settings.refreshIntervalSeconds);
+      settingsToggle.classList.toggle('is-active', !settingsPanel.hidden);
+      settingsToggle.setAttribute('aria-label', t('settings'));
+      document.querySelectorAll('[data-i18n]').forEach(element => {
+        element.textContent = t(element.dataset.i18n);
+      });
+    }
+
+    function updateSetting(key, value, options = {}) {
+      settings = { ...settings, [key]: value };
+      saveSettings();
+      applySettingsControls();
+      applyLanguage();
+      setIconsPerRow(sizeRange.value, false);
+      if (options.reschedule) scheduleSessionRefresh();
+      if (options.refresh !== false) refreshSessions(true);
+      if (options.announce) showToast(t('settingsSaved'));
+    }
+
+    function workspaceCountText() {
+      const count = new Set(cards.map(card => card.dataset.workspace).filter(Boolean)).size;
+      return currentLang === 'zh' ? '已监控 ' + count + ' 个 workspace' : count + ' workspaces watched';
+    }
+
+    function waitingChipText() {
+      return currentLang === 'zh' ? logicalTotals.waiting + ' 待回复' : logicalTotals.waiting + ' waiting';
+    }
+
+    function updatedText() {
+      if (!lastRefreshMs) return t('updated');
+      return currentLang === 'zh' ? '刚刚更新' : 'Updated now';
+    }
+
+    function statusText(status) {
+      if (status === 'waiting') return t('waiting');
+      if (status === 'running') return t('running');
+      return t('idle');
+    }
+
+    function updateRailCounts() {
+      document.querySelector('.rail-count.waiting span').textContent = String(logicalTotals.waiting);
+      document.querySelector('.rail-count.running span').textContent = String(logicalTotals.running);
+      document.querySelector('.rail-count.idle span').textContent = String(logicalTotals.idle);
     }
 
     function showToast(message) {
@@ -1181,9 +1431,7 @@
 
     function applyLanguage() {
       document.body.dataset.lang = currentLang;
-      languageToggle.textContent = t('langButton');
-      themeToggle.textContent = document.body.dataset.theme === 'dark' ? t('lightButton') : t('darkButton');
-      urgentChip.textContent = t('waitingChip');
+      urgentChip.textContent = waitingChipText();
       workspaceLabel.textContent = t('workspace');
       perRowLabel.textContent = t('perRow');
       visibleLabel.textContent = t('visibleNow');
@@ -1192,6 +1440,9 @@
       sessionLabel.textContent = t('sessions');
       document.querySelectorAll('.lane-name').forEach(name => name.textContent = t(name.dataset.laneName));
       document.querySelectorAll('.lane-note').forEach(note => note.textContent = t(note.dataset.laneNote));
+      document.querySelectorAll('[data-i18n]').forEach(element => {
+        element.textContent = t(element.dataset.i18n);
+      });
       updateSegmentLabels();
       updateWorkspaceOptionLabel();
     }
@@ -1365,7 +1616,7 @@
       }
     }
 
-    function applyFilters() {
+    function applyFilters(options = {}) {
       const selectedWorkspace = workspaceFilter.value;
       const selectedStatus = activeStatus();
       const laneCounts = { waiting: 0, running: 0, idle: 0 };
@@ -1401,28 +1652,183 @@
       queueNow.textContent = String(queueCount);
       sessionTotal.textContent = String(logicalTotal);
       appTitle.textContent = selectedWorkspace || t('allSessions');
-      appSubtitle.textContent = selectedWorkspace ? t('filterActive') : t('watched');
-      filterState.textContent = selectedWorkspace ? t('workspacePrefix') + selectedWorkspace : t('updated');
-      sessionScroll.scrollTop = 0;
+      appSubtitle.textContent = selectedWorkspace ? t('filterActive') : workspaceCountText();
+      filterState.textContent = selectedWorkspace ? t('workspacePrefix') + selectedWorkspace : updatedText();
+      if (!options.preserveScroll) sessionScroll.scrollTop = 0;
       requestAnimationFrame(syncCardScale);
     }
 
-    cards.forEach(card => {
-      card.dataset.workspace = card.dataset.open;
-    });
+    function refreshCardState(shouldRecalculate = true) {
+      cards = Array.from(document.querySelectorAll('.session-card'));
+      cards.forEach(card => {
+        card.dataset.workspace = card.dataset.workspace || card.dataset.open;
+      });
+      if (shouldRecalculate) {
+        recalculateTotals();
+      } else {
+        updateRailCounts();
+        updateSegmentLabels();
+        urgentChip.textContent = waitingChipText();
+      }
+      populateWorkspaceFilter();
+      bindCardClicks();
+    }
 
-    [...new Set(cards.map(card => card.dataset.workspace))]
-      .sort((left, right) => left.localeCompare(right))
-      .forEach(workspace => {
+    function recalculateTotals() {
+      const totals = { all: cards.length, waiting: 0, running: 0, idle: 0 };
+      cards.forEach(card => {
+        const status = cardStatus(card);
+        totals[status] += 1;
+      });
+      logicalTotals = totals;
+      lanes.forEach(lane => {
+        lane.dataset.total = String(totals[lane.dataset.status] || 0);
+      });
+      updateRailCounts();
+      updateSegmentLabels();
+      urgentChip.textContent = waitingChipText();
+    }
+
+    function populateWorkspaceFilter() {
+      const currentWorkspace = workspaceFilter.value;
+      const workspaces = [...new Set(cards.map(card => card.dataset.workspace).filter(Boolean))]
+        .sort((left, right) => left.localeCompare(right));
+
+      workspaceFilter.replaceChildren();
+      const allOption = document.createElement('option');
+      allOption.value = '';
+      workspaceFilter.appendChild(allOption);
+      workspaces.forEach(workspace => {
         const option = document.createElement('option');
         option.value = workspace;
         option.textContent = workspace;
         workspaceFilter.appendChild(option);
       });
+      workspaceFilter.value = workspaces.includes(currentWorkspace) ? currentWorkspace : '';
+      updateWorkspaceOptionLabel();
+    }
 
-    document.querySelectorAll('.session-card').forEach(card => {
-      card.addEventListener('click', () => showToast(t('openWorkspace') + card.dataset.open));
-    });
+    function bindCardClicks() {
+      cards.forEach(card => {
+        card.onclick = () => openCard(card);
+      });
+    }
+
+    async function openCard(card) {
+      const session = sessionData.get(card.dataset.sessionId);
+      if (!session || !tauriInvoke) {
+        showToast(t('openWorkspace') + card.dataset.open);
+        return;
+      }
+
+      showToast(t('openingAgents'));
+      try {
+        await tauriInvoke('open_session', { session });
+        showToast(t('openedAgents'));
+      } catch (error) {
+        showToast(String(error));
+      }
+    }
+
+    function appendText(parent, tagName, className, text) {
+      const element = document.createElement(tagName);
+      if (className) element.className = className;
+      element.textContent = text || '';
+      parent.appendChild(element);
+      return element;
+    }
+
+    function createSessionCard(session) {
+      const status = ['waiting', 'running', 'idle'].includes(session.status) ? session.status : 'idle';
+      const card = document.createElement('button');
+      card.className = 'session-card ' + status;
+      card.type = 'button';
+      card.dataset.sessionId = String(session.id || '');
+      card.dataset.workspace = session.workspace || 'Unknown';
+      card.dataset.open = session.workspace || 'Unknown';
+
+      const cardHead = document.createElement('div');
+      cardHead.className = 'card-head';
+      const providerClass = session.provider === 'copilot' ? 'gh' : 'cl';
+      appendText(cardHead, 'span', 'provider ' + providerClass, session.providerLabel || (session.provider === 'copilot' ? 'GH' : 'C'));
+      appendText(cardHead, 'span', 'time', session.timeLabel || '');
+      card.appendChild(cardHead);
+
+      appendText(card, 'div', 'workspace', session.workspace || 'Unknown');
+      appendText(card, 'div', 'session-title', session.title || shortCardId(session.id));
+
+      const cardFoot = document.createElement('div');
+      cardFoot.className = 'card-foot';
+      const footText = session.branch || (session.messageCount ? session.messageCount + ' msgs' : statusText(status));
+      appendText(cardFoot, 'span', '', footText);
+      const meter = document.createElement('i');
+      meter.className = 'meter';
+      cardFoot.appendChild(meter);
+      card.appendChild(cardFoot);
+
+      return card;
+    }
+
+    function shortCardId(sessionId) {
+      return sessionId ? String(sessionId).slice(0, 12) : 'Session';
+    }
+
+    function renderSessions(sessions) {
+      const laneContainers = Object.fromEntries(lanes.map(lane => [lane.dataset.status, lane.querySelector('.cards')]));
+      Object.values(laneContainers).forEach(container => container.replaceChildren());
+      sessionData = new Map();
+
+      (Array.isArray(sessions) ? sessions : []).forEach(session => {
+        if (!session || !session.id) return;
+        const card = createSessionCard(session);
+        const status = cardStatus(card);
+        laneContainers[status].appendChild(card);
+        sessionData.set(String(session.id), session);
+      });
+
+      cards = Array.from(document.querySelectorAll('.session-card'));
+      recalculateTotals();
+      populateWorkspaceFilter();
+      bindCardClicks();
+      setIconsPerRow(sizeRange.value, false);
+      applyFilters({ preserveScroll: true });
+      requestAnimationFrame(syncCompactRail);
+    }
+
+    function buildSessionSignature(sessions) {
+      return (Array.isArray(sessions) ? sessions : [])
+        .map(session => [session.id, session.status, session.updatedMs, session.timeLabel, session.title].join(':'))
+        .join('|');
+    }
+
+    async function refreshSessions(silent) {
+      if (!tauriInvoke) return;
+
+      try {
+        const sessions = await tauriInvoke('scan_sessions', { options: scanOptions() });
+        lastRefreshMs = Date.now();
+        const nextSignature = buildSessionSignature(sessions);
+        if (nextSignature !== lastSessionSignature) {
+          lastSessionSignature = nextSignature;
+          renderSessions(sessions);
+        } else {
+          applyFilters({ preserveScroll: true });
+        }
+      } catch (error) {
+        if (!silent) showToast(String(error));
+      }
+    }
+
+    function scheduleSessionRefresh() {
+      if (refreshTimer) window.clearInterval(refreshTimer);
+      refreshTimer = 0;
+      if (!tauriInvoke) return;
+
+      const refreshIntervalMs = clampNumber(settings.refreshIntervalSeconds, 5, 120, defaultSettings.refreshIntervalSeconds) * 1000;
+      refreshTimer = window.setInterval(() => refreshSessions(true), refreshIntervalMs);
+    }
+
+    refreshCardState(false);
 
     document.querySelectorAll('.segment').forEach(segment => {
       segment.addEventListener('click', () => {
@@ -1439,18 +1845,23 @@
       const nextColumns = columnPresets[(columnPresets.indexOf(current) + 1) % columnPresets.length];
       setIconsPerRow(nextColumns, true);
     });
-    languageToggle.addEventListener('click', () => {
-      currentLang = currentLang === 'en' ? 'zh' : 'en';
-      applyLanguage();
-      setIconsPerRow(sizeRange.value, false);
-      applyFilters();
+    settingsToggle.addEventListener('click', () => {
+      const shouldOpen = settingsPanel.hidden;
+      settingsPanel.hidden = !shouldOpen;
+      settingsToggle.classList.toggle('is-active', shouldOpen);
     });
-    themeToggle.addEventListener('click', () => {
-      const nextTheme = document.body.dataset.theme === 'dark' ? 'light' : 'dark';
-      document.body.dataset.theme = nextTheme;
-      applyLanguage();
-      showToast(nextTheme === 'light' ? t('themeLight') : t('themeDark'));
+    settingLangButtons.forEach(button => {
+      button.addEventListener('click', () => updateSetting('language', button.dataset.settingLang, { announce: true, refresh: false }));
     });
+    settingThemeButtons.forEach(button => {
+      button.addEventListener('click', () => updateSetting('theme', button.dataset.settingTheme, { announce: true, refresh: false }));
+    });
+    includeCopilot.addEventListener('change', () => updateSetting('includeCopilot', includeCopilot.checked, { announce: true }));
+    includeClaude.addEventListener('change', () => updateSetting('includeClaude', includeClaude.checked, { announce: true }));
+    hideArchived.addEventListener('change', () => updateSetting('hideArchived', hideArchived.checked, { announce: true }));
+    activeWindowDays.addEventListener('change', () => updateSetting('activeWindowDays', clampNumber(activeWindowDays.value, 1, 30, defaultSettings.activeWindowDays), { announce: true }));
+    maxSessions.addEventListener('change', () => updateSetting('maxSessions', clampNumber(maxSessions.value, 10, 300, defaultSettings.maxSessions), { announce: true }));
+    refreshIntervalSeconds.addEventListener('change', () => updateSetting('refreshIntervalSeconds', clampNumber(refreshIntervalSeconds.value, 5, 120, defaultSettings.refreshIntervalSeconds), { announce: true, reschedule: true }));
     [dragRegion, document.querySelector('.native-titlebar'), appHeader, compactRail].forEach(source => source?.addEventListener('pointerdown', startWindowDrag));
     windowActionButtons.forEach(button => button.addEventListener('click', () => runWindowAction(button.dataset.windowAction)));
     railLogo.addEventListener('click', () => {
@@ -1468,10 +1879,15 @@
       requestAnimationFrame(syncCompactRail);
     }).observe(watcherWindow);
     window.addEventListener('resize', () => requestAnimationFrame(syncCompactRail));
+    applySettingsControls();
     applyLanguage();
     setIconsPerRow(sizeRange.value, false);
     applyFilters();
     syncCompactRail();
+    if (tauriInvoke) {
+      refreshSessions(false);
+      scheduleSessionRefresh();
+    }
   </script>
 </body>
 </html>
