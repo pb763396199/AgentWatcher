@@ -13,3 +13,7 @@ TestResults/
 *.snupkg
 publish/
 artifacts/
+node_modules/
+ui-dist/
+src-tauri/target/
+src-tauri/gen/

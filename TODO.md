@@ -5,30 +5,34 @@
 - [x] 保存当前 HTML 设计稿。
 - [x] 编写设计说明。
 - [x] 编写完整开发 TODO。
-- [ ] 初始化本地 git 仓库并完成首次提交。
+- [x] 初始化本地 git 仓库并完成首次提交。
 
-## Phase 1 - Windows 应用壳
+## Phase 1 - Tauri 2 应用壳
 
-- [ ] 创建 .NET 8 WPF 解决方案。
-- [ ] 实现无边框 / 类原生标题栏窗口。
-- [ ] 实现 always-on-top 悬浮模式。
-- [ ] 实现四角 resize。
-- [ ] 实现窗口拖动和位置记忆。
-- [ ] 实现左侧 AW 折叠 rail，并跟随主窗口移动。
+- [x] 创建 Tauri 2 项目骨架。
+- [x] 复用 HTML 设计稿作为前端入口。
+- [x] 安装 Rust/Cargo 工具链。
+- [x] 安装 npm 依赖。
+- [x] 验证前端构建。
+- [x] 验证 Tauri release exe 构建。
+- [x] 验证 MSI / NSIS 安装包打包。
+- [x] 实现无边框 / 透明 / always-on-top 窗口配置。
+- [x] 用 Tauri window API 接管真实窗口拖动和 resize。
+- [ ] 实现窗口位置记忆。
 - [ ] 实现系统托盘图标和显示 / 隐藏入口。
 - [ ] 实现全局快捷键显隐窗口。
 - [ ] 实现启动时恢复上次窗口大小、位置、主题、语言。
 
 ## Phase 2 - UI 组件落地
 
-- [ ] 实现 waiting / running / idle 状态筛选。
-- [ ] 实现 workspace 下拉过滤。
-- [ ] 实现每排列数控制，支持 1 到 6 列。
-- [ ] 实现卡片按窗口宽度自适应填满。
-- [ ] 实现 compact card / micro card 信息密度切换。
-- [ ] 实现滚动队列和底部分布条。
-- [ ] 实现中英双语切换。
-- [ ] 实现 dark / light 主题切换。
+- [x] 实现 waiting / running / idle 状态筛选。
+- [x] 实现 workspace 下拉过滤。
+- [x] 实现每排列数控制，支持 1 到 6 列。
+- [x] 实现卡片按窗口宽度自适应填满。
+- [x] 实现 compact card / micro card 信息密度切换。
+- [x] 实现滚动队列和底部分布条。
+- [x] 实现中英双语切换。
+- [x] 实现 dark / light 主题切换。
 - [ ] 实现卡片 hover tooltip。
 - [ ] 实现右键菜单：复制 session id、打开 workspace、静音、隐藏 workspace。
 
@@ -103,7 +107,22 @@
 
 ## 当前优先级
 
-1. 完成本地仓库首次提交。
-2. 创建 WPF 应用壳。
-3. 把当前 HTML 原型中的窗口、rail、过滤、每排列数、主题、语言迁移到 WPF。
-4. 并行启动真实 session 扫描 PoC。
+1. 启动真实 session 扫描 PoC。
+2. 建立 JS 与 Rust backend 的 command/event 通信。
+3. 实现窗口位置、大小、主题、语言记忆。
+
+## Phase 1b - Tauri 2 主应用壳
+
+- [x] 创建 Tauri 2 项目骨架。
+- [x] 复制 HTML 设计稿为 Tauri 前端入口。
+- [x] 安装 Rust/Cargo 工具链。
+- [x] 运行 `npm install`。
+- [x] 验证 `npm run dev:ui`。
+- [x] 验证 `npm run build`。
+- [x] 将 HTML 中的桌面背景 mock 拆分为真实窗口 UI。
+- [x] 用 Tauri window API 接管四角 resize、拖动、最小化、最大化、关闭。
+- [ ] 建立 JS 与 Rust backend 的 command/event 通信。
+
+## 已放弃路线
+
+- WPF 纯控件复刻 HTML UI：视觉对齐成本过高，已删除未提交的 WPF 临时项目。

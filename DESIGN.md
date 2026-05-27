@@ -8,6 +8,8 @@ AgentWatcher 是一个 Windows 桌面悬浮工具，用来集中观察 VS Code �
 
 主设计稿为 [agentwatcher-windows-overflow-prototype.html](agentwatcher-windows-overflow-prototype.html)。该文件是完整静态 HTML 原型，包含真实交互逻辑，可直接用浏览器打开。
 
+Tauri 2 前端入口为 [ui/index.html](ui/index.html)，它已经从浏览器设计稿拆成真实桌面壳页面：移除了 VS Code 背景 mock 和 Windows taskbar mock，只保留 AgentWatcher 主面板与 AW rail。当前运行态使用透明窗口背景，让主面板和 rail 像悬浮工具一样贴在桌面上。
+
 早期探索稿为 [agentwatcher-prototype.html](agentwatcher-prototype.html)，仅保留作对比参考。
 
 ## 窗口形态
@@ -48,3 +50,7 @@ MVP 默认不展示 prompt 正文、模型输出正文、代码片段或敏感�
 ## 最大技术风险
 
 点击卡片直接聚焦 VS Code 内某个具体 Copilot / Claude session 还没有公开稳定 deep link。MVP 先做到 workspace 级跳转，精确 session 聚焦放到 VS Code bridge extension 阶段验证。
+
+## 落地技术路线
+
+当前主路线为 Tauri 2 + HTML/CSS/JS。选择它是为了让设计稿直接成为真实 UI，同时比 Electron 更轻。当前已完成 Tauri 2 壳、真实窗口页面、Tauri window API 拖动/resize/最小化/最大化/关闭接入、release exe、MSI 和 NSIS 安装包验证。

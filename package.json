@@ -1,0 +1,20 @@
+{
+  "name": "agentwatcher",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "sync:ui": "node scripts/sync-ui.mjs",
+    "dev:ui": "npm run sync:ui && vite ui --host 127.0.0.1 --port 1420",
+    "build:ui": "npm run sync:ui && vite build ui --outDir ../ui-dist --emptyOutDir --base ./"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.2",
+    "vite": "^8.0.14"
+  }
+}
