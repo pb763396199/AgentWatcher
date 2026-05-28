@@ -197,6 +197,18 @@ fn install_bridge() -> Result<String, String> {
 }
 
 #[tauri::command]
+fn set_window_always_on_top(window: tauri::WebviewWindow, always_on_top: bool) -> Result<(), String> {
+    window
+        .set_always_on_top(always_on_top)
+        .map_err(|error| error.to_string())?;
+
+    #[cfg(target_os = "windows")]
+    apply_native_always_on_top(&window, always_on_top);
+
+    Ok(())
+}
+
+#[tauri::command]
 fn scan_sessions(options: Option<ScanOptions>) -> Vec<AgentSession> {
     let scan_time_ms = current_time_ms();
     let options = resolve_scan_options(options);
@@ -2267,11 +2279,67 @@ fn apply_native_window_icons<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>
     }
 }
 
+#[cfg(target_os = "windows")]
+fn apply_native_always_on_top<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, always_on_top: bool) {
+    use windows_sys::core::BOOL;
+    use windows_sys::Win32::Foundation::{HWND, LPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetAncestor, GetWindowThreadProcessId, SetWindowPos, GA_ROOT, HWND_NOTOPMOST,
+        HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    };
+
+    let Ok(raw_hwnd) = window.hwnd() else {
+        return;
+    };
+
+    fn add_hwnd(hwnds: &mut Vec<HWND>, hwnd: HWND) {
+        if hwnd.is_null() || hwnds.iter().any(|existing| *existing == hwnd) {
+            return;
+        }
+
+        hwnds.push(hwnd);
+    }
+
+    unsafe extern "system" fn enum_process_windows(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let hwnds = &mut *(lparam as *mut Vec<HWND>);
+        let mut process_id = 0u32;
+        let _ = GetWindowThreadProcessId(hwnd, &mut process_id);
+
+        if process_id == std::process::id() {
+            add_hwnd(hwnds, hwnd);
+        }
+
+        1
+    }
+
+    unsafe {
+        let hwnd = raw_hwnd.0 as HWND;
+        let root_hwnd = GetAncestor(hwnd, GA_ROOT);
+        let mut hwnds = Vec::new();
+        add_hwnd(&mut hwnds, hwnd);
+        add_hwnd(&mut hwnds, root_hwnd);
+
+        let _ = EnumWindows(Some(enum_process_windows), &mut hwnds as *mut Vec<HWND> as LPARAM);
+
+        let insert_after = if always_on_top { HWND_TOPMOST } else { HWND_NOTOPMOST };
+        let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+        for target_hwnd in hwnds {
+            let _ = SetWindowPos(target_hwnd, insert_after, 0, 0, 0, 0, flags);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![scan_sessions, open_session, get_bridge_status, install_bridge])
+        .invoke_handler(tauri::generate_handler![
+            scan_sessions,
+            open_session,
+            get_bridge_status,
+            install_bridge,
+            set_window_always_on_top
+        ])
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 if let Some(icon) = runtime_window_icon() {

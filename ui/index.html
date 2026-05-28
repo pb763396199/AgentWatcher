@@ -79,9 +79,39 @@
     body[data-theme="light"] .preset-btn,
     body[data-theme="light"] .title-tool,
     body[data-theme="light"] .session-card,
+    body[data-theme="light"] .rail-count,
     body[data-theme="light"] .rail-logo {
       background: #ffffff;
       color: #1f1f1f;
+    }
+
+    body[data-theme="light"] .rail-count span {
+      color: #1f1f1f;
+    }
+
+    body[data-theme="light"] .rail-count.waiting { color: var(--waiting); }
+    body[data-theme="light"] .rail-count.running { color: var(--running); }
+    body[data-theme="light"] .rail-count.idle { color: var(--idle); }
+
+    body[data-theme="light"] .session-scroll,
+    body[data-theme="light"] .settings-panel {
+      scrollbar-color: #c8c8c8 #f3f3f3;
+    }
+
+    body[data-theme="light"] .session-scroll::-webkit-scrollbar-track,
+    body[data-theme="light"] .settings-panel::-webkit-scrollbar-track {
+      background: #f3f3f3;
+    }
+
+    body[data-theme="light"] .session-scroll::-webkit-scrollbar-thumb,
+    body[data-theme="light"] .settings-panel::-webkit-scrollbar-thumb {
+      border-color: #f3f3f3;
+      background: #c8c8c8;
+    }
+
+    body[data-theme="light"] .session-scroll::-webkit-scrollbar-thumb:hover,
+    body[data-theme="light"] .settings-panel::-webkit-scrollbar-thumb:hover {
+      background: #a6a6a6;
     }
 
     body[data-theme="light"] .provider {
@@ -147,6 +177,67 @@
       color: #1f1f1f;
     }
 
+    body[data-theme="light"] .app-icon {
+      background: linear-gradient(135deg, #0078d4, #ffffff 72%);
+    }
+
+    body[data-theme="light"] .win-btn {
+      color: #616161;
+    }
+
+    body[data-theme="light"] .win-btn:hover,
+    body[data-theme="light"] .win-btn:focus-visible,
+    body[data-theme="light"] .title-tool:hover,
+    body[data-theme="light"] .title-tool:focus-visible,
+    body[data-theme="light"] .preset-btn:hover,
+    body[data-theme="light"] .preset-btn:focus-visible,
+    body[data-theme="light"] .setting-toggle:hover:not(.is-active),
+    body[data-theme="light"] .setting-toggle:focus-visible:not(.is-active),
+    body[data-theme="light"] .segment:hover:not(.active),
+    body[data-theme="light"] .segment:focus-visible:not(.active) {
+      border-color: #b8b8b8;
+      background: #f3f3f3;
+      color: #1f1f1f;
+    }
+
+    body[data-theme="light"] .win-btn.is-active,
+    body[data-theme="light"] .setting-toggle.is-active,
+    body[data-theme="light"] .segment.active {
+      border-color: #0078d4;
+      background: #e7f3ff;
+      color: #005a9e;
+    }
+
+    body[data-theme="light"] .win-btn.close:hover,
+    body[data-theme="light"] .win-btn.close:focus-visible {
+      background: #fde7e9;
+      color: #a4262c;
+    }
+
+    body[data-theme="light"] .session-card:hover,
+    body[data-theme="light"] .session-card:focus-visible {
+      outline-color: #0078d4;
+      background: #f8fbff;
+    }
+
+    body[data-theme="light"] .lane-header {
+      color: #616161;
+    }
+
+    body[data-theme="light"] .overflow-map {
+      border-color: #d0d0d0;
+      background: #eeeeee;
+    }
+
+    body[data-theme="light"] .rail-logo:hover,
+    body[data-theme="light"] .rail-logo:focus-visible,
+    body[data-theme="light"].is-rail-only .rail-logo {
+      border-color: #0078d4;
+      background: #e7f3ff;
+      box-shadow: inset 0 0 0 1px rgba(0, 120, 212, 0.18);
+      color: #005a9e;
+    }
+
     button { font: inherit; }
 
     .desktop {
@@ -197,6 +288,8 @@
     }
 
     .native-titlebar {
+      position: relative;
+      z-index: 6;
       height: 32px;
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
@@ -261,10 +354,16 @@
     }
 
     .win-btn {
+      display: grid;
+      width: 30px;
+      height: 32px;
+      place-items: center;
+      padding: 0;
       border: 0;
       background: transparent;
       color: #bbbbbb;
       cursor: pointer;
+      line-height: 1;
     }
 
     .win-btn:hover { background: #303030; color: #ffffff; }
@@ -570,13 +669,20 @@
       overflow-y: auto;
       overflow-x: hidden;
       padding: 0 10px 10px;
+    }
+
+    .session-scroll,
+    .settings-panel {
       scrollbar-width: thin;
       scrollbar-color: #5f5f5f #252526;
     }
 
-    .session-scroll::-webkit-scrollbar { width: 10px; }
-    .session-scroll::-webkit-scrollbar-track { background: #252526; }
-    .session-scroll::-webkit-scrollbar-thumb {
+    .session-scroll::-webkit-scrollbar,
+    .settings-panel::-webkit-scrollbar { width: 10px; }
+    .session-scroll::-webkit-scrollbar-track,
+    .settings-panel::-webkit-scrollbar-track { background: #252526; }
+    .session-scroll::-webkit-scrollbar-thumb,
+    .settings-panel::-webkit-scrollbar-thumb {
       border: 2px solid #252526;
       border-radius: 999px;
       background: #5f5f5f;
@@ -1081,8 +1187,8 @@
         <div class="drag-region" data-tauri-drag-region><span class="app-icon"></span><span class="window-title">AgentWatcher</span></div>
         <div class="window-controls">
           <button class="win-btn" id="settingsToggle" type="button" aria-label="Settings">⚙</button>
-          <button class="win-btn" type="button" data-window-action="minimize" aria-label="Collapse to rail">_</button>
-          <button class="win-btn close" type="button" data-window-action="close" aria-label="Close">x</button>
+          <button class="win-btn" type="button" data-window-action="minimize" aria-label="Collapse to rail">−</button>
+          <button class="win-btn close" type="button" data-window-action="close" aria-label="Close">×</button>
         </div>
       </header>
 
@@ -1408,9 +1514,15 @@
     }
 
     async function applyAlwaysOnTopSetting() {
-      if (!tauriWindow?.setAlwaysOnTop) return;
       try {
-        await tauriWindow.setAlwaysOnTop(settings.alwaysOnTop);
+        if (tauriInvoke) {
+          await tauriInvoke('set_window_always_on_top', { alwaysOnTop: settings.alwaysOnTop });
+          return;
+        }
+
+        if (tauriWindow?.setAlwaysOnTop) {
+          await tauriWindow.setAlwaysOnTop(settings.alwaysOnTop);
+        }
       } catch (error) {
         console.warn('Failed to update always-on-top setting', error);
       }
@@ -1943,6 +2055,12 @@
       if (shouldOpen) {
         checkBridgeStatus();
       }
+    });
+    document.addEventListener('pointerdown', event => {
+      if (settingsPanel.hidden) return;
+      if (settingsPanel.contains(event.target) || settingsToggle.contains(event.target)) return;
+      settingsPanel.hidden = true;
+      settingsToggle.classList.remove('is-active');
     });
     settingLangButtons.forEach(button => {
       button.addEventListener('click', () => updateSetting('language', button.dataset.settingLang, { announce: true, refresh: false }));
