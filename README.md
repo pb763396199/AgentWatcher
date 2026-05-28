@@ -2,11 +2,10 @@
 
 AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候选窗一样常驻在屏幕任意位置，监控 VS Code 中 Copilot 和 Claude Code 在所有 workspace 的 session 状态，并把 waiting / running / idle 会话以可跳转的方形卡片展示出来。
 
-当前仓库状态：已完成本地 HTML 交互设计稿，并已切换到 Tauri 2 作为主应用壳方向。仓库只保留源码和必要的源码内资产，release 产物通过打包脚本按需生成。
+当前仓库状态：已切换到 Tauri 2 作为主应用壳方向，前端入口 [ui/index.html](ui/index.html) 是唯一 UI 源文件。仓库只保留源码和必要的源码内资产，release 产物通过打包脚本按需生成。
 
-## 当前设计稿
+## 当前 UI 入口
 
-- 主设计稿：[agentwatcher-windows-overflow-prototype.html](agentwatcher-windows-overflow-prototype.html)
 - Tauri 前端入口：[ui/index.html](ui/index.html)
 - 设计说明：[DESIGN.md](DESIGN.md)
 - 开发清单：[TODO.md](TODO.md)
@@ -23,7 +22,7 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 
 ## 技术方向
 
-使用 Tauri 2 实现轻量桌面壳，并直接复用 HTML/CSS/JS 设计稿。MVP 采用本地文件扫描采集 Copilot / Claude Code session 元数据，配合 VS Code bridge extension 实现精确 session 跳转。
+使用 Tauri 2 实现轻量桌面壳，前端由 [ui/index.html](ui/index.html) 提供。MVP 采用本地文件扫描采集 Copilot / Claude Code session 元数据，配合 VS Code bridge extension 实现精确 session 跳转。
 
 ## 功能特性
 

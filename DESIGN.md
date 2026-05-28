@@ -4,11 +4,9 @@
 
 AgentWatcher 是一个 Windows 桌面悬浮工具，用来集中观察 VS Code 中 Copilot 和 Claude Code 的所有 workspace session。它要长期挂在屏幕边缘，像输入法候选窗一样轻、不打断，但在某个 session 等待用户回复时能立刻被看见。
 
-## 当前原型文件
+## 当前 UI 文件
 
-主设计稿为 [agentwatcher-windows-overflow-prototype.html](agentwatcher-windows-overflow-prototype.html)。该文件是完整静态 HTML 原型，包含真实交互逻辑，可直接用浏览器打开。
-
-Tauri 2 前端入口为 [ui/index.html](ui/index.html)，它已经从浏览器设计稿拆成真实桌面壳页面：移除了 VS Code 背景 mock 和 Windows taskbar mock，只保留 AgentWatcher 主面板与 AW rail。当前运行态使用透明窗口背景，让主面板和 rail 像悬浮工具一样贴在桌面上。
+Tauri 2 前端入口为 [ui/index.html](ui/index.html)，它是当前唯一 UI 源文件，可直接用浏览器打开查看静态界面。页面已移除 VS Code 背景 mock 和 Windows taskbar mock，只保留 AgentWatcher 主面板与 AW rail。当前运行态使用透明窗口背景，让主面板和 rail 像悬浮工具一样贴在桌面上。
 
 ## 窗口形态
 

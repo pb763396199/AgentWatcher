@@ -6,10 +6,9 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
-    "sync:ui": "node scripts/sync-ui.mjs",
     "generate:icons": "node scripts/generate-icons.mjs",
-    "dev:ui": "npm run sync:ui && vite ui --host 127.0.0.1 --port 1420",
-    "build:ui": "npm run sync:ui && vite build ui --outDir ../ui-dist --emptyOutDir --base ./",
+    "dev:ui": "vite ui --host 127.0.0.1 --port 1420",
+    "build:ui": "vite build ui --outDir ../ui-dist --emptyOutDir --base ./",
     "package:exe": "node scripts/package-exe.mjs"
   },
   "dependencies": {
