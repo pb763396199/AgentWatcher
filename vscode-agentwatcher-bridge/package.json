@@ -1,0 +1,36 @@
+{
+  "name": "agentwatcher-bridge",
+  "displayName": "AgentWatcher Bridge",
+  "description": "Opens VS Code chat sessions from AgentWatcher.",
+  "version": "0.0.1",
+  "publisher": "agentwatcher",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "file:.."
+  },
+  "engines": {
+    "vscode": "^1.104.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "files": [
+    "extension.js",
+    "package.json",
+    "README.md"
+  ],
+  "activationEvents": [
+    "onUri",
+    "onCommand:agentwatcher.openSession"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "agentwatcher.openSession",
+        "title": "AgentWatcher: Open Session"
+      }
+    ]
+  }
+}
