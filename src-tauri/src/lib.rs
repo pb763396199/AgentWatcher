@@ -18,11 +18,13 @@ const COPILOT_TITLE_SAMPLE_LINES: usize = 240;
 const CLAUDE_TITLE_SAMPLE_LINES: usize = 240;
 const JSONL_HEAD_SAMPLE_BYTES: usize = 128 * 1024;
 const JSONL_TAIL_SAMPLE_BYTES: usize = 256 * 1024;
-const STATUS_RUNNING_WINDOW_MS: u64 = 20_000;
-const STATUS_WAITING_WINDOW_MS: u64 = 10 * 60_000;
-const STATUS_FILE_WAITING_WINDOW_MS: u64 = 3 * 60_000;
+const STATUS_RUNNING_HINT_WINDOW_MS: u64 = 2 * 60 * 60_000;
+const STATUS_RECENT_CONTENT_WINDOW_MS: u64 = 10 * 60_000;
+const STATUS_RECENT_FILE_WINDOW_MS: u64 = 3 * 60_000;
 const BRIDGE_EXTENSION_FOLDER_PREFIX: &str = "agentwatcher.agentwatcher-bridge-";
 const BRIDGE_EXTENSION_URI_AUTHORITY: &str = "agentwatcher.agentwatcher-bridge";
+const RUNTIME_ICON_SIZE: u32 = 256;
+const RUNTIME_ICON_RGBA: &[u8] = include_bytes!("../icons/icon-runtime-256.rgba");
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -53,6 +55,17 @@ struct OpenSessionRequest {
     session_resource: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeStatus {
+    installed: bool,
+    needs_update: bool,
+    local_version: String,
+    installed_version: Option<String>,
+    code_path: Option<String>,
+    message: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ScanOptions {
@@ -78,6 +91,12 @@ enum ActivitySource {
     FileModified,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionStatusHint {
+    Running,
+    Waiting,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct JsonlFingerprint {
     len: u64,
@@ -95,6 +114,7 @@ struct CachedJsonlSummary<T> {
 struct CopilotSessionSummary {
     session_id: String,
     title: Option<String>,
+    status_hint: Option<SessionStatusHint>,
     latest_timestamp_ms: Option<u64>,
     message_count: u32,
     archived: bool,
@@ -105,6 +125,7 @@ struct ClaudeSessionSummary {
     title: Option<String>,
     workspace_path: Option<String>,
     branch: Option<String>,
+    status_hint: Option<SessionStatusHint>,
     latest_timestamp_ms: Option<u64>,
     message_count: u32,
     archived: bool,
@@ -114,6 +135,66 @@ static COPILOT_SESSION_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlSummary<
     OnceLock::new();
 static CLAUDE_SESSION_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlSummary<ClaudeSessionSummary>>>> =
     OnceLock::new();
+
+#[tauri::command]
+fn get_bridge_status() -> BridgeStatus {
+    let local_version = get_local_bridge_version();
+    let installed_version = get_installed_bridge_version();
+    let code_path = find_code_cli_path();
+
+    let installed = bridge_extension_installed();
+    let needs_update = if let (Some(local), Some(installed)) = (parse_version(&local_version), parse_version(&installed_version.clone().unwrap_or_default())) {
+        local > installed
+    } else {
+        false
+    };
+
+    let message = if !installed {
+        "Bridge extension not installed".to_string()
+    } else if needs_update {
+        "Update available".to_string()
+    } else {
+        "Bridge installed and up to date".to_string()
+    };
+
+    BridgeStatus {
+        installed,
+        needs_update,
+        local_version,
+        installed_version,
+        code_path,
+        message,
+    }
+}
+
+#[tauri::command]
+fn install_bridge() -> Result<String, String> {
+    let vscode_bridge_dir = find_bridge_source_dir()
+        .ok_or_else(|| "Bridge source directory not found".to_string())?;
+    let local_version = get_local_bridge_version();
+    let vsix_path = find_bridge_vsix(&vscode_bridge_dir, &local_version)
+        .map(Ok)
+        .unwrap_or_else(|| package_bridge_vsix(&vscode_bridge_dir, &local_version))?;
+
+    let code_path = find_code_cli_path().ok_or("VS Code CLI not found")?;
+    let mut install_cmd = Command::new(&code_path);
+    install_cmd
+        .args(["--install-extension"])
+        .arg(&vsix_path)
+        .arg("--force");
+
+    let install_output = spawn_hidden_with_output(install_cmd)
+        .map_err(|e| format!("Failed to install bridge extension: {}", e))?;
+
+    if !install_output.status.success() {
+        return Err(format!(
+            "Bridge installation failed: {}",
+            String::from_utf8_lossy(&install_output.stderr)
+        ));
+    }
+
+    Ok("Bridge extension installed successfully".to_string())
+}
 
 #[tauri::command]
 fn scan_sessions(options: Option<ScanOptions>) -> Vec<AgentSession> {
@@ -454,6 +535,7 @@ fn read_copilot_session(
     let CopilotSessionSummary {
         session_id,
         title,
+        status_hint,
         latest_timestamp_ms,
         message_count,
         archived,
@@ -469,7 +551,7 @@ fn read_copilot_session(
         return None;
     }
 
-    let status = status_from_activity(updated_ms, scan_time_ms, activity_source);
+    let status = status_from_activity(updated_ms, scan_time_ms, activity_source, status_hint);
     let title = title.unwrap_or_else(|| fallback_session_title("Copilot", &workspace_info.display_name, &session_id));
     let session_resource = copilot_session_resource(&session_id);
 
@@ -562,6 +644,7 @@ fn read_claude_jsonl_session(
         title,
         workspace_path,
         branch,
+        status_hint,
         latest_timestamp_ms,
         message_count,
         archived,
@@ -577,7 +660,7 @@ fn read_claude_jsonl_session(
         return None;
     }
 
-    let status = status_from_activity(updated_ms, scan_time_ms, activity_source);
+    let status = status_from_activity(updated_ms, scan_time_ms, activity_source, status_hint);
     let workspace = workspace_path
         .as_deref()
         .map(Path::new)
@@ -624,6 +707,7 @@ fn read_copilot_session_summary(
     let mut session_id = file_stem(session_path).unwrap_or_else(|| "unknown".to_string());
     let mut alias_title = None;
     let mut prompt_title = None;
+    let mut status_hint = None;
     let mut archived = false;
     let mut latest_timestamp_ms = None;
     let mut head_message_count = 0u32;
@@ -656,6 +740,7 @@ fn read_copilot_session_summary(
         if is_copilot_message_event(json_value) {
             tail_message_count = tail_message_count.saturating_add(1);
         }
+        update_copilot_status_hint(&mut status_hint, json_value);
         if let Some(next_title) = copilot_alias_title_text(json_value).and_then(title_candidate_from_text) {
             alias_title = Some(next_title);
         }
@@ -664,6 +749,7 @@ fn read_copilot_session_summary(
     Some(CopilotSessionSummary {
         session_id,
         title: alias_title.or(prompt_title),
+        status_hint,
         latest_timestamp_ms,
         message_count: sampled_message_count(head_message_count, tail_message_count, tail_covers_file),
         archived,
@@ -693,6 +779,8 @@ fn read_claude_session_summary(
     let mut prompt_title = None;
     let mut workspace_path = None;
     let mut branch = None;
+    let mut status_hint = None;
+    let mut pending_ask_user_question_ids = HashSet::new();
     let mut archived = false;
     let mut latest_timestamp_ms = None;
     let mut head_message_count = 0u32;
@@ -734,6 +822,7 @@ fn read_claude_session_summary(
         if is_claude_message_event(json_value) {
             tail_message_count = tail_message_count.saturating_add(1);
         }
+        update_claude_status_hint(&mut status_hint, &mut pending_ask_user_question_ids, json_value);
         if let Some(next_title) = claude_alias_title_text(json_value).and_then(title_candidate_from_text) {
             alias_title = Some(next_title);
         } else if slug_title.is_none() {
@@ -745,6 +834,7 @@ fn read_claude_session_summary(
         title: alias_title.or(slug_title).or(prompt_title),
         workspace_path,
         branch,
+        status_hint,
         latest_timestamp_ms,
         message_count: sampled_message_count(head_message_count, tail_message_count, tail_covers_file),
         archived,
@@ -902,6 +992,86 @@ fn sampled_message_count(head_message_count: u32, tail_message_count: u32, tail_
     }
 }
 
+fn update_copilot_status_hint(status_hint: &mut Option<SessionStatusHint>, json_value: &Value) {
+    if let Some(response_hint) = copilot_response_status_hint(json_value) {
+        *status_hint = Some(response_hint);
+    } else if input_text_from_copilot_event(json_value).is_some() {
+        *status_hint = Some(SessionStatusHint::Running);
+    }
+}
+
+fn copilot_response_status_hint(json_value: &Value) -> Option<SessionStatusHint> {
+    if !key_path_ends_with(json_value, &["response"]) {
+        return None;
+    }
+
+    let response_items = json_value
+        .get("v")
+        .or_else(|| json_value.pointer("/data/v"))
+        .and_then(Value::as_array)?;
+    let mut response_hint = None;
+    for response_item in response_items {
+        let Some(kind) = string_at(response_item, &["/kind"]) else {
+            continue;
+        };
+        if kind == "hook" {
+            continue;
+        }
+
+        if kind == "questionCarousel" {
+            response_hint = Some(SessionStatusHint::Waiting);
+        } else if kind == "toolInvocationSerialized"
+            && string_at(response_item, &["/toolId"]) == Some("vscode_askQuestions")
+            && !bool_at(response_item, &["/isComplete"]).unwrap_or(false)
+        {
+            response_hint = Some(SessionStatusHint::Waiting);
+        } else {
+            response_hint = Some(SessionStatusHint::Running);
+        }
+    }
+
+    response_hint
+}
+
+fn update_claude_status_hint(
+    status_hint: &mut Option<SessionStatusHint>,
+    pending_ask_user_question_ids: &mut HashSet<String>,
+    json_value: &Value,
+) {
+    let mut saw_regular_activity = false;
+    if let Some(content_blocks) = json_array_at(json_value, &["/message/content"]) {
+        for content_block in content_blocks {
+            match string_at(content_block, &["/type"]) {
+                Some("tool_use") if string_at(content_block, &["/name"]) == Some("AskUserQuestion") => {
+                    if let Some(tool_use_id) = string_at(content_block, &["/id"]) {
+                        pending_ask_user_question_ids.insert(tool_use_id.to_string());
+                    }
+                }
+                Some("tool_result") => {
+                    if let Some(tool_use_id) = string_at(content_block, &["/tool_use_id"]) {
+                        pending_ask_user_question_ids.remove(tool_use_id);
+                    }
+                    saw_regular_activity = true;
+                }
+                Some("tool_use") | Some("text") | Some("thinking") => {
+                    saw_regular_activity = true;
+                }
+                _ => {}
+            }
+        }
+    } else if is_claude_message_event(json_value) {
+        saw_regular_activity = true;
+    }
+
+    if pending_ask_user_question_ids.is_empty() {
+        if saw_regular_activity {
+            *status_hint = Some(SessionStatusHint::Running);
+        }
+    } else {
+        *status_hint = Some(SessionStatusHint::Waiting);
+    }
+}
+
 fn is_copilot_message_event(json_value: &Value) -> bool {
     input_text_from_copilot_event(json_value).is_some() || json_kind(json_value) == Some(1)
 }
@@ -980,7 +1150,7 @@ fn read_claude_entry(
         return None;
     }
 
-    let status = status_from_activity(updated_ms, scan_time_ms, ActivitySource::FileModified);
+    let status = status_from_activity(updated_ms, scan_time_ms, ActivitySource::FileModified, None);
     let workspace = workspace_path
         .as_deref()
         .map(Path::new)
@@ -1056,7 +1226,7 @@ fn resolve_scan_options(options: Option<ScanOptions>) -> ResolvedScanOptions {
         max_sessions: options
             .max_sessions
             .unwrap_or(DEFAULT_MAX_ACTIVE_SESSIONS)
-            .clamp(10, 300),
+            .clamp(1, 5000),
         active_window_ms: active_days.saturating_mul(24 * 60 * 60 * 1000),
         hide_archived: options.hide_archived.unwrap_or(true),
         include_copilot: options.include_copilot.unwrap_or(true),
@@ -1079,6 +1249,12 @@ fn string_at<'json>(json_value: &'json Value, pointers: &[&str]) -> Option<&'jso
     pointers
         .iter()
         .find_map(|pointer| json_value.pointer(pointer).and_then(Value::as_str))
+}
+
+fn json_array_at<'json>(json_value: &'json Value, pointers: &[&str]) -> Option<&'json Vec<Value>> {
+    pointers
+        .iter()
+        .find_map(|pointer| json_value.pointer(pointer).and_then(Value::as_array))
 }
 
 fn newest_timestamp_ms(current_timestamp_ms: Option<u64>, candidate_timestamp_ms: Option<u64>) -> Option<u64> {
@@ -1219,6 +1395,15 @@ fn input_text_from_copilot_event(json_value: &Value) -> Option<&str> {
     } else {
         None
     }
+}
+
+fn key_path_ends_with(json_value: &Value, suffix: &[&str]) -> bool {
+    json_value
+        .get("k")
+        .or_else(|| json_value.pointer("/data/k"))
+        .and_then(Value::as_array)
+        .map(|key_path| json_path_ends_with(key_path, suffix))
+        .unwrap_or(false)
 }
 
 fn json_path_ends_with(key_path: &[Value], suffix: &[&str]) -> bool {
@@ -1634,21 +1819,30 @@ fn is_leap_year(year: i32) -> bool {
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
-fn status_from_activity(updated_ms: u64, scan_time_ms: u64, activity_source: ActivitySource) -> String {
+fn status_from_activity(
+    updated_ms: u64,
+    scan_time_ms: u64,
+    activity_source: ActivitySource,
+    status_hint: Option<SessionStatusHint>,
+) -> String {
+    if status_hint == Some(SessionStatusHint::Waiting) {
+        return "waiting".to_string();
+    }
+
     let age_ms = scan_time_ms.saturating_sub(updated_ms);
-    if age_ms <= STATUS_RUNNING_WINDOW_MS {
+    if (status_hint == Some(SessionStatusHint::Running) && age_ms <= STATUS_RUNNING_HINT_WINDOW_MS)
+        || age_ms <= recent_activity_window_ms(activity_source)
+    {
         "running".to_string()
-    } else if age_ms <= waiting_window_ms(activity_source) {
-        "waiting".to_string()
     } else {
         "idle".to_string()
     }
 }
 
-fn waiting_window_ms(activity_source: ActivitySource) -> u64 {
+fn recent_activity_window_ms(activity_source: ActivitySource) -> u64 {
     match activity_source {
-        ActivitySource::ContentTimestamp => STATUS_WAITING_WINDOW_MS,
-        ActivitySource::FileModified => STATUS_FILE_WAITING_WINDOW_MS,
+        ActivitySource::ContentTimestamp => STATUS_RECENT_CONTENT_WINDOW_MS,
+        ActivitySource::FileModified => STATUS_RECENT_FILE_WINDOW_MS,
     }
 }
 
@@ -1743,17 +1937,315 @@ fn spawn_hidden(mut command: Command) -> std::io::Result<Child> {
     command.spawn()
 }
 
+fn spawn_hidden_with_output(mut command: Command) -> std::io::Result<std::process::Output> {
+    #[cfg(target_os = "windows")]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    command.output()
+}
+
+fn get_local_bridge_version() -> String {
+    if let Some(package_json_path) = find_bridge_source_dir().map(|dir| dir.join("package.json")) {
+        if let Some(json_value) = read_json_file(&package_json_path) {
+            if let Some(version) = string_at(&json_value, &["/version"]) {
+                return version.to_string();
+            }
+        }
+    }
+
+    "0.0.1".to_string()
+}
+
+fn get_installed_bridge_version() -> Option<String> {
+    let user_profile_path = env::var_os("USERPROFILE")?;
+    let user_profile_path = PathBuf::from(user_profile_path);
+
+    for extensions_dir in [
+        user_profile_path.join(".vscode").join("extensions"),
+        user_profile_path.join(".vscode-insiders").join("extensions"),
+    ] {
+        for entry in read_directory(&extensions_dir) {
+            let folder_name = entry.file_name().to_string_lossy().to_string();
+            if folder_name.starts_with(BRIDGE_EXTENSION_FOLDER_PREFIX) {
+                let package_json_path = entry.path().join("package.json");
+                if let Some(json_value) = read_json_file(&package_json_path) {
+                    if let Some(version) = string_at(&json_value, &["/version"]) {
+                        return Some(version.to_string());
+                    }
+                }
+                return Some("unknown".to_string());
+            }
+        }
+    }
+
+    None
+}
+
+fn find_bridge_source_dir() -> Option<PathBuf> {
+    bridge_base_dirs()
+        .into_iter()
+        .map(|base_dir| base_dir.join("vscode-agentwatcher-bridge"))
+        .find(|bridge_dir| bridge_dir.join("package.json").exists())
+}
+
+fn find_bridge_vsix(bridge_dir: &Path, local_version: &str) -> Option<PathBuf> {
+    let mut fallback_vsix: Option<PathBuf> = None;
+    let version_token = safe_file_name_token(local_version);
+
+    for entry in read_directory(bridge_dir) {
+        let path = entry.path();
+        if !has_extension(&path, "vsix") {
+            continue;
+        }
+
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        if !version_token.is_empty() && file_name.contains(&version_token) {
+            return Some(path);
+        }
+
+        fallback_vsix = Some(match fallback_vsix {
+            Some(existing_path)
+                if modified_time_ms(&existing_path).unwrap_or(0) >= modified_time_ms(&path).unwrap_or(0) =>
+            {
+                existing_path
+            }
+            _ => path,
+        });
+    }
+
+    fallback_vsix
+}
+
+fn package_bridge_vsix(bridge_dir: &Path, local_version: &str) -> Result<PathBuf, String> {
+    let npx_path = find_npx_cli_path().ok_or_else(|| "npx CLI not found".to_string())?;
+    let package_dir = env::temp_dir().join("AgentWatcher");
+    fs::create_dir_all(&package_dir)
+        .map_err(|error| format!("Failed to prepare bridge package directory: {}", error))?;
+
+    let vsix_path = package_dir.join(format!(
+        "agentwatcher-bridge-{}.vsix",
+        safe_file_name_token(local_version)
+    ));
+
+    let mut package_cmd = Command::new(npx_path);
+    package_cmd
+        .args(["--yes", "@vscode/vsce", "package", "--skip-license", "--out"])
+        .arg(&vsix_path)
+        .current_dir(bridge_dir);
+
+    let package_output = spawn_hidden_with_output(package_cmd)
+        .map_err(|error| format!("Failed to package bridge extension: {}", error))?;
+
+    if !package_output.status.success() {
+        return Err(format!(
+            "Bridge packaging failed: {}",
+            String::from_utf8_lossy(&package_output.stderr)
+        ));
+    }
+
+    Ok(vsix_path)
+}
+
+fn safe_file_name_token(text: &str) -> String {
+    text.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn bridge_base_dirs() -> Vec<PathBuf> {
+    let mut base_dirs = Vec::new();
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            push_unique_path(&mut base_dirs, exe_dir.to_path_buf());
+            for ancestor in exe_dir.ancestors().take(5).skip(1) {
+                push_unique_path(&mut base_dirs, ancestor.to_path_buf());
+            }
+        }
+    }
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        push_unique_path(&mut base_dirs, current_dir);
+    }
+
+    base_dirs
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|existing_path| existing_path == &path) {
+        paths.push(path);
+    }
+}
+
+fn find_code_cli_path() -> Option<String> {
+    // Try PATH first
+    for candidate in ["code", "code.cmd", "code.exe"] {
+        let mut test_cmd = Command::new(candidate);
+        test_cmd.arg("--version");
+        if spawn_hidden_with_output(test_cmd).is_ok() {
+            return Some(candidate.to_string());
+        }
+    }
+
+    // Try common Windows locations
+    let common_paths = vec![
+        env::var_os("LOCALAPPDATA").map(|p| {
+            PathBuf::from(p)
+                .join("Programs")
+                .join("Microsoft VS Code")
+                .join("bin")
+                .join("code.cmd")
+        }),
+        env::var_os("LOCALAPPDATA").map(|p| {
+            PathBuf::from(p)
+                .join("Programs")
+                .join("Microsoft VS Code")
+                .join("Code.exe")
+        }),
+        Some(PathBuf::from("C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd")),
+        Some(PathBuf::from("C:\\Program Files\\Microsoft VS Code\\Code.exe")),
+        Some(PathBuf::from("C:\\Program Files (x86)\\Microsoft VS Code\\bin\\code.cmd")),
+        Some(PathBuf::from("C:\\Program Files (x86)\\Microsoft VS Code\\Code.exe")),
+    ];
+
+    for path_option in common_paths {
+        if let Some(path) = path_option {
+            if path.exists() {
+                return Some(path_to_string(&path));
+            }
+        }
+    }
+
+    None
+}
+
+fn find_npx_cli_path() -> Option<String> {
+    for candidate in ["npx", "npx.cmd", "npx.exe"] {
+        let mut test_cmd = Command::new(candidate);
+        test_cmd.arg("--version");
+        if spawn_hidden_with_output(test_cmd)
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+        {
+            return Some(candidate.to_string());
+        }
+    }
+
+    None
+}
+
+fn parse_version(version_str: &str) -> Option<Vec<u32>> {
+    version_str
+        .split('.')
+        .map(|part| part.parse::<u32>().ok())
+        .collect()
+}
+
+fn auto_install_bridge_on_startup() {
+    std::thread::spawn(|| {
+        let status = get_bridge_status();
+        if !status.installed || status.needs_update {
+            let _ = install_bridge();
+        }
+    });
+}
+
+fn runtime_window_icon() -> Option<tauri::image::Image<'static>> {
+    let expected_bytes = (RUNTIME_ICON_SIZE * RUNTIME_ICON_SIZE * 4) as usize;
+    if RUNTIME_ICON_RGBA.len() != expected_bytes {
+        return None;
+    }
+
+    Some(tauri::image::Image::new(
+        RUNTIME_ICON_RGBA,
+        RUNTIME_ICON_SIZE,
+        RUNTIME_ICON_SIZE,
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn apply_native_window_icons<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        HICON, PrivateExtractIconsW, SendMessageW, ICON_BIG, ICON_SMALL, ICON_SMALL2, WM_SETICON,
+    };
+
+    let Ok(raw_hwnd) = window.hwnd() else {
+        return;
+    };
+
+    let Some(exe_path) = std::env::current_exe().ok() else {
+        return;
+    };
+
+    let exe_path_wide: Vec<u16> = exe_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    fn extract_icon(exe_path_wide: &[u16], icon_size: i32) -> Option<HICON> {
+        let mut icon: HICON = std::ptr::null_mut();
+        let mut icon_id = 0u32;
+        let count = unsafe {
+            PrivateExtractIconsW(
+                exe_path_wide.as_ptr(),
+                0,
+                icon_size,
+                icon_size,
+                &mut icon,
+                &mut icon_id,
+                1,
+                0,
+            )
+        };
+
+        if count == 0 || icon.is_null() {
+            None
+        } else {
+            Some(icon)
+        }
+    }
+
+    unsafe {
+        let hwnd = raw_hwnd.0 as _;
+        if let Some(big_icon) = extract_icon(&exe_path_wide, 256) {
+            let _ = SendMessageW(hwnd, WM_SETICON, ICON_BIG as usize, big_icon as isize);
+        }
+
+        if let Some(small_icon) = extract_icon(&exe_path_wide, 32) {
+            let _ = SendMessageW(hwnd, WM_SETICON, ICON_SMALL as usize, small_icon as isize);
+            let _ = SendMessageW(hwnd, WM_SETICON, ICON_SMALL2 as usize, small_icon as isize);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![scan_sessions, open_session])
+        .invoke_handler(tauri::generate_handler![scan_sessions, open_session, get_bridge_status, install_bridge])
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
+                if let Some(icon) = runtime_window_icon() {
+                    let _ = window.set_icon(icon);
+                }
+                #[cfg(target_os = "windows")]
+                apply_native_window_icons(&window);
                 let _ = window.set_always_on_top(true);
                 let _ = window.set_decorations(false);
                 let _ = window.set_resizable(true);
             }
+
+            auto_install_bridge_on_startup();
 
             Ok(())
         })

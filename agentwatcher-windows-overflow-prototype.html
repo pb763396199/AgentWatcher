@@ -84,28 +84,6 @@
       color: #1f1f1f;
     }
 
-    body[data-theme="light"] .rail-count.waiting {
-      border-color: rgba(209, 52, 56, 0.64);
-      background: #fff1f2;
-      color: #a4262c;
-    }
-
-    body[data-theme="light"] .rail-count.running {
-      border-color: rgba(0, 120, 212, 0.62);
-      background: #eef6ff;
-      color: #005a9e;
-    }
-
-    body[data-theme="light"] .rail-count.idle {
-      border-color: rgba(76, 132, 42, 0.58);
-      background: #f0f8ea;
-      color: #3c6c1f;
-    }
-
-    body[data-theme="light"] .rail-count span {
-      color: currentColor;
-    }
-
     body[data-theme="light"] .provider {
       background: #ffffff;
     }
@@ -197,10 +175,18 @@
       border-radius: 8px;
       background: var(--surface);
       box-shadow: var(--shadow);
+      opacity: 1;
+      transform: translateX(0) scale(1);
+      transform-origin: left top;
+      clip-path: inset(0 0 0 0 round 8px);
+      transition: opacity 160ms ease, transform 180ms ease, clip-path 180ms ease;
     }
 
     body.is-rail-only .watcher-window {
-      display: none;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateX(-12px) scale(0.985);
+      clip-path: inset(0 100% 0 0 round 8px);
     }
 
     body.is-rail-only .compact-rail {
@@ -365,6 +351,14 @@
       height: 26px;
       padding: 0 7px;
       font-size: 12px;
+      appearance: textfield;
+      -moz-appearance: textfield;
+    }
+
+    .setting-number::-webkit-outer-spin-button,
+    .setting-number::-webkit-inner-spin-button {
+      margin: 0;
+      -webkit-appearance: none;
     }
 
     .setting-check {
@@ -740,28 +734,6 @@
     }
 
     .watcher-window.micro-cards .card-foot {
-      left: auto;
-      right: 5px;
-      bottom: 5px;
-      width: 6px;
-      height: 6px;
-      display: block;
-      font-size: 0;
-    }
-
-    .watcher-window.micro-cards .card-foot span {
-      display: none;
-    }
-
-    .watcher-window.micro-cards .meter {
-      width: 6px;
-      height: 6px;
-      display: block;
-      border-radius: 50%;
-      background: currentColor;
-    }
-
-    .watcher-window.micro-cards .meter::after {
       display: none;
     }
 
@@ -827,7 +799,7 @@
       bottom: var(--tile-padding);
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      justify-content: flex-start;
       gap: 6px;
       color: var(--muted);
       font-size: max(9px, calc(var(--tile-meta) - 1px));
@@ -839,31 +811,6 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-
-    .meter {
-      position: relative;
-      width: 34px;
-      height: 3px;
-      flex: 0 0 auto;
-      overflow: hidden;
-      border-radius: 99px;
-      background: #3a3a3a;
-    }
-
-    .meter::after {
-      content: "";
-      position: absolute;
-      inset: 0 auto 0 0;
-      width: 56%;
-      border-radius: inherit;
-      background: currentColor;
-    }
-
-    .session-card.waiting .meter { color: var(--waiting); }
-    .session-card.running .meter { color: var(--running); }
-    .session-card.idle .meter { color: var(--idle); }
-    .session-card.running .meter::after { animation: runningMeter 1.2s ease-in-out infinite alternate; }
-    .session-card.waiting .meter::after { width: 100%; animation: waitingMeter 1.4s ease-in-out infinite; }
 
     .overflow-footer {
       display: grid;
@@ -920,14 +867,16 @@
       border-radius: 8px;
       background: #202020;
       box-shadow: none;
-      transition: opacity 120ms ease;
+      transition: top 180ms ease, height 180ms ease, border-color 140ms ease, background 140ms ease;
     }
 
     .rail-logo {
+      position: relative;
       width: 30px;
       height: 28px;
       display: grid;
       place-items: center;
+      overflow: hidden;
       border: 1px solid var(--accent);
       border-radius: 6px;
       background: transparent;
@@ -935,6 +884,58 @@
       cursor: pointer;
       font-size: 11px;
       font-weight: 700;
+      transition: transform 90ms ease, border-color 120ms ease, background 120ms ease, box-shadow 120ms ease, color 120ms ease;
+    }
+
+    .rail-logo::before,
+    .rail-logo::after {
+      content: "";
+      position: absolute;
+      pointer-events: none;
+    }
+
+    .rail-logo::before {
+      width: 20px;
+      height: 20px;
+      border: 1px solid rgba(55, 148, 255, 0.8);
+      border-radius: 50%;
+      opacity: 0;
+      transform: scale(0.55);
+    }
+
+    .rail-logo::after {
+      inset: -14px;
+      background: linear-gradient(90deg, transparent 34%, rgba(55, 148, 255, 0.34) 50%, transparent 66%);
+      opacity: 0;
+      transform: translateX(-34px) rotate(24deg);
+    }
+
+    .rail-logo:hover,
+    .rail-logo:focus-visible {
+      outline: none;
+      border-color: #3794ff;
+      background: rgba(0, 120, 212, 0.18);
+      box-shadow: inset 0 0 0 1px rgba(55, 148, 255, 0.18);
+      color: #ffffff;
+    }
+
+    .rail-logo:active,
+    .rail-logo.is-pressed {
+      transform: scale(0.94);
+      background: rgba(0, 120, 212, 0.28);
+    }
+
+    .rail-logo.is-scanning::before {
+      animation: railSearchPulse 560ms ease-out;
+    }
+
+    .rail-logo.is-scanning::after {
+      animation: railSearchSweep 560ms ease-out;
+    }
+
+    body.is-rail-only .rail-logo {
+      border-color: #3794ff;
+      background: rgba(0, 120, 212, 0.22);
     }
 
     .rail-counts {
@@ -1051,21 +1052,23 @@
       50% { opacity: 1; }
     }
 
-    @keyframes waitingMeter {
-      0%, 100% { opacity: 0.34; }
-      50% { opacity: 0.95; }
+    @keyframes railSearchPulse {
+      0% { opacity: 0; transform: scale(0.45); }
+      36% { opacity: 0.95; }
+      100% { opacity: 0; transform: scale(1.45); }
     }
 
-    @keyframes runningMeter {
-      from { transform: translateX(-14%); }
-      to { transform: translateX(18%); }
+    @keyframes railSearchSweep {
+      0% { opacity: 0; transform: translateX(-34px) rotate(24deg); }
+      18% { opacity: 1; }
+      100% { opacity: 0; transform: translateX(34px) rotate(24deg); }
     }
   </style>
 </head>
 <body data-theme="dark" data-lang="en">
   <main class="desktop" aria-label="AgentWatcher runtime shell">
     <aside class="compact-rail" aria-label="Compact floating rail preview">
-      <div class="rail-logo" role="button" tabindex="0" aria-label="Restore AgentWatcher window">AW</div>
+      <div class="rail-logo" role="button" tabindex="0" aria-label="Toggle AgentWatcher window" aria-expanded="true">AW</div>
       <div class="rail-counts">
         <div class="rail-count waiting"><span>8</span></div>
         <div class="rail-count running"><span>12</span></div>
@@ -1124,11 +1127,18 @@
           </div>
           <div class="setting-row">
             <label for="maxSessions" data-i18n="maxSessions">Max sessions</label>
-            <input class="setting-number" id="maxSessions" type="number" min="10" max="300" step="10" value="80" />
+            <input class="setting-number" id="maxSessions" type="number" min="1" max="5000" step="1" inputmode="numeric" value="80" />
           </div>
           <div class="setting-row">
             <label for="refreshIntervalSeconds" data-i18n="refreshInterval">Refresh interval (sec)</label>
-            <input class="setting-number" id="refreshIntervalSeconds" type="number" min="5" max="120" step="5" value="15" />
+            <input class="setting-number" id="refreshIntervalSeconds" type="number" min="1" max="3600" step="1" inputmode="numeric" value="15" />
+          </div>
+        </div>
+        <div class="settings-group">
+          <div class="settings-group-title">VS Code Bridge</div>
+          <div class="setting-row">
+            <span id="bridgeStatus" style="font-size: 11px; color: var(--muted);">Checking...</span>
+            <button class="preset-btn" id="bridgeAction" type="button" style="padding: 3px 8px; font-size: 11px;" disabled>Install</button>
           </div>
         </div>
       </section>
@@ -1172,44 +1182,44 @@
             <section class="lane waiting" data-status="waiting" data-total="8">
               <div class="lane-header"><span class="lane-label"><span class="lane-dot"></span><span class="lane-name" data-lane-name="waiting">Waiting</span> <span class="lane-count">8</span></span><span class="lane-note" data-lane-note="priority">priority</span></div>
               <div class="cards">
-                <button class="session-card waiting" type="button" data-open="AesWorld"><div class="card-head"><span class="provider cl">C</span><span class="time">02:14</span></div><div class="workspace">AesWorld</div><div class="session-title">Review required</div><div class="card-foot"><span>User input</span><i class="meter"></i></div></button>
-                <button class="session-card waiting" type="button" data-open="AgentWatcher"><div class="card-head"><span class="provider gh">GH</span><span class="time">00:42</span></div><div class="workspace">AgentWatcher</div><div class="session-title">Pick UI path</div><div class="card-foot"><span>Decision</span><i class="meter"></i></div></button>
-                <button class="session-card waiting" type="button" data-open="UE Master"><div class="card-head"><span class="provider cl">C</span><span class="time">05:06</span></div><div class="workspace">UE Master</div><div class="session-title">Permission hold</div><div class="card-foot"><span>Confirm</span><i class="meter"></i></div></button>
-                <button class="session-card waiting" type="button" data-open="Prefab"><div class="card-head"><span class="provider gh">GH</span><span class="time">07:30</span></div><div class="workspace">Prefab</div><div class="session-title">Choose variant</div><div class="card-foot"><span>Waiting</span><i class="meter"></i></div></button>
-                <button class="session-card waiting" type="button" data-open="Marker"><div class="card-head"><span class="provider cl">C</span><span class="time">09:02</span></div><div class="workspace">Marker</div><div class="session-title">Needs answer</div><div class="card-foot"><span>Waiting</span><i class="meter"></i></div></button>
-                <button class="session-card waiting" type="button" data-open="RoadMask"><div class="card-head"><span class="provider gh">GH</span><span class="time">11:48</span></div><div class="workspace">RoadMask</div><div class="session-title">Resolve prompt</div><div class="card-foot"><span>Waiting</span><i class="meter"></i></div></button>
-                <button class="session-card waiting" type="button" data-open="SubLevels"><div class="card-head"><span class="provider cl">C</span><span class="time">13:25</span></div><div class="workspace">SubLevels</div><div class="session-title">Select option</div><div class="card-foot"><span>Waiting</span><i class="meter"></i></div></button>
-                <button class="session-card waiting" type="button" data-open="Runtime"><div class="card-head"><span class="provider gh">GH</span><span class="time">15:00</span></div><div class="workspace">Runtime</div><div class="session-title">Approve run</div><div class="card-foot"><span>Waiting</span><i class="meter"></i></div></button>
+                <button class="session-card waiting" type="button" data-open="AesWorld"><div class="card-head"><span class="provider cl">C</span><span class="time">02:14</span></div><div class="workspace">AesWorld</div><div class="session-title">Review required</div><div class="card-foot"><span>User input</span></div></button>
+                <button class="session-card waiting" type="button" data-open="AgentWatcher"><div class="card-head"><span class="provider gh">GH</span><span class="time">00:42</span></div><div class="workspace">AgentWatcher</div><div class="session-title">Pick UI path</div><div class="card-foot"><span>Decision</span></div></button>
+                <button class="session-card waiting" type="button" data-open="UE Master"><div class="card-head"><span class="provider cl">C</span><span class="time">05:06</span></div><div class="workspace">UE Master</div><div class="session-title">Permission hold</div><div class="card-foot"><span>Confirm</span></div></button>
+                <button class="session-card waiting" type="button" data-open="Prefab"><div class="card-head"><span class="provider gh">GH</span><span class="time">07:30</span></div><div class="workspace">Prefab</div><div class="session-title">Choose variant</div><div class="card-foot"><span>Waiting</span></div></button>
+                <button class="session-card waiting" type="button" data-open="Marker"><div class="card-head"><span class="provider cl">C</span><span class="time">09:02</span></div><div class="workspace">Marker</div><div class="session-title">Needs answer</div><div class="card-foot"><span>Waiting</span></div></button>
+                <button class="session-card waiting" type="button" data-open="RoadMask"><div class="card-head"><span class="provider gh">GH</span><span class="time">11:48</span></div><div class="workspace">RoadMask</div><div class="session-title">Resolve prompt</div><div class="card-foot"><span>Waiting</span></div></button>
+                <button class="session-card waiting" type="button" data-open="SubLevels"><div class="card-head"><span class="provider cl">C</span><span class="time">13:25</span></div><div class="workspace">SubLevels</div><div class="session-title">Select option</div><div class="card-foot"><span>Waiting</span></div></button>
+                <button class="session-card waiting" type="button" data-open="Runtime"><div class="card-head"><span class="provider gh">GH</span><span class="time">15:00</span></div><div class="workspace">Runtime</div><div class="session-title">Approve run</div><div class="card-foot"><span>Waiting</span></div></button>
               </div>
             </section>
 
             <section class="lane running" data-status="running" data-total="12">
               <div class="lane-header"><span class="lane-label"><span class="lane-dot"></span><span class="lane-name" data-lane-name="running">Running</span> <span class="lane-count">12</span></span><span class="lane-note" data-lane-note="live">live</span></div>
               <div class="cards">
-                <button class="session-card running" type="button" data-open="Terrain"><div class="card-head"><span class="provider cl">C</span><span class="time">live</span></div><div class="workspace">Terrain</div><div class="session-title">Build fix loop</div><div class="card-foot"><span>Writing</span><i class="meter"></i></div></button>
-                <button class="session-card running" type="button" data-open="Tools"><div class="card-head"><span class="provider gh">GH</span><span class="time">01:18</span></div><div class="workspace">Tools</div><div class="session-title">Index scanner</div><div class="card-foot"><span>Scanning</span><i class="meter"></i></div></button>
-                <button class="session-card running" type="button" data-open="Docs"><div class="card-head"><span class="provider cl">C</span><span class="time">03:44</span></div><div class="workspace">Docs</div><div class="session-title">Research report</div><div class="card-foot"><span>Reading</span><i class="meter"></i></div></button>
-                <button class="session-card running" type="button" data-open="BuildHost"><div class="card-head"><span class="provider gh">GH</span><span class="time">04:12</span></div><div class="workspace">BuildHost</div><div class="session-title">Compile branch</div><div class="card-foot"><span>Running</span><i class="meter"></i></div></button>
-                <button class="session-card running" type="button" data-open="Shader"><div class="card-head"><span class="provider cl">C</span><span class="time">05:50</span></div><div class="workspace">Shader</div><div class="session-title">Shader compile</div><div class="card-foot"><span>Running</span><i class="meter"></i></div></button>
-                <button class="session-card running" type="button" data-open="Tests"><div class="card-head"><span class="provider gh">GH</span><span class="time">06:17</span></div><div class="workspace">Tests</div><div class="session-title">Smoke suite</div><div class="card-foot"><span>Running</span><i class="meter"></i></div></button>
-                <button class="session-card running" type="button" data-open="Atlas"><div class="card-head"><span class="provider cl">C</span><span class="time">07:01</span></div><div class="workspace">Atlas</div><div class="session-title">Review diff</div><div class="card-foot"><span>Running</span><i class="meter"></i></div></button>
-                <button class="session-card running" type="button" data-open="Voxels"><div class="card-head"><span class="provider gh">GH</span><span class="time">07:36</span></div><div class="workspace">Voxels</div><div class="session-title">Generate patch</div><div class="card-foot"><span>Running</span><i class="meter"></i></div></button>
-                <button class="session-card running" type="button" data-open="Bridge"><div class="card-head"><span class="provider cl">C</span><span class="time">08:05</span></div><div class="workspace">Bridge</div><div class="session-title">VS Code API probe</div><div class="card-foot"><span>Running</span><i class="meter"></i></div></button>
-                <button class="session-card running" type="button" data-open="Watcher"><div class="card-head"><span class="provider gh">GH</span><span class="time">08:40</span></div><div class="workspace">Watcher</div><div class="session-title">Parser test</div><div class="card-foot"><span>Running</span><i class="meter"></i></div></button>
-                <button class="session-card running" type="button" data-open="Hooks"><div class="card-head"><span class="provider cl">C</span><span class="time">09:31</span></div><div class="workspace">Hooks</div><div class="session-title">Event sink</div><div class="card-foot"><span>Running</span><i class="meter"></i></div></button>
-                <button class="session-card running" type="button" data-open="Cache"><div class="card-head"><span class="provider gh">GH</span><span class="time">10:14</span></div><div class="workspace">Cache</div><div class="session-title">SQLite model</div><div class="card-foot"><span>Running</span><i class="meter"></i></div></button>
+                <button class="session-card running" type="button" data-open="Terrain"><div class="card-head"><span class="provider cl">C</span><span class="time">live</span></div><div class="workspace">Terrain</div><div class="session-title">Build fix loop</div><div class="card-foot"><span>Writing</span></div></button>
+                <button class="session-card running" type="button" data-open="Tools"><div class="card-head"><span class="provider gh">GH</span><span class="time">01:18</span></div><div class="workspace">Tools</div><div class="session-title">Index scanner</div><div class="card-foot"><span>Scanning</span></div></button>
+                <button class="session-card running" type="button" data-open="Docs"><div class="card-head"><span class="provider cl">C</span><span class="time">03:44</span></div><div class="workspace">Docs</div><div class="session-title">Research report</div><div class="card-foot"><span>Reading</span></div></button>
+                <button class="session-card running" type="button" data-open="BuildHost"><div class="card-head"><span class="provider gh">GH</span><span class="time">04:12</span></div><div class="workspace">BuildHost</div><div class="session-title">Compile branch</div><div class="card-foot"><span>Running</span></div></button>
+                <button class="session-card running" type="button" data-open="Shader"><div class="card-head"><span class="provider cl">C</span><span class="time">05:50</span></div><div class="workspace">Shader</div><div class="session-title">Shader compile</div><div class="card-foot"><span>Running</span></div></button>
+                <button class="session-card running" type="button" data-open="Tests"><div class="card-head"><span class="provider gh">GH</span><span class="time">06:17</span></div><div class="workspace">Tests</div><div class="session-title">Smoke suite</div><div class="card-foot"><span>Running</span></div></button>
+                <button class="session-card running" type="button" data-open="Atlas"><div class="card-head"><span class="provider cl">C</span><span class="time">07:01</span></div><div class="workspace">Atlas</div><div class="session-title">Review diff</div><div class="card-foot"><span>Running</span></div></button>
+                <button class="session-card running" type="button" data-open="Voxels"><div class="card-head"><span class="provider gh">GH</span><span class="time">07:36</span></div><div class="workspace">Voxels</div><div class="session-title">Generate patch</div><div class="card-foot"><span>Running</span></div></button>
+                <button class="session-card running" type="button" data-open="Bridge"><div class="card-head"><span class="provider cl">C</span><span class="time">08:05</span></div><div class="workspace">Bridge</div><div class="session-title">VS Code API probe</div><div class="card-foot"><span>Running</span></div></button>
+                <button class="session-card running" type="button" data-open="Watcher"><div class="card-head"><span class="provider gh">GH</span><span class="time">08:40</span></div><div class="workspace">Watcher</div><div class="session-title">Parser test</div><div class="card-foot"><span>Running</span></div></button>
+                <button class="session-card running" type="button" data-open="Hooks"><div class="card-head"><span class="provider cl">C</span><span class="time">09:31</span></div><div class="workspace">Hooks</div><div class="session-title">Event sink</div><div class="card-foot"><span>Running</span></div></button>
+                <button class="session-card running" type="button" data-open="Cache"><div class="card-head"><span class="provider gh">GH</span><span class="time">10:14</span></div><div class="workspace">Cache</div><div class="session-title">SQLite model</div><div class="card-foot"><span>Running</span></div></button>
               </div>
             </section>
 
             <section class="lane idle" data-status="idle" data-total="31">
               <div class="lane-header"><span class="lane-label"><span class="lane-dot"></span><span class="lane-name" data-lane-name="idle">Idle</span> <span class="lane-count">31</span></span><span class="lane-note" data-lane-note="quiet">quiet</span></div>
               <div class="cards">
-                <button class="session-card idle" type="button" data-open="RuntimeShader"><div class="card-head"><span class="provider cl">C</span><span class="time">18m</span></div><div class="workspace">RuntimeShader</div><div class="session-title">No activity</div><div class="card-foot"><span>Idle</span><i class="meter"></i></div></button>
-                <button class="session-card idle" type="button" data-open="Nanite"><div class="card-head"><span class="provider gh">GH</span><span class="time">24m</span></div><div class="workspace">Nanite</div><div class="session-title">Completed</div><div class="card-foot"><span>Idle</span><i class="meter"></i></div></button>
-                <button class="session-card idle" type="button" data-open="Vegetation"><div class="card-head"><span class="provider cl">C</span><span class="time">31m</span></div><div class="workspace">Vegetation</div><div class="session-title">Paused</div><div class="card-foot"><span>Idle</span><i class="meter"></i></div></button>
-                <button class="session-card idle" type="button" data-open="Buildings"><div class="card-head"><span class="provider gh">GH</span><span class="time">44m</span></div><div class="workspace">Buildings</div><div class="session-title">Archived</div><div class="card-foot"><span>Idle</span><i class="meter"></i></div></button>
-                <button class="session-card idle" type="button" data-open="Traffic"><div class="card-head"><span class="provider cl">C</span><span class="time">52m</span></div><div class="workspace">Traffic</div><div class="session-title">Idle</div><div class="card-foot"><span>Idle</span><i class="meter"></i></div></button>
-                <button class="session-card idle" type="button" data-open="Import"><div class="card-head"><span class="provider gh">GH</span><span class="time">1h</span></div><div class="workspace">Import</div><div class="session-title">No activity</div><div class="card-foot"><span>Idle</span><i class="meter"></i></div></button>
+                <button class="session-card idle" type="button" data-open="RuntimeShader"><div class="card-head"><span class="provider cl">C</span><span class="time">18m</span></div><div class="workspace">RuntimeShader</div><div class="session-title">No activity</div><div class="card-foot"><span>Idle</span></div></button>
+                <button class="session-card idle" type="button" data-open="Nanite"><div class="card-head"><span class="provider gh">GH</span><span class="time">24m</span></div><div class="workspace">Nanite</div><div class="session-title">Completed</div><div class="card-foot"><span>Idle</span></div></button>
+                <button class="session-card idle" type="button" data-open="Vegetation"><div class="card-head"><span class="provider cl">C</span><span class="time">31m</span></div><div class="workspace">Vegetation</div><div class="session-title">Paused</div><div class="card-foot"><span>Idle</span></div></button>
+                <button class="session-card idle" type="button" data-open="Buildings"><div class="card-head"><span class="provider gh">GH</span><span class="time">44m</span></div><div class="workspace">Buildings</div><div class="session-title">Archived</div><div class="card-foot"><span>Idle</span></div></button>
+                <button class="session-card idle" type="button" data-open="Traffic"><div class="card-head"><span class="provider cl">C</span><span class="time">52m</span></div><div class="workspace">Traffic</div><div class="session-title">Idle</div><div class="card-foot"><span>Idle</span></div></button>
+                <button class="session-card idle" type="button" data-open="Import"><div class="card-head"><span class="provider gh">GH</span><span class="time">1h</span></div><div class="workspace">Import</div><div class="session-title">No activity</div><div class="card-foot"><span>Idle</span></div></button>
               </div>
             </section>
           </div>
@@ -1267,6 +1277,8 @@
     const activeWindowDays = document.getElementById('activeWindowDays');
     const maxSessions = document.getElementById('maxSessions');
     const refreshIntervalSeconds = document.getElementById('refreshIntervalSeconds');
+    const bridgeStatus = document.getElementById('bridgeStatus');
+    const bridgeAction = document.getElementById('bridgeAction');
     const urgentChip = document.getElementById('urgentChip');
     const workspaceLabel = document.getElementById('workspaceLabel');
     const perRowLabel = document.getElementById('perRowLabel');
@@ -1332,8 +1344,8 @@
           includeClaude: savedSettings.includeClaude !== false,
           hideArchived: savedSettings.hideArchived !== false,
           activeWindowDays: clampNumber(savedSettings.activeWindowDays, 1, 30, defaultSettings.activeWindowDays),
-          maxSessions: clampNumber(savedSettings.maxSessions, 10, 300, defaultSettings.maxSessions),
-          refreshIntervalSeconds: clampNumber(savedSettings.refreshIntervalSeconds, 5, 120, defaultSettings.refreshIntervalSeconds)
+          maxSessions: clampNumber(savedSettings.maxSessions, 1, 5000, defaultSettings.maxSessions),
+          refreshIntervalSeconds: clampNumber(savedSettings.refreshIntervalSeconds, 1, 3600, defaultSettings.refreshIntervalSeconds)
         };
       } catch (error) {
         return { ...defaultSettings };
@@ -1455,17 +1467,33 @@
         return;
       }
 
-      const rect = watcherWindow.getBoundingClientRect();
+      const stableTop = watcherWindow.offsetTop || 8;
+      const stableHeight = watcherWindow.offsetHeight || watcherWindow.getBoundingClientRect().height;
       compactRail.style.left = '8px';
-      compactRail.style.top = Math.round(rect.top) + 'px';
-      compactRail.style.height = Math.round(Math.min(184, Math.max(156, rect.height * 0.34))) + 'px';
+      compactRail.style.top = Math.round(stableTop) + 'px';
+      compactRail.style.height = Math.round(Math.min(184, Math.max(156, stableHeight * 0.34))) + 'px';
     }
 
     function setRailOnly(enabled) {
       document.body.classList.toggle('is-rail-only', enabled);
       watcherWindow.setAttribute('aria-hidden', enabled ? 'true' : 'false');
       compactRail.setAttribute('aria-expanded', enabled ? 'false' : 'true');
+      railLogo.setAttribute('aria-expanded', enabled ? 'false' : 'true');
+      railLogo.setAttribute('aria-pressed', enabled ? 'true' : 'false');
       requestAnimationFrame(syncCompactRail);
+    }
+
+    function playRailSearchAnimation() {
+      railLogo.classList.remove('is-scanning');
+      railLogo.classList.add('is-pressed');
+      void railLogo.offsetWidth;
+      railLogo.classList.add('is-scanning');
+      window.setTimeout(() => railLogo.classList.remove('is-scanning', 'is-pressed'), 620);
+    }
+
+    function toggleRailWindow() {
+      playRailSearchAnimation();
+      setRailOnly(!document.body.classList.contains('is-rail-only'));
     }
 
     function cardStatus(card) {
@@ -1730,6 +1758,52 @@
       }
     }
 
+    async function checkBridgeStatus() {
+      if (!tauriInvoke) {
+        bridgeStatus.textContent = 'Preview only';
+        bridgeAction.disabled = true;
+        return;
+      }
+
+      try {
+        bridgeStatus.textContent = 'Checking...';
+        bridgeAction.disabled = true;
+        const status = await tauriInvoke('get_bridge_status');
+        bridgeStatus.textContent = status.message || 'Bridge status ready';
+
+        if (!status.installed || status.needsUpdate) {
+          bridgeAction.textContent = status.installed ? 'Update' : 'Install';
+          bridgeAction.disabled = false;
+        } else {
+          bridgeAction.textContent = 'Installed';
+          bridgeAction.disabled = true;
+        }
+      } catch (error) {
+        bridgeStatus.textContent = 'Check failed';
+        bridgeAction.textContent = 'Retry';
+        bridgeAction.disabled = false;
+      }
+    }
+
+    async function installBridge() {
+      if (!tauriInvoke) return;
+
+      try {
+        bridgeStatus.textContent = 'Installing...';
+        bridgeAction.disabled = true;
+        await tauriInvoke('install_bridge');
+        bridgeStatus.textContent = 'Bridge installed';
+        bridgeAction.textContent = 'Installed';
+        showToast('Bridge installed');
+        checkBridgeStatus();
+      } catch (error) {
+        bridgeStatus.textContent = 'Install failed';
+        bridgeAction.textContent = 'Retry';
+        bridgeAction.disabled = false;
+        showToast('Bridge install failed: ' + String(error));
+      }
+    }
+
     function appendText(parent, tagName, className, text) {
       const element = document.createElement(tagName);
       if (className) element.className = className;
@@ -1761,9 +1835,6 @@
       cardFoot.className = 'card-foot';
       const footText = session.branch || (session.messageCount ? session.messageCount + ' msgs' : statusText(status));
       appendText(cardFoot, 'span', '', footText);
-      const meter = document.createElement('i');
-      meter.className = 'meter';
-      cardFoot.appendChild(meter);
       card.appendChild(cardFoot);
 
       return card;
@@ -1824,7 +1895,7 @@
       refreshTimer = 0;
       if (!tauriInvoke) return;
 
-      const refreshIntervalMs = clampNumber(settings.refreshIntervalSeconds, 5, 120, defaultSettings.refreshIntervalSeconds) * 1000;
+      const refreshIntervalMs = clampNumber(settings.refreshIntervalSeconds, 1, 3600, defaultSettings.refreshIntervalSeconds) * 1000;
       refreshTimer = window.setInterval(() => refreshSessions(true), refreshIntervalMs);
     }
 
@@ -1849,6 +1920,9 @@
       const shouldOpen = settingsPanel.hidden;
       settingsPanel.hidden = !shouldOpen;
       settingsToggle.classList.toggle('is-active', shouldOpen);
+      if (shouldOpen) {
+        checkBridgeStatus();
+      }
     });
     settingLangButtons.forEach(button => {
       button.addEventListener('click', () => updateSetting('language', button.dataset.settingLang, { announce: true, refresh: false }));
@@ -1860,17 +1934,16 @@
     includeClaude.addEventListener('change', () => updateSetting('includeClaude', includeClaude.checked, { announce: true }));
     hideArchived.addEventListener('change', () => updateSetting('hideArchived', hideArchived.checked, { announce: true }));
     activeWindowDays.addEventListener('change', () => updateSetting('activeWindowDays', clampNumber(activeWindowDays.value, 1, 30, defaultSettings.activeWindowDays), { announce: true }));
-    maxSessions.addEventListener('change', () => updateSetting('maxSessions', clampNumber(maxSessions.value, 10, 300, defaultSettings.maxSessions), { announce: true }));
-    refreshIntervalSeconds.addEventListener('change', () => updateSetting('refreshIntervalSeconds', clampNumber(refreshIntervalSeconds.value, 5, 120, defaultSettings.refreshIntervalSeconds), { announce: true, reschedule: true }));
+    maxSessions.addEventListener('change', () => updateSetting('maxSessions', clampNumber(maxSessions.value, 1, 5000, defaultSettings.maxSessions), { announce: true }));
+    refreshIntervalSeconds.addEventListener('change', () => updateSetting('refreshIntervalSeconds', clampNumber(refreshIntervalSeconds.value, 1, 3600, defaultSettings.refreshIntervalSeconds), { announce: true, reschedule: true }));
+    bridgeAction.addEventListener('click', installBridge);
     [dragRegion, document.querySelector('.native-titlebar'), appHeader, compactRail].forEach(source => source?.addEventListener('pointerdown', startWindowDrag));
     windowActionButtons.forEach(button => button.addEventListener('click', () => runWindowAction(button.dataset.windowAction)));
-    railLogo.addEventListener('click', () => {
-      if (document.body.classList.contains('is-rail-only')) setRailOnly(false);
-    });
+    railLogo.addEventListener('click', toggleRailWindow);
     railLogo.addEventListener('keydown', event => {
       if (event.key !== 'Enter' && event.key !== ' ') return;
       event.preventDefault();
-      if (document.body.classList.contains('is-rail-only')) setRailOnly(false);
+      toggleRailWindow();
     });
     resizeHandles.forEach(handle => handle.addEventListener('pointerdown', resizeWatcherFromPointer));
 
@@ -1886,6 +1959,7 @@
     syncCompactRail();
     if (tauriInvoke) {
       refreshSessions(false);
+      checkBridgeStatus();
       scheduleSessionRefresh();
     }
   </script>
