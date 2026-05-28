@@ -1,15 +1,18 @@
 #!/usr/bin/env node
-import { writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
+const outputSvg = resolve(repoRoot, 'src-tauri', 'icons', 'icon-source.svg');
 const outputIco = resolve(repoRoot, 'src-tauri', 'icons', 'icon.ico');
 const RUNTIME_ICON_SIZES = [256];
 const ICO_SIZES = [16, 20, 24, 30, 32, 36, 40, 48, 60, 64, 72, 80, 96, 128, 256];
-const SUPERSAMPLE = 4;
+const SUPERSAMPLE = 8;
 const BASE_SIZE = 256;
 
 const COLORS = {
@@ -19,6 +22,174 @@ const COLORS = {
   border: [55, 148, 255, 255],
   letter: [255, 255, 255, 255]
 };
+
+const LOGO_SVG = `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="30" height="28" viewBox="0 0 30 28" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="0" width="30" height="28" rx="6" fill="#202020" />
+  <rect x="0.5" y="0.5" width="29" height="27" rx="5.5" fill="none" stroke="#0078d4" stroke-width="1" />
+  <text x="15" y="14" fill="#ffffff" font-family="Segoe UI, system-ui, sans-serif" font-size="11" font-weight="700" text-anchor="middle" dominant-baseline="central">AW</text>
+</svg>
+`;
+
+function renderRailLogoImages() {
+  if (process.platform !== 'win32') {
+    throw new Error('Icon generation requires Windows so the Segoe UI rail-logo text matches the app UI.');
+  }
+
+  const tempDir = mkdtempSync(join(tmpdir(), 'agentwatcher-icons-'));
+  const scriptPath = join(tempDir, 'render-rail-logo-icons.ps1');
+  const script = String.raw`
+param(
+  [Parameter(Mandatory = $true)][string]$OutputDir,
+  [Parameter(Mandatory = $true)][string]$SizesCsv
+)
+
+$ErrorActionPreference = 'Stop'
+
+try {
+  Add-Type -AssemblyName System.Drawing.Common
+} catch {
+  Add-Type -AssemblyName System.Drawing
+}
+
+function New-RoundedRectanglePath {
+  param(
+    [single]$X,
+    [single]$Y,
+    [single]$Width,
+    [single]$Height,
+    [single]$Radius
+  )
+
+  $path = [System.Drawing.Drawing2D.GraphicsPath]::new()
+  $diameter = $Radius * 2.0
+
+  if ($diameter -le 0) {
+    $path.AddRectangle([System.Drawing.RectangleF]::new($X, $Y, $Width, $Height))
+    return $path
+  }
+
+  $path.AddArc($X, $Y, $diameter, $diameter, 180, 90)
+  $path.AddArc($X + $Width - $diameter, $Y, $diameter, $diameter, 270, 90)
+  $path.AddArc($X + $Width - $diameter, $Y + $Height - $diameter, $diameter, $diameter, 0, 90)
+  $path.AddArc($X, $Y + $Height - $diameter, $diameter, $diameter, 90, 90)
+  $path.CloseFigure()
+  return $path
+}
+
+$sizes = $SizesCsv.Split(',') | ForEach-Object { [int]$_ }
+
+foreach ($size in $sizes) {
+  $bitmap = [System.Drawing.Bitmap]::new($size, $size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+  $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+
+  try {
+    $graphics.Clear([System.Drawing.Color]::Transparent)
+    $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+    $graphics.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+    $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+    $graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+
+    $scale = [single]($size / 30.0)
+    $logoWidth = [single]$size
+    $logoHeight = [single](28.0 * $scale)
+    $logoX = [single]0
+    $logoY = [single](($size - $logoHeight) / 2.0)
+    $borderWidth = [single]$scale
+    $radius = [single](6.0 * $scale)
+
+    $fillPath = New-RoundedRectanglePath $logoX $logoY $logoWidth $logoHeight $radius
+    $fillBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(255, 32, 32, 32))
+    $graphics.FillPath($fillBrush, $fillPath)
+    $fillBrush.Dispose()
+    $fillPath.Dispose()
+
+    $strokeInset = [single]($borderWidth / 2.0)
+    $strokePath = New-RoundedRectanglePath ($logoX + $strokeInset) ($logoY + $strokeInset) ($logoWidth - $borderWidth) ($logoHeight - $borderWidth) ([Math]::Max(0.0, $radius - $strokeInset))
+    $pen = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(255, 0, 120, 212), $borderWidth)
+    $graphics.DrawPath($pen, $strokePath)
+    $pen.Dispose()
+    $strokePath.Dispose()
+
+    $font = [System.Drawing.Font]::new('Segoe UI', [single](11.0 * $scale), [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+    $textBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::White)
+    $format = [System.Drawing.StringFormat]::new()
+    $format.Alignment = [System.Drawing.StringAlignment]::Center
+    $format.LineAlignment = [System.Drawing.StringAlignment]::Center
+    $format.FormatFlags = [System.Drawing.StringFormatFlags]::NoWrap
+    $contentInset = [single](1.0 * $scale)
+    $contentRect = [System.Drawing.RectangleF]::new(
+      $logoX + $contentInset,
+      $logoY + $contentInset,
+      $logoWidth - $contentInset * 2.0,
+      $logoHeight - $contentInset * 2.0
+    )
+    $graphics.DrawString('AW', $font, $textBrush, $contentRect, $format)
+    $format.Dispose()
+    $textBrush.Dispose()
+    $font.Dispose()
+  } finally {
+    $graphics.Dispose()
+  }
+
+  $bytes = [byte[]]::new($size * $size * 4)
+  $offset = 0
+  for ($y = 0; $y -lt $size; $y += 1) {
+    for ($x = 0; $x -lt $size; $x += 1) {
+      $pixel = $bitmap.GetPixel($x, $y)
+      $bytes[$offset] = $pixel.R
+      $bytes[$offset + 1] = $pixel.G
+      $bytes[$offset + 2] = $pixel.B
+      $bytes[$offset + 3] = $pixel.A
+      $offset += 4
+    }
+  }
+
+  [System.IO.File]::WriteAllBytes((Join-Path $OutputDir "rail-logo-$size.rgba"), $bytes)
+  $bitmap.Dispose()
+}
+`;
+
+  writeFileSync(scriptPath, script);
+
+  const commands = ['pwsh', 'powershell.exe'];
+  let lastError = null;
+
+  try {
+    for (const command of commands) {
+      try {
+        execFileSync(command, [
+          '-NoProfile',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          scriptPath,
+          tempDir,
+          ICO_SIZES.join(',')
+        ], { stdio: 'inherit' });
+
+        return ICO_SIZES.map((size) => {
+          const rgba = readFileSync(join(tempDir, `rail-logo-${size}.rgba`));
+          return {
+            size,
+            canvas: {
+              width: size,
+              height: size,
+              data: new Uint8ClampedArray(rgba)
+            }
+          };
+        });
+      } catch (error) {
+        lastError = error;
+      }
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+
+  throw lastError ?? new Error('Failed to render rail-logo icons.');
+}
 
 function makeCanvas(width, height) {
   return {
@@ -156,76 +327,7 @@ function drawAw(canvas, scale) {
   drawLine(canvas, 161 * scale, 166 * scale, 178 * scale, 94 * scale, w, c);
 }
 
-const SMALL_GLYPHS = {
-  A: [
-    '0110',
-    '1001',
-    '1001',
-    '1111',
-    '1001',
-    '1001',
-    '1001'
-  ],
-  W: [
-    '10001',
-    '10001',
-    '10001',
-    '10101',
-    '10101',
-    '10101',
-    '01010'
-  ]
-};
-
-function drawGlyph(canvas, glyph, x, y, scale, color) {
-  glyph.forEach((row, rowIndex) => {
-    for (let columnIndex = 0; columnIndex < row.length; columnIndex += 1) {
-      if (row[columnIndex] === '1') {
-        fillRect(canvas, x + columnIndex * scale, y + rowIndex * scale, scale, scale, color);
-      }
-    }
-  });
-}
-
-function drawSmallAw(canvas, size) {
-  let glyphScale = 1;
-  if (size >= 40) glyphScale = 3;
-  else if (size >= 24) glyphScale = 2;
-
-  const gap = glyphScale;
-  const glyphWidth = (SMALL_GLYPHS.A[0].length + SMALL_GLYPHS.W[0].length) * glyphScale + gap;
-  const glyphHeight = SMALL_GLYPHS.A.length * glyphScale;
-  const x = Math.round((size - glyphWidth) / 2);
-  const y = Math.round((size - glyphHeight) / 2) + (size <= 20 ? 1 : 0);
-
-  drawGlyph(canvas, SMALL_GLYPHS.A, x, y, glyphScale, COLORS.letter);
-  drawGlyph(canvas, SMALL_GLYPHS.W, x + SMALL_GLYPHS.A[0].length * glyphScale + gap, y, glyphScale, COLORS.letter);
-}
-
-function renderSmallIcon(size) {
-  const canvas = makeCanvas(size, size);
-  canvas.data.fill(0);
-
-  const inset = size <= 20 ? 1 : 2;
-  const rectSize = size - inset * 2;
-  const radius = Math.max(2, Math.round(size * 0.18));
-  const borderWidth = size >= 32 ? 2 : 1;
-
-  fillRoundedRect(canvas, inset, inset, rectSize, rectSize, radius, (_px, py) => {
-    const t = (py - inset) / rectSize;
-    return blendColor(COLORS.backgroundTop, COLORS.backgroundBottom, Math.max(0, Math.min(1, t)));
-  });
-  strokeRoundedRect(canvas, inset, inset, rectSize, rectSize, radius, borderWidth, COLORS.border);
-  drawSmallAw(canvas, size);
-
-  return canvas;
-}
-
 function renderIcon(size) {
-  if (size <= 48) {
-    return renderSmallIcon(size);
-  }
-
   const highSize = size * SUPERSAMPLE;
   const scale = highSize / BASE_SIZE;
   const canvas = makeCanvas(highSize, highSize);
@@ -416,11 +518,9 @@ function writeRuntimeIcons(images) {
   }
 }
 
-const images = ICO_SIZES.map((size) => {
-  console.log(`Rendering ${size}x${size}`);
-  return { size, canvas: renderIcon(size) };
-});
-
+writeFileSync(outputSvg, LOGO_SVG);
+console.log(`Generated ${outputSvg}`);
+const images = renderRailLogoImages();
 writeIco(images);
 writeRuntimeIcons(images);
 console.log(`Generated ${outputIco}`);

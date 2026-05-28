@@ -2174,8 +2174,12 @@ fn runtime_window_icon() -> Option<tauri::image::Image<'static>> {
 #[cfg(target_os = "windows")]
 fn apply_native_window_icons<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
     use std::os::windows::ffi::OsStrExt;
+    use windows_sys::core::BOOL;
+    use windows_sys::Win32::Foundation::{HWND, LPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        HICON, PrivateExtractIconsW, SendMessageW, ICON_BIG, ICON_SMALL, ICON_SMALL2, WM_SETICON,
+        EnumWindows, GetAncestor, GetWindowThreadProcessId, SetClassLongPtrW, HICON,
+        PrivateExtractIconsW, SendMessageW, GA_ROOT, GCLP_HICON, GCLP_HICONSM, ICON_BIG,
+        ICON_SMALL, ICON_SMALL2, WM_SETICON,
     };
 
     let Ok(raw_hwnd) = window.hwnd() else {
@@ -2215,15 +2219,50 @@ fn apply_native_window_icons<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>
         }
     }
 
-    unsafe {
-        let hwnd = raw_hwnd.0 as _;
-        if let Some(big_icon) = extract_icon(&exe_path_wide, 256) {
-            let _ = SendMessageW(hwnd, WM_SETICON, ICON_BIG as usize, big_icon as isize);
+    fn add_hwnd(hwnds: &mut Vec<HWND>, hwnd: HWND) {
+        if hwnd.is_null() || hwnds.iter().any(|existing| *existing == hwnd) {
+            return;
         }
 
-        if let Some(small_icon) = extract_icon(&exe_path_wide, 32) {
-            let _ = SendMessageW(hwnd, WM_SETICON, ICON_SMALL as usize, small_icon as isize);
-            let _ = SendMessageW(hwnd, WM_SETICON, ICON_SMALL2 as usize, small_icon as isize);
+        hwnds.push(hwnd);
+    }
+
+    unsafe extern "system" fn enum_process_windows(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let hwnds = &mut *(lparam as *mut Vec<HWND>);
+        let mut process_id = 0u32;
+        let _ = GetWindowThreadProcessId(hwnd, &mut process_id);
+
+        if process_id == std::process::id() {
+            add_hwnd(hwnds, hwnd);
+        }
+
+        1
+    }
+
+    unsafe {
+        let apply_icons_to = |target_hwnd: HWND| {
+            if let Some(big_icon) = extract_icon(&exe_path_wide, 256) {
+                let _ = SendMessageW(target_hwnd, WM_SETICON, ICON_BIG as usize, big_icon as isize);
+                let _ = SetClassLongPtrW(target_hwnd, GCLP_HICON, big_icon as isize);
+            }
+
+            if let Some(small_icon) = extract_icon(&exe_path_wide, 32) {
+                let _ = SendMessageW(target_hwnd, WM_SETICON, ICON_SMALL as usize, small_icon as isize);
+                let _ = SendMessageW(target_hwnd, WM_SETICON, ICON_SMALL2 as usize, small_icon as isize);
+                let _ = SetClassLongPtrW(target_hwnd, GCLP_HICONSM, small_icon as isize);
+            }
+        };
+
+        let hwnd = raw_hwnd.0 as HWND;
+        let root_hwnd = GetAncestor(hwnd, GA_ROOT);
+        let mut hwnds = Vec::new();
+        add_hwnd(&mut hwnds, hwnd);
+        add_hwnd(&mut hwnds, root_hwnd);
+
+        let _ = EnumWindows(Some(enum_process_windows), &mut hwnds as *mut Vec<HWND> as LPARAM);
+
+        for target_hwnd in hwnds {
+            apply_icons_to(target_hwnd);
         }
     }
 }
@@ -2240,6 +2279,14 @@ pub fn run() {
                 }
                 #[cfg(target_os = "windows")]
                 apply_native_window_icons(&window);
+                #[cfg(target_os = "windows")]
+                {
+                    let icon_refresh_window = window.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(800));
+                        apply_native_window_icons(&icon_refresh_window);
+                    });
+                }
                 let _ = window.set_always_on_top(true);
                 let _ = window.set_decorations(false);
                 let _ = window.set_resizable(true);
