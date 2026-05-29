@@ -15,6 +15,7 @@ Tauri 2 前端入口为 [ui/index.html](ui/index.html)，它是当前唯一 UI �
 - 四个角都可以 resize，不只支持右下角。
 - 左侧 AW rail 是折叠态预览，保持贴在主窗口左侧，窗口移动或缩放时同步位置。
 - 设置面板提供 always-on-top 开关，运行时可实时切换置顶状态。
+- 设置面板提供横版 / 竖版布局切换。横版适合桌面侧边常驻，竖版适合更窄的贴边观察窗口。
 
 ## 会话展示
 
@@ -46,6 +47,7 @@ Tauri 2 前端入口为 [ui/index.html](ui/index.html)，它是当前唯一 UI �
 - 状态筛选：All / Wait / Run / Idle。
 - Workspace 下拉筛选：选中后只展示对应 workspace 的 session。
 - Per row 控制：滑杆连续改变每排数量，按钮在预设数量间循环。
+- 布局切换：Horizontal / Vertical 即时切换并持久化。
 - 中英切换：标题、筛选、状态、队列、底部信息即时切换。
 - 明暗主题：Dark / Light 即时切换。
 
@@ -59,4 +61,4 @@ Tauri 2 前端入口为 [ui/index.html](ui/index.html)，它是当前唯一 UI �
 
 ## 落地技术路线
 
-当前主路线为 Tauri 2 + HTML/CSS/JS。选择它是为了让设计稿直接成为真实 UI，同时比 Electron 更轻。当前已完成 Tauri 2 壳、真实窗口页面、Tauri window API 拖动/resize/最小化/最大化/关闭接入、VS Code bridge、Session Preview tooltip webview 和 release 打包脚本验证。
+当前主路线为 Tauri 2 + HTML/CSS/JS。选择它是为了让设计稿直接成为真实 UI，同时比 Electron 更轻。当前已完成 Tauri 2 壳、真实窗口页面、Tauri window API 拖动/resize/最小化/最大化/关闭接入、横版 / 竖版布局切换、VS Code bridge、Session Preview tooltip webview 和 release 打包脚本验证。

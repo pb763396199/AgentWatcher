@@ -33,6 +33,7 @@
 - [x] 实现滚动队列和底部分布条。
 - [x] 实现中英双语切换。
 - [x] 实现 dark / light 主题切换。
+- [x] 实现横版 / 竖版布局切换并持久化。
 - [x] 实现卡片 hover Session Preview。
 - [ ] 实现右键菜单：复制 session id、打开 workspace、静音、隐藏 workspace。
 

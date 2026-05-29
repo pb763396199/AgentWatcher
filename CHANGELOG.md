@@ -3,6 +3,7 @@
 ## v0.1.1 - 2026-05-29
 
 - 新增设置面板 always-on-top 开关，并统一以 [ui/index.html](ui/index.html) 作为唯一 UI 源。
+- 新增横版 / 竖版布局切换，可在设置面板中实时切换并持久化偏好。
 - 修复浅色主题下滚动条、segment、toggle、标题栏按钮、session card、rail 等控件的视觉不一致。
 - 修正 Copilot / Claude session 的用户输入、交互式回答和 AI 正文摘要提取，过滤工具、terminal、thinking、模型错误等噪声。
 - 修复 skipped / skip / 跳过回答被误采集为用户输入的问题。

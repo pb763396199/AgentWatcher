@@ -19,6 +19,7 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - 超量 session 使用优先级滚动队列展示。
 - workspace 过滤、状态过滤、中英切换、明暗主题切换。
 - 永远置顶可在设置面板中实时开关，并持久化偏好。
+- 设置面板支持横版 / 竖版布局切换，并持久化布局偏好。
 - Session Preview 通过卡片右下角展开按钮悬停触发，显示最近用户输入和 AI 正文摘要。
 - Tauri 运行态使用无标题栏、无任务栏的悬浮 preview webview，避免预览被 Watcher 主窗口裁剪。
 - Session Preview 支持独立滚动、四角 resize 和尺寸持久化；预览正文只通过运行时事件传递，不写入 localStorage。
@@ -37,6 +38,7 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - **VS Code Bridge**：首次启动自动安装 VS Code bridge extension，实现精确 session 跳转
 - **悬浮窗口**：Windows 悬浮应用，四角 resize，可任意方向缩放
 - **置顶控制**：设置面板内可实时打开或关闭 always-on-top
+- **布局切换**：设置面板内支持 Horizontal / Vertical 两种窗口布局，并记忆偏好
 - **智能过滤**：workspace 过滤、状态过滤、自动隐藏归档 sessions
 - **多语言**：中英文切换
 - **明暗主题**：支持 Dark / Light 主题切换
@@ -197,6 +199,7 @@ AgentWatcher 使用自带的 VS Code bridge extension 实现精确 session 跳�
 
 在设置面板可配置：
 
+- **Layout**：横版 / 竖版窗口布局，适配侧边停靠或窄窗贴边使用
 - **Active window (days)**：活跃窗口天数，默认 7 天
 - **Max sessions**：最大显示 session 数，默认 80
 - **Refresh interval (sec)**：刷新间隔秒数，默认 15 秒
@@ -219,6 +222,7 @@ AgentWatcher 使用自带的 VS Code bridge extension 实现精确 session 跳�
 - 使用 Tauri invoke API 与 Rust backend 通信
 - 支持 browser prototype 模式：无 Tauri 时显示 mock 数据
 - 实时刷新：按配置间隔自动扫描和更新 sessions
+- 管理横版 / 竖版窗口布局切换和设置持久化
 - 管理 Session Preview 的 DOM fallback 和 Tauri `session-preview` tooltip webview
 
 ### VS Code Bridge Extension (vscode-agentwatcher-bridge/)
