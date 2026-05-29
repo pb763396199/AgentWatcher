@@ -1405,6 +1405,9 @@ fn claude_interactive_user_text(json_value: &Value) -> Option<String> {
         if string_at(block, &["/type"]) != Some("tool_result") {
             continue;
         }
+        if bool_at(json_value, &["/toolUseResult/skipped", "/toolUseResult/isSkipped"]) == Some(true) {
+            continue;
+        }
         if let Some(answers) = json_value.pointer("/toolUseResult/answers") {
             collect_interactive_answer_strings(answers, &mut parts);
         }
@@ -1415,11 +1418,34 @@ fn claude_interactive_user_text(json_value: &Value) -> Option<String> {
     clean_preview_text(&parts.join("\n"))
 }
 
+fn is_skip_sentinel(s: &str) -> bool {
+    let normalized = s
+        .trim()
+        .trim_matches(|ch: char| ch == '_' || ch == '-' || ch == ':' || ch == '.')
+        .to_ascii_lowercase();
+    matches!(
+        normalized.as_str(),
+        "skip"
+            | "skipped"
+            | "skip question"
+            | "skipped question"
+            | "skip_question"
+            | "skip-question"
+            | "no answer"
+            | "no_answer"
+            | "跳过"
+            | "已跳过"
+            | "略过"
+            | "不回答"
+            | "无回答"
+    )
+}
+
 fn collect_interactive_answer_strings(value: &Value, parts: &mut Vec<String>) {
     match value {
         Value::String(s) => {
             let trimmed = s.trim();
-            if !trimmed.is_empty() {
+            if !trimmed.is_empty() && !is_skip_sentinel(trimmed) {
                 parts.push(trimmed.to_string());
             }
         }
@@ -1429,6 +1455,9 @@ fn collect_interactive_answer_strings(value: &Value, parts: &mut Vec<String>) {
             }
         }
         Value::Object(obj) => {
+            if bool_at(value, &["/skipped", "/isSkipped"]) == Some(true) {
+                return;
+            }
             for (_key, val) in obj {
                 collect_interactive_answer_strings(val, parts);
             }
@@ -1848,6 +1877,9 @@ fn copilot_interactive_user_text(json_value: &Value) -> Option<String> {
         if bool_at(response_item, &["/isUsed"]) != Some(true) {
             continue;
         }
+        if bool_at(response_item, &["/skipped", "/isSkipped"]) == Some(true) {
+            continue;
+        }
         let Some(data) = response_item.get("data") else {
             continue;
         };
@@ -1866,16 +1898,21 @@ fn copilot_interactive_user_text(json_value: &Value) -> Option<String> {
 }
 
 fn collect_copilot_carousel_answer(carousel_item: &Value, answer_value: &Value, answer_parts: &mut Vec<String>) {
+    if bool_at(answer_value, &["/skipped", "/isSkipped"]) == Some(true) {
+        return;
+    }
     if let Some(freeform) = string_at(answer_value, &["/freeformValue"]) {
         let trimmed = freeform.trim();
-        if !trimmed.is_empty() {
+        if !trimmed.is_empty() && !is_skip_sentinel(trimmed) {
             answer_parts.push(trimmed.to_string());
         }
     }
 
     if let Some(selected_id) = answer_value.get("selectedValue").and_then(Value::as_str) {
         if let Some(label) = resolve_carousel_option_label(carousel_item, selected_id) {
-            answer_parts.push(label);
+            if !is_skip_sentinel(&label) {
+                answer_parts.push(label);
+            }
         }
     }
 
@@ -1883,7 +1920,9 @@ fn collect_copilot_carousel_answer(carousel_item: &Value, answer_value: &Value, 
         for selected_val in selected_vals {
             if let Some(selected_id) = selected_val.as_str() {
                 if let Some(label) = resolve_carousel_option_label(carousel_item, selected_id) {
-                    answer_parts.push(label);
+                    if !is_skip_sentinel(&label) {
+                        answer_parts.push(label);
+                    }
                 }
             }
         }

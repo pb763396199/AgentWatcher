@@ -1391,6 +1391,10 @@
               <button class="setting-toggle" type="button" data-setting-layout="vertical" data-i18n="vertical">Vertical</button>
             </div>
           </div>
+          <div class="setting-row">
+            <label for="maxCardsPerRow" data-i18n="maxCardsPerRow">Max cards per row</label>
+            <input class="setting-number" id="maxCardsPerRow" type="number" min="1" max="20" step="1" inputmode="numeric" value="10" />
+          </div>
         </div>
         <div class="settings-group">
           <div class="settings-group-title" data-i18n="windowBehavior">Window</div>
@@ -1465,7 +1469,7 @@
             <span class="control-label" id="perRowLabel">Per row</span>
             <div class="size-tools">
               <button class="preset-btn" id="sizePreset" type="button">2 / row</button>
-              <input class="size-range" id="sizeRange" type="range" min="1" max="6" step="1" value="2" aria-label="Icons per row" />
+              <input class="size-range" id="sizeRange" type="range" min="1" max="10" step="1" value="2" aria-label="Icons per row" />
               <span class="size-value" id="sizeValue">2 cols</span>
             </div>
           </div>
@@ -1581,6 +1585,7 @@
     const activeWindowDays = document.getElementById('activeWindowDays');
     const maxSessions = document.getElementById('maxSessions');
     const refreshIntervalSeconds = document.getElementById('refreshIntervalSeconds');
+    const maxCardsPerRow = document.getElementById('maxCardsPerRow');
     const bridgeStatus = document.getElementById('bridgeStatus');
     const bridgeAction = document.getElementById('bridgeAction');
     const urgentChip = document.getElementById('urgentChip');
@@ -1614,16 +1619,16 @@
       hideArchived: true,
       activeWindowDays: 7,
       maxSessions: 80,
-      refreshIntervalSeconds: 15
+      refreshIntervalSeconds: 15,
+      maxCardsPerRow: 10
     };
     let settings = loadSettings();
-    const columnPresets = [1, 2, 3, 4, 5, 6];
     const i18n = {
       en: {
-        allSessions: 'All agent sessions', watched: '83 workspaces watched', filterActive: 'Workspace filter active', waitingChip: '8 waiting', workspace: 'Workspace', allWorkspaces: 'All workspaces', perRow: 'Per row', visibleNow: 'visible now', inQueue: 'in scroll queue', sessions: 'sessions', updated: 'Updated 2s ago', workspacePrefix: 'Workspace: ', overflow: 'Scroll continues by priority: waiting, running, idle', priority: 'priority', live: 'live', quiet: 'quiet', waiting: 'Waiting', running: 'Running', idle: 'Idle', all: 'All', wait: 'Wait', run: 'Run', col: 'col', cols: 'cols', perRowButton: '/ row', iconsPerRow: 'icons per row', windowSize: 'Window size', openWorkspace: 'Open VS Code workspace: ', openingAgents: 'Opening session...', openedAgents: 'Session opened', themeLight: 'Light theme', themeDark: 'Dark theme', settings: 'Settings', appearance: 'Appearance', language: 'Language', theme: 'Theme', layout: 'Layout', horizontal: 'Horizontal', vertical: 'Vertical', lastUser: 'Last user', lastAi: 'Last AI', noUserMessage: 'No user message captured', noAiMessage: 'No AI message captured', tailOnly: 'tail', errorExcerpt: 'error', windowBehavior: 'Window', alwaysOnTop: 'Always on top', dataSources: 'Data', includeCopilot: 'Copilot sessions', includeClaude: 'Claude sessions', hideArchived: 'Hide archived', scanLimits: 'Scan limits', activeWindowDays: 'Active window (days)', maxSessions: 'Max sessions', refreshInterval: 'Refresh interval (sec)', settingsSaved: 'Settings updated'
+        allSessions: 'All agent sessions', watched: '83 workspaces watched', filterActive: 'Workspace filter active', waitingChip: '8 waiting', workspace: 'Workspace', allWorkspaces: 'All workspaces', perRow: 'Per row', visibleNow: 'visible now', inQueue: 'in scroll queue', sessions: 'sessions', updated: 'Updated 2s ago', workspacePrefix: 'Workspace: ', overflow: 'Scroll continues by priority: waiting, running, idle', priority: 'priority', live: 'live', quiet: 'quiet', waiting: 'Waiting', running: 'Running', idle: 'Idle', all: 'All', wait: 'Wait', run: 'Run', col: 'col', cols: 'cols', perRowButton: '/ row', iconsPerRow: 'icons per row', windowSize: 'Window size', openWorkspace: 'Open VS Code workspace: ', openingAgents: 'Opening session...', openedAgents: 'Session opened', themeLight: 'Light theme', themeDark: 'Dark theme', settings: 'Settings', appearance: 'Appearance', language: 'Language', theme: 'Theme', layout: 'Layout', horizontal: 'Horizontal', vertical: 'Vertical', lastUser: 'Last user', lastAi: 'Last AI', noUserMessage: 'No user message captured', noAiMessage: 'No AI message captured', tailOnly: 'tail', errorExcerpt: 'error', windowBehavior: 'Window', alwaysOnTop: 'Always on top', dataSources: 'Data', includeCopilot: 'Copilot sessions', includeClaude: 'Claude sessions', hideArchived: 'Hide archived', scanLimits: 'Scan limits', activeWindowDays: 'Active window (days)', maxSessions: 'Max sessions', refreshInterval: 'Refresh interval (sec)', settingsSaved: 'Settings updated', maxCardsPerRow: 'Max cards per row'
       },
       zh: {
-        allSessions: '全部 Agent 会话', watched: '已监控 83 个 workspace', filterActive: '已启用 workspace 过滤', waitingChip: '8 待回复', workspace: 'Workspace', allWorkspaces: '全部 workspace', perRow: '每排数量', visibleNow: '当前可见', inQueue: '在滚动队列', sessions: '个会话', updated: '2 秒前更新', workspacePrefix: 'Workspace：', overflow: '按优先级继续滚动：待回复、运行中、闲置', priority: '优先', live: '实时', quiet: '静默', waiting: '待回复', running: '运行中', idle: '闲置', all: '全部', wait: '待回', run: '运行', col: '列', cols: '列', perRowButton: '/ 排', iconsPerRow: '个/排', windowSize: '窗口尺寸', openWorkspace: '打开 VS Code workspace：', openingAgents: '正在打开会话...', openedAgents: '已打开会话', themeLight: '浅色主题', themeDark: '深色主题', settings: '设置', appearance: '外观', language: '语言', theme: '主题', layout: '布局', horizontal: '横版', vertical: '竖版', lastUser: '最后用户输入', lastAi: '最后 AI 回复', noUserMessage: '未捕获到用户输入', noAiMessage: '未捕获到 AI 回复', tailOnly: '尾部', errorExcerpt: '错误', windowBehavior: '窗口', alwaysOnTop: '永远置顶', dataSources: '数据', includeCopilot: 'Copilot 会话', includeClaude: 'Claude 会话', hideArchived: '隐藏归档', scanLimits: '扫描限制', activeWindowDays: '活跃窗口（天）', maxSessions: '最大会话数', refreshInterval: '刷新间隔（秒）', settingsSaved: '设置已更新'
+        allSessions: '全部 Agent 会话', watched: '已监控 83 个 workspace', filterActive: '已启用 workspace 过滤', waitingChip: '8 待回复', workspace: 'Workspace', allWorkspaces: '全部 workspace', perRow: '每排数量', visibleNow: '当前可见', inQueue: '在滚动队列', sessions: '个会话', updated: '2 秒前更新', workspacePrefix: 'Workspace：', overflow: '按优先级继续滚动：待回复、运行中、闲置', priority: '优先', live: '实时', quiet: '静默', waiting: '待回复', running: '运行中', idle: '闲置', all: '全部', wait: '待回', run: '运行', col: '列', cols: '列', perRowButton: '/ 排', iconsPerRow: '个/排', windowSize: '窗口尺寸', openWorkspace: '打开 VS Code workspace：', openingAgents: '正在打开会话...', openedAgents: '已打开会话', themeLight: '浅色主题', themeDark: '深色主题', settings: '设置', appearance: '外观', language: '语言', theme: '主题', layout: '布局', horizontal: '横版', vertical: '竖版', lastUser: '最后用户输入', lastAi: '最后 AI 回复', noUserMessage: '未捕获到用户输入', noAiMessage: '未捕获到 AI 回复', tailOnly: '尾部', errorExcerpt: '错误', windowBehavior: '窗口', alwaysOnTop: '永远置顶', dataSources: '数据', includeCopilot: 'Copilot 会话', includeClaude: 'Claude 会话', hideArchived: '隐藏归档', scanLimits: '扫描限制', activeWindowDays: '活跃窗口（天）', maxSessions: '最大会话数', refreshInterval: '刷新间隔（秒）', settingsSaved: '设置已更新', maxCardsPerRow: '每排最大数量'
       }
     };
     let currentLang = settings.language;
@@ -1658,7 +1663,8 @@
           hideArchived: savedSettings.hideArchived !== false,
           activeWindowDays: clampNumber(savedSettings.activeWindowDays, 1, 30, defaultSettings.activeWindowDays),
           maxSessions: clampNumber(savedSettings.maxSessions, 1, 5000, defaultSettings.maxSessions),
-          refreshIntervalSeconds: clampNumber(savedSettings.refreshIntervalSeconds, 1, 3600, defaultSettings.refreshIntervalSeconds)
+          refreshIntervalSeconds: clampNumber(savedSettings.refreshIntervalSeconds, 1, 3600, defaultSettings.refreshIntervalSeconds),
+          maxCardsPerRow: clampNumber(savedSettings.maxCardsPerRow, 1, 20, defaultSettings.maxCardsPerRow)
         };
       } catch (error) {
         return { ...defaultSettings };
@@ -1694,6 +1700,8 @@
       activeWindowDays.value = String(settings.activeWindowDays);
       maxSessions.value = String(settings.maxSessions);
       refreshIntervalSeconds.value = String(settings.refreshIntervalSeconds);
+      maxCardsPerRow.value = String(settings.maxCardsPerRow);
+      sizeRange.max = String(settings.maxCardsPerRow);
       settingsToggle.classList.toggle('is-active', !settingsPanel.hidden);
       settingsToggle.setAttribute('aria-label', t('settings'));
       document.querySelectorAll('[data-i18n]').forEach(element => {
@@ -1897,14 +1905,16 @@
       root.style.setProperty('--tile-title', Math.max(11, Math.min(18, Math.round(cardWidth * 0.095))) + 'px');
       root.style.setProperty('--tile-meta', Math.max(10, Math.min(15, Math.round(cardWidth * 0.082))) + 'px');
       root.style.setProperty('--tile-provider', Math.max(18, Math.min(32, Math.round(cardWidth * 0.18))) + 'px');
+      watcherWindow.classList.toggle('compact-cards', cardWidth < 110);
+      watcherWindow.classList.toggle('dense-cards', cardWidth < 85);
+      watcherWindow.classList.toggle('micro-cards', cardWidth < 60);
     }
 
     function setIconsPerRow(value, announce) {
-      const nextColumns = Math.max(1, Math.min(6, Math.round(Number(value))));
+      const maxCols = settings.maxCardsPerRow || 10;
+      const nextColumns = Math.max(1, Math.min(maxCols, Math.round(Number(value))));
       root.style.setProperty('--columns', String(nextColumns));
-      watcherWindow.classList.toggle('compact-cards', nextColumns >= 3);
-      watcherWindow.classList.toggle('dense-cards', nextColumns >= 4);
-      watcherWindow.classList.toggle('micro-cards', nextColumns >= 5);
+      sizeRange.max = String(maxCols);
       sizeRange.value = String(nextColumns);
       sizePreset.textContent = nextColumns + ' ' + t('perRowButton');
       sizeValue.textContent = nextColumns + ' ' + (nextColumns === 1 ? t('col') : t('cols'));
@@ -2410,7 +2420,8 @@
     sizeRange.addEventListener('input', event => setIconsPerRow(event.target.value, false));
     sizePreset.addEventListener('click', () => {
       const current = Number(sizeRange.value);
-      const nextColumns = columnPresets[(columnPresets.indexOf(current) + 1) % columnPresets.length];
+      const maxCols = settings.maxCardsPerRow || 10;
+      const nextColumns = (current % maxCols) + 1;
       setIconsPerRow(nextColumns, true);
     });
     settingsToggle.addEventListener('click', () => {
@@ -2446,6 +2457,7 @@
     activeWindowDays.addEventListener('change', () => updateSetting('activeWindowDays', clampNumber(activeWindowDays.value, 1, 30, defaultSettings.activeWindowDays), { announce: true }));
     maxSessions.addEventListener('change', () => updateSetting('maxSessions', clampNumber(maxSessions.value, 1, 5000, defaultSettings.maxSessions), { announce: true }));
     refreshIntervalSeconds.addEventListener('change', () => updateSetting('refreshIntervalSeconds', clampNumber(refreshIntervalSeconds.value, 1, 3600, defaultSettings.refreshIntervalSeconds), { announce: true, reschedule: true }));
+    maxCardsPerRow.addEventListener('change', () => updateSetting('maxCardsPerRow', clampNumber(maxCardsPerRow.value, 1, 20, defaultSettings.maxCardsPerRow), { announce: true, refresh: false }));
     bridgeAction.addEventListener('click', installBridge);
     [dragRegion, document.querySelector('.native-titlebar'), appHeader, compactRail].forEach(source => source?.addEventListener('pointerdown', startWindowDrag));
     windowActionButtons.forEach(button => button.addEventListener('click', () => runWindowAction(button.dataset.windowAction)));
