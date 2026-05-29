@@ -21,7 +21,7 @@
 - [ ] 实现窗口位置记忆。
 - [ ] 实现系统托盘图标和显示 / 隐藏入口。
 - [ ] 实现全局快捷键显隐窗口。
-- [ ] 实现启动时恢复上次窗口大小、位置、主题、语言。
+- [x] 实现启动时恢复上次窗口大小、位置、主题、语言。
 
 ## Phase 2 - UI 组件落地
 
@@ -33,49 +33,49 @@
 - [x] 实现滚动队列和底部分布条。
 - [x] 实现中英双语切换。
 - [x] 实现 dark / light 主题切换。
-- [ ] 实现卡片 hover tooltip。
+- [x] 实现卡片 hover Session Preview。
 - [ ] 实现右键菜单：复制 session id、打开 workspace、静音、隐藏 workspace。
 
 ## Phase 3 - 本机数据扫描 PoC
 
-- [ ] 扫描 VS Code `workspaceStorage`。
-- [ ] 解析 `workspace.json`，建立 workspace hash 到路径的映射。
-- [ ] 探测 Copilot Chat `chatSessions` 文件。
-- [ ] 只读取 metadata、mtime、文件大小和必要头尾片段，不读取完整正文。
-- [ ] 扫描 Claude Code projects / sessions index。
-- [ ] 输出 console table：provider、workspace、session id、mtime、state。
-- [ ] 验证多 workspace、多 VS Code 实例场景。
-- [ ] 建立解析失败时的 unknown 状态。
+- [x] 扫描 VS Code `workspaceStorage`。
+- [x] 解析 `workspace.json`，建立 workspace hash 到路径的映射。
+- [x] 探测 Copilot Chat `chatSessions` 文件。
+- [x] 只读取 metadata、mtime、文件大小和必要头尾片段，不读取完整正文。
+- [x] 扫描 Claude Code projects / sessions index。
+- [x] 输出 provider、workspace、session id、mtime、state 给前端模型。
+- [x] 验证多 workspace session 扫描。
+- [x] 建立解析失败时的 fallback 状态。
 
 ## Phase 4 - 状态机
 
-- [ ] 定义 unified session model。
-- [ ] 定义 waiting / running / idle / unknown 状态。
-- [ ] 基于 mtime 和文件增长推断 running。
-- [ ] 基于停止增长和最后事件推断 waiting。
-- [ ] 基于 idle threshold 推断 idle。
-- [ ] 为 Claude Code 预留 hook 事件输入。
-- [ ] 为 Copilot Chat parser 添加格式版本保护。
+- [x] 定义 unified session model。
+- [x] 定义 waiting / running / idle 状态。
+- [x] 基于 mtime 和文件增长推断 running。
+- [x] 基于显式 AskQuestion / questionCarousel 推断 waiting。
+- [x] 基于 idle threshold 推断 idle。
+- [x] 为 Claude Code AskUserQuestion / tool_result 建立闭环判定。
+- [x] 为 Copilot Chat parser 添加状态结束信号保护。
 - [ ] 添加状态变化去抖，避免 UI 闪烁。
 
 ## Phase 5 - 本地缓存与设置
 
 - [ ] 引入 SQLite 本地缓存。
-- [ ] 缓存 workspace alias、隐藏状态、静音状态。
+- [x] 缓存 workspace alias 和设置状态。
 - [ ] 缓存 session 最新状态和最后活动时间。
-- [ ] 设置扫描频率。
-- [ ] 设置 idle threshold。
+- [x] 设置扫描频率。
+- [x] 设置 idle threshold。
 - [ ] 设置是否显示系统通知。
 - [ ] 设置隐私模式和路径隐藏。
 
 ## Phase 6 - 跳转能力
 
-- [ ] MVP 使用 `code --reuse-window <workspace>` 打开 workspace。
+- [x] MVP 使用 `code --reuse-window <workspace>` 打开 workspace。
 - [ ] 枚举 VS Code 进程和窗口标题，尽量聚焦已打开窗口。
-- [ ] 点击卡片触发 workspace 级跳转。
-- [ ] 跳转失败时显示可操作错误提示。
-- [ ] 研究 VS Code bridge extension 可行性。
-- [ ] 后续实现 localhost bridge，尝试聚焦具体 chat/session。
+- [x] 点击卡片触发 workspace / session 跳转。
+- [x] 跳转失败时显示可操作错误提示。
+- [x] 研究 VS Code bridge extension 可行性。
+- [x] 实现 VS Code bridge extension，尝试聚焦具体 chat/session。
 
 ## Phase 7 - 通知策略
 
@@ -83,33 +83,33 @@
 - [ ] 支持 quiet mode。
 - [ ] 支持 workspace 静音。
 - [ ] 支持系统 toast。
-- [ ] 支持 rail badge 数量变化。
+- [x] 支持 rail badge 数量变化。
 - [ ] 避免 running / idle 大量刷屏。
 
 ## Phase 8 - 验证与质量
 
-- [ ] 为 parser 添加单元测试。
-- [ ] 为状态机添加单元测试。
+- [x] 为 parser 添加单元测试。
+- [x] 为状态机添加单元测试。
 - [ ] 为 workspace resolver 添加样本测试。
 - [ ] 做 8 小时运行内存观察。
 - [ ] 验证 100%、125%、150% DPI。
 - [ ] 验证窗口贴边、resize、恢复位置。
-- [ ] 验证无真实 session 时的空状态。
-- [ ] 验证大量 session 时的滚动性能。
+- [x] 验证无真实 session 时的空状态。
+- [x] 验证大量 session 时的滚动与 preview 基础性能。
 
 ## Phase 9 - 打包发布
 
-- [ ] 准备 Windows 应用图标。
-- [ ] 准备 self-contained publish。
-- [ ] 准备安装包或单文件发行。
-- [ ] 添加版本号和 changelog。
-- [ ] 添加首次启动引导和隐私说明。
+- [x] 准备 Windows 应用图标。
+- [x] 准备 self-contained publish。
+- [x] 准备 Windows zip 发行。
+- [x] 添加版本号和 changelog。
+- [x] 添加首次启动 Bridge 自动安装和隐私说明。
 
 ## 当前优先级
 
-1. 启动真实 session 扫描 PoC。
-2. 建立 JS 与 Rust backend 的 command/event 通信。
-3. 实现窗口位置、大小、主题、语言记忆。
+1. 验证长时间运行时的扫描和 UI 刷新稳定性。
+2. 补充窗口位置记忆、托盘入口和全局快捷键。
+3. 继续收敛 Session Preview 的真实 Tauri 交互体验。
 
 ## Phase 1b - Tauri 2 主应用壳
 
@@ -121,7 +121,7 @@
 - [x] 验证 `npm run build`。
 - [x] 将 HTML 中的桌面背景 mock 拆分为真实窗口 UI。
 - [x] 用 Tauri window API 接管四角 resize、拖动、最小化、最大化、关闭。
-- [ ] 建立 JS 与 Rust backend 的 command/event 通信。
+- [x] 建立 JS 与 Rust backend 的 command/event 通信。
 
 ## 已放弃路线
 

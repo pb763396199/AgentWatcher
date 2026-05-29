@@ -2,7 +2,7 @@
 
 AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候选窗一样常驻在屏幕任意位置，监控 VS Code 中 Copilot 和 Claude Code 在所有 workspace 的 session 状态，并把 waiting / running / idle 会话以可跳转的方形卡片展示出来。
 
-当前仓库状态：已切换到 Tauri 2 作为主应用壳方向，前端入口 [ui/index.html](ui/index.html) 是唯一 UI 源文件。仓库只保留源码和必要的源码内资产，release 产物通过打包脚本按需生成。
+当前发布版本：v0.1.1。仓库已切换到 Tauri 2 作为主应用壳方向，前端入口 [ui/index.html](ui/index.html) 是唯一 UI 源文件。仓库只保留源码和必要的源码内资产，release 产物通过打包脚本按需生成。
 
 ## 当前 UI 入口
 
@@ -18,6 +18,10 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - session 卡片按“每排数量”自适应填满卡片区域。
 - 超量 session 使用优先级滚动队列展示。
 - workspace 过滤、状态过滤、中英切换、明暗主题切换。
+- 永远置顶可在设置面板中实时开关，并持久化偏好。
+- Session Preview 通过卡片右下角展开按钮悬停触发，显示最近用户输入和 AI 正文摘要。
+- Tauri 运行态使用无标题栏、无任务栏的悬浮 preview webview，避免预览被 Watcher 主窗口裁剪。
+- Session Preview 支持独立滚动、四角 resize 和尺寸持久化；预览正文只通过运行时事件传递，不写入 localStorage。
 - 运行态页面移除了 VS Code 背景 mock 和 Windows taskbar mock，只保留透明悬浮工具 UI。
 
 ## 技术方向
@@ -29,8 +33,10 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - **实时监控**：自动扫描 VS Code Copilot 和 Claude Code 的所有 workspace sessions
 - **状态分类**：按 waiting（待回复）、running（运行中）、idle（闲置）分类显示
 - **一键跳转**：点击卡片直接打开对应的 VS Code session
+- **悬浮预览**：悬停卡片右下角展开按钮显示最近用户输入和 AI 正文摘要，预览窗口可 resize 并记忆尺寸
 - **VS Code Bridge**：首次启动自动安装 VS Code bridge extension，实现精确 session 跳转
 - **悬浮窗口**：Windows 悬浮应用，四角 resize，可任意方向缩放
+- **置顶控制**：设置面板内可实时打开或关闭 always-on-top
 - **智能过滤**：workspace 过滤、状态过滤、自动隐藏归档 sessions
 - **多语言**：中英文切换
 - **明暗主题**：支持 Dark / Light 主题切换
@@ -67,6 +73,12 @@ artifacts/AgentWatcher/
 ```
 
 用户只需将整个 `artifacts/AgentWatcher/` 文件夹复制到目标机器即可使用。发布目录会包含预打包的 VSIX，正常情况下目标机器不需要安装 Node.js 或 `npx`。
+
+GitHub Release 使用 zip 分发，命名格式为：
+
+```
+AgentWatcher-v<version>-windows-x64.zip
+```
 
 ### 验证前端设计稿
 
@@ -171,6 +183,15 @@ AgentWatcher 使用自带的 VS Code bridge extension 实现精确 session 跳�
 - **waiting**：只认显式等待用户输入的工具状态。Copilot 需要当前有效响应仍停在 `vscode_askQuestions` 对应的 `questionCarousel`，或 `vscode_askQuestions` 尚未完成；Claude Code 需要存在未被同 `tool_use_id` 的 `tool_result` 关闭的 `AskUserQuestion`。历史上出现过这些字段但后续已继续运行，不算 waiting。
 - **running**：检测到最近的 assistant 活动，或当前最新有效响应仍在运行。
 - **idle**：超过近期活跃窗口后没有新的内容时间戳或文件修改。
+- 已完成的 Copilot 请求会通过 `result`、`followups`、`elapsedMs`、`modelState.completedAt` 等结束信号清理旧 waiting，skipped / skip / 跳过等回答不会被当作用户输入。
+
+### Session Preview
+
+- 卡片本身点击仍然用于跳转 session；右下角展开按钮只负责预览。
+- 浏览器预览模式使用 DOM fixed overlay；Tauri 运行态使用单独的 frameless `session-preview` webview，解决主窗口边界裁剪。
+- preview webview 默认隐藏，收到 ready 信号后再显示，避免首次弹出时闪出完整 Watcher 页面。
+- preview webview 会复用并 hide / show，避免 hover 时频繁创建和销毁窗口。
+- 最近用户输入和 AI 正文摘要只保存在当前 JS 运行时并通过 Tauri event 传递；localStorage 只保存 preview 尺寸。
 
 ### 扫描配置
 
@@ -198,6 +219,7 @@ AgentWatcher 使用自带的 VS Code bridge extension 实现精确 session 跳�
 - 使用 Tauri invoke API 与 Rust backend 通信
 - 支持 browser prototype 模式：无 Tauri 时显示 mock 数据
 - 实时刷新：按配置间隔自动扫描和更新 sessions
+- 管理 Session Preview 的 DOM fallback 和 Tauri `session-preview` tooltip webview
 
 ### VS Code Bridge Extension (vscode-agentwatcher-bridge/)
 
