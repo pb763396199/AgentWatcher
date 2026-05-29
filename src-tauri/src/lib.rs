@@ -1339,8 +1339,16 @@ fn copilot_visible_response_item_text(response_item: &Value) -> Option<String> {
         Some("text") | Some("markdownContent") | Some("content") | Some("message") => {
             copilot_direct_response_text(response_item)
         }
+        Some("toolInvocationSerialized") if is_copilot_question_tool_id(response_item) => {
+            question_tool_preview_text(response_item)
+        }
+        Some("questionCarousel") => question_tool_preview_text(response_item),
         _ => None,
     }
+}
+
+fn is_copilot_question_tool_id(response_item: &Value) -> bool {
+    matches!(string_at(response_item, &["/toolId"]), Some("vscode_askQuestions"))
 }
 
 fn copilot_direct_response_text(response_item: &Value) -> Option<String> {
@@ -1371,6 +1379,130 @@ fn clean_copilot_visible_reply_text(text: &str) -> Option<String> {
         return None;
     }
     clean_preview_text(trimmed)
+}
+
+fn question_tool_preview_text(value: &Value) -> Option<String> {
+    let mut parts = Vec::new();
+    collect_question_tool_preview_parts(value, &mut parts);
+    let mut deduped_parts = Vec::new();
+    for part in parts {
+        if !deduped_parts.iter().any(|existing| existing == &part) {
+            deduped_parts.push(part);
+        }
+    }
+    clean_preview_text(&deduped_parts.join("\n"))
+}
+
+fn collect_question_tool_preview_parts(value: &Value, parts: &mut Vec<String>) {
+    match value {
+        Value::String(text) => {
+            collect_question_tool_preview_parts_from_str(text, parts);
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_question_tool_preview_parts(item, parts);
+            }
+        }
+        Value::Object(object) => {
+            append_question_field(object, "header", parts);
+            append_question_field(object, "title", parts);
+            append_question_field(object, "question", parts);
+            append_question_field(object, "prompt", parts);
+            append_question_field(object, "message", parts);
+            append_question_options(object.get("options").or_else(|| object.get("choices")), parts);
+
+            for key in [
+                "questions",
+                "input",
+                "args",
+                "arguments",
+                "toolInput",
+                "tool_input",
+                "toolSpecificData",
+                "data",
+                "parameters",
+                "params",
+            ] {
+                if let Some(child) = object.get(key) {
+                    collect_question_tool_preview_parts(child, parts);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_question_tool_preview_parts_from_str(text: &str, parts: &mut Vec<String>) {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
+        collect_question_tool_preview_parts(&parsed, parts);
+    }
+}
+
+fn append_question_field(object: &serde_json::Map<String, Value>, key: &str, parts: &mut Vec<String>) {
+    if let Some(text) = object.get(key).and_then(Value::as_str) {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            parts.push(trimmed.to_string());
+        }
+    }
+}
+
+fn append_question_options(options: Option<&Value>, parts: &mut Vec<String>) {
+    let Some(options) = options else { return; };
+    let mut option_parts = Vec::new();
+    match options {
+        Value::Array(items) => {
+            for item in items {
+                if let Some(option_text) = question_option_text(item) {
+                    option_parts.push(option_text);
+                }
+            }
+        }
+        Value::Object(_) | Value::String(_) => {
+            if let Some(option_text) = question_option_text(options) {
+                option_parts.push(option_text);
+            }
+        }
+        _ => {}
+    }
+    if !option_parts.is_empty() {
+        parts.push(format!("Options: {}", option_parts.join("; ")));
+    }
+}
+
+fn question_option_text(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => {
+            let trimmed = text.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        }
+        Value::Object(object) => {
+            let label = object
+                .get("label")
+                .or_else(|| object.get("value"))
+                .or_else(|| object.get("text"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|text| !text.is_empty());
+            let description = object
+                .get("description")
+                .or_else(|| object.get("detail"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|text| !text.is_empty());
+            match (label, description) {
+                (Some(label), Some(description)) => Some(format!("{} - {}", label, description)),
+                (Some(label), None) => Some(label.to_string()),
+                (None, Some(description)) => Some(description.to_string()),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 fn is_pure_markdown_fence(text: &str) -> bool {
@@ -1600,21 +1732,38 @@ fn claude_assistant_text(json_value: &Value) -> Option<String> {
         return clean_preview_text(content_str);
     }
     let content_blocks = content_value.as_array()?;
-    let mut texts: Vec<&str> = Vec::new();
+    let mut texts: Vec<String> = Vec::new();
     for block in content_blocks {
-        if string_at(block, &["/type"]) != Some("text") {
-            continue;
-        }
-        if let Some(text) = string_at(block, &["/text"]) {
-            if !text.trim().is_empty() {
-                texts.push(text);
+        match string_at(block, &["/type"]) {
+            Some("text") => {
+                if let Some(text) = string_at(block, &["/text"]) {
+                    if let Some(clean) = clean_preview_text(text) {
+                        texts.push(clean);
+                    }
+                }
             }
+            Some("tool_use") if is_claude_question_tool_name(block) => {
+                if let Some(question_text) = question_tool_preview_text(block) {
+                    texts.push(question_text);
+                }
+            }
+            _ => {}
         }
     }
     if texts.is_empty() {
         return None;
     }
     clean_preview_text(&texts.join("\n"))
+}
+
+fn is_claude_question_tool_name(content_block: &Value) -> bool {
+    let Some(tool_name) = string_at(content_block, &["/name"]) else { return false; };
+    let normalized: String = tool_name
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect();
+    matches!(normalized.as_str(), "askuserquestion" | "askquestion" | "question")
 }
 
 fn text_from_content_blocks(content_value: Option<&Value>) -> Option<&str> {
@@ -3162,6 +3311,67 @@ mod tests {
 
         update_copilot_status_hint(&mut status_hint, &done_event);
         assert_eq!(status_hint, Some(SessionStatusHint::Running));
+    }
+
+    #[test]
+    fn copilot_ask_questions_tool_is_part_of_ai_preview() {
+        let event = json!({
+            "k": ["requests", 0, "response"],
+            "v": [
+                { "kind": "text", "value": "I need one more choice." },
+                {
+                    "kind": "toolInvocationSerialized",
+                    "toolId": "vscode_askQuestions",
+                    "input": {
+                        "questions": [
+                            {
+                                "header": "Deploy target",
+                                "question": "Which environment should I use?",
+                                "message": "Pick the target for this run.",
+                                "options": [
+                                    { "label": "Staging", "description": "safer dry run" },
+                                    { "label": "Production" }
+                                ]
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+
+        let preview = copilot_response_preview_text(&event).unwrap();
+
+        assert!(preview.contains("I need one more choice."));
+        assert!(preview.contains("Deploy target"));
+        assert!(preview.contains("Which environment should I use?"));
+        assert!(preview.contains("Options: Staging - safer dry run; Production"));
+    }
+
+    #[test]
+    fn claude_ask_user_question_tool_is_part_of_ai_preview() {
+        let event = json!({
+            "type": "assistant",
+            "message": {
+                "content": [
+                    { "type": "text", "text": "I need confirmation before continuing." },
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_ask_1",
+                        "name": "AskUserQuestion",
+                        "input": {
+                            "question": "Should I restart AgentWatcher now?",
+                            "options": ["Restart", "Wait"]
+                        }
+                    }
+                ]
+            }
+        });
+
+        let preview = claude_assistant_text(&event).unwrap();
+
+        assert!(preview.contains("I need confirmation before continuing."));
+        assert!(preview.contains("Should I restart AgentWatcher now?"));
+        assert!(preview.contains("Options: Restart; Wait"));
     }
 
     #[test]
