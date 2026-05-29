@@ -31,6 +31,8 @@
       --tile-title: 12px;
       --tile-meta: 11px;
       --tile-provider: 22px;
+      --waiting-alert-offset-x: 0px;
+      --waiting-alert-offset-y: 0px;
     }
 
     body[data-theme="light"] {
@@ -284,7 +286,7 @@
 
     .watcher-window {
       position: absolute;
-      left: 70px;
+      left: calc(70px + var(--waiting-alert-offset-x));
       right: 8px;
       top: 8px;
       bottom: 8px;
@@ -509,7 +511,7 @@
     body[data-layout="horizontal"] .watcher-window {
       left: 8px;
       right: 8px;
-      top: 70px;
+      top: calc(70px + var(--waiting-alert-offset-y));
       bottom: 8px;
     }
 
@@ -811,22 +813,26 @@
     .session-card.running { border-color: rgba(55, 148, 255, 0.82); }
     .session-card.idle { border-color: rgba(106, 153, 85, 0.62); opacity: 0.82; }
 
-    .watcher-window.compact-cards .session-card {
+    .watcher-window.compact-cards .session-card,
+    .waiting-alert-layer.compact-cards .session-card {
       padding: 7px;
     }
 
-    .watcher-window.compact-cards .card-head {
+    .watcher-window.compact-cards .card-head,
+    .waiting-alert-layer.compact-cards .card-head {
       margin-bottom: 5px;
       gap: 5px;
     }
 
-    .watcher-window.compact-cards .workspace {
+    .watcher-window.compact-cards .workspace,
+    .waiting-alert-layer.compact-cards .workspace {
       margin-top: 5px;
       font-size: 11px;
       line-height: 14px;
     }
 
-    .watcher-window.compact-cards .session-title {
+    .watcher-window.compact-cards .session-title,
+    .waiting-alert-layer.compact-cards .session-title {
       display: block;
       height: 14px;
       overflow: hidden;
@@ -837,54 +843,65 @@
       -webkit-line-clamp: initial;
     }
 
-    .watcher-window.compact-cards .card-foot {
+    .watcher-window.compact-cards .card-foot,
+    .waiting-alert-layer.compact-cards .card-foot {
       display: none;
     }
 
-    .watcher-window.dense-cards .session-title {
+    .watcher-window.dense-cards .session-title,
+    .waiting-alert-layer.dense-cards .session-title {
       display: none;
     }
 
-    .watcher-window.dense-cards .workspace {
+    .watcher-window.dense-cards .workspace,
+    .waiting-alert-layer.dense-cards .workspace {
       margin-top: 4px;
     }
 
-    .watcher-window.micro-cards .session-title {
+    .watcher-window.micro-cards .session-title,
+    .waiting-alert-layer.micro-cards .session-title {
       display: none;
     }
 
-    .watcher-window.micro-cards .session-card {
+    .watcher-window.micro-cards .session-card,
+    .waiting-alert-layer.micro-cards .session-card {
       display: grid;
       place-items: center;
       padding: 5px;
     }
 
-    .watcher-window.micro-cards .provider {
+    .watcher-window.micro-cards .provider,
+    .waiting-alert-layer.micro-cards .provider {
       width: 18px;
       height: 18px;
       border-radius: 4px;
       font-size: 8px;
     }
 
-    .watcher-window.micro-cards .card-head {
+    .watcher-window.micro-cards .card-head,
+    .waiting-alert-layer.micro-cards .card-head {
       width: 100%;
       justify-content: center;
       margin: 0;
     }
 
-    .watcher-window.micro-cards .time {
+    .watcher-window.micro-cards .time,
+    .waiting-alert-layer.micro-cards .time {
       display: none;
     }
 
-    .watcher-window.micro-cards .workspace {
+    .watcher-window.micro-cards .workspace,
+    .waiting-alert-layer.micro-cards .workspace {
       display: none;
     }
 
-    .watcher-window.micro-cards .card-foot {
+    .watcher-window.micro-cards .card-foot,
+    .waiting-alert-layer.micro-cards .card-foot {
       display: none;
     }
 
-    .watcher-window.micro-cards .card-expand-btn {
+    .watcher-window.micro-cards .card-expand-btn,
+    .waiting-alert-layer.micro-cards .card-expand-btn {
       right: 3px;
       bottom: 3px;
       width: 12px;
@@ -892,7 +909,8 @@
       opacity: 0.72;
     }
 
-    .watcher-window.micro-cards .card-expand-btn svg {
+    .watcher-window.micro-cards .card-expand-btn svg,
+    .waiting-alert-layer.micro-cards .card-expand-btn svg {
       width: 8px;
       height: 8px;
     }
@@ -1034,9 +1052,11 @@
 
     html.is-preview-window-pending .watcher-window,
     html.is-preview-window-pending .compact-rail,
+    html.is-preview-window-pending .waiting-alert-layer,
     html.is-preview-window-pending .toast,
     body.is-preview-window .watcher-window,
     body.is-preview-window .compact-rail,
+    body.is-preview-window .waiting-alert-layer,
     body.is-preview-window .toast {
       display: none;
     }
@@ -1257,6 +1277,45 @@
       transition: left 180ms ease, top 180ms ease, width 180ms ease, height 180ms ease, border-color 140ms ease, background 140ms ease;
     }
 
+    .waiting-alert-layer {
+      position: absolute;
+      z-index: 7;
+      display: flex;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .waiting-alert-layer:empty { display: none; }
+
+    body[data-layout="vertical"] .waiting-alert-layer {
+      flex-direction: row-reverse;
+      align-items: flex-start;
+    }
+
+    body[data-layout="horizontal"] .waiting-alert-layer {
+      flex-direction: column-reverse;
+      align-items: flex-start;
+    }
+
+    .waiting-alert-layer .session-card {
+      --tile-padding: var(--waiting-alert-padding, 8px);
+      --tile-title: var(--waiting-alert-title, 12px);
+      --tile-meta: var(--waiting-alert-meta, 11px);
+      --tile-provider: var(--waiting-alert-provider, 22px);
+      width: var(--waiting-alert-size, 112px);
+      height: var(--waiting-alert-size, 112px);
+      flex: 0 0 var(--waiting-alert-size, 112px);
+      aspect-ratio: auto;
+      pointer-events: auto;
+      animation: waitingAlertIn 160ms ease-out;
+    }
+
+    .waiting-alert-layer .session-card.is-dismissing {
+      opacity: 0;
+      transform: scale(0.96);
+      transition: opacity 140ms ease, transform 140ms ease;
+    }
+
     body[data-layout="horizontal"] .compact-rail {
       width: 184px;
       height: 52px;
@@ -1316,7 +1375,6 @@
 
     .rail-logo:active,
     .rail-logo.is-pressed {
-      transform: scale(0.94);
       background: rgba(0, 120, 212, 0.28);
     }
 
@@ -1457,6 +1515,11 @@
       50% { opacity: 1; }
     }
 
+    @keyframes waitingAlertIn {
+      from { opacity: 0; transform: translateY(4px) scale(0.98); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
     @keyframes railSearchPulse {
       0% { opacity: 0; transform: scale(0.45); }
       36% { opacity: 0.95; }
@@ -1480,6 +1543,8 @@
         <div class="rail-count idle"><span>31</span></div>
       </div>
     </aside>
+
+    <div class="waiting-alert-layer" id="waitingAlertLayer" aria-live="polite" aria-label="New waiting sessions"></div>
 
     <section class="watcher-window" aria-label="AgentWatcher Windows app window">
       <header class="native-titlebar" data-tauri-drag-region>
@@ -1525,6 +1590,18 @@
           <div class="setting-row">
             <label for="alwaysOnTop" data-i18n="alwaysOnTop">Always on top</label>
             <input class="setting-check" id="alwaysOnTop" type="checkbox" checked />
+          </div>
+          <div class="setting-row">
+            <label id="waitingAlertSizeLabel" data-i18n="waitingAlertSize">Waiting alert size</label>
+            <div aria-labelledby="waitingAlertSizeLabel">
+              <button class="setting-toggle" type="button" data-setting-alert-size="small" data-i18n="small">Small</button>
+              <button class="setting-toggle" type="button" data-setting-alert-size="medium" data-i18n="medium">Medium</button>
+              <button class="setting-toggle" type="button" data-setting-alert-size="large" data-i18n="large">Large</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <label for="waitingAlertDurationSeconds" data-i18n="waitingAlertDuration">Waiting alert duration (sec)</label>
+            <input class="setting-number" id="waitingAlertDurationSeconds" type="number" min="1" max="300" step="1" inputmode="numeric" value="15" />
           </div>
         </div>
         <div class="settings-group">
@@ -1673,6 +1750,7 @@
     let tauriListen = null;
     let tauriEmitTo = null;
     let expandedSize = null;
+    let nativeWaitingAlertOffset = { x: 0, y: 0 };
     let nativePreviewWindow = null;
     let latestSessionPreviewData = null;
     let sessionPreviewDesiredVisible = false;
@@ -1680,6 +1758,12 @@
     const isPreviewWindow = new URLSearchParams(window.location.search).get('preview') === '1';
     const EXPANDED_MIN_WIDTH = 360;
     const EXPANDED_MIN_HEIGHT = 460;
+    const WAITING_ALERT_GAP = 8;
+    const WAITING_ALERT_SIZE_PRESETS = {
+      small: { size: 108 },
+      medium: { size: 132 },
+      large: { size: 160 }
+    };
 
     if (window.__TAURI_INTERNALS__) {
       const [dpiApi, windowApi, coreApi, webviewWindowApi, eventApi] = await Promise.all([
@@ -1708,6 +1792,7 @@
     const sizeValue = document.getElementById('sizeValue');
     const watcherWindow = document.querySelector('.watcher-window');
     const compactRail = document.querySelector('.compact-rail');
+    const waitingAlertLayer = document.getElementById('waitingAlertLayer');
     const railLogo = document.querySelector('.rail-logo');
     const resizeHandles = Array.from(document.querySelectorAll('.resize-handle'));
     const dragRegion = document.querySelector('.drag-region');
@@ -1718,6 +1803,7 @@
     const settingLangButtons = Array.from(document.querySelectorAll('[data-setting-lang]'));
     const settingThemeButtons = Array.from(document.querySelectorAll('[data-setting-theme]'));
     const settingLayoutButtons = Array.from(document.querySelectorAll('[data-setting-layout]'));
+    const waitingAlertSizeButtons = Array.from(document.querySelectorAll('[data-setting-alert-size]'));
     const alwaysOnTop = document.getElementById('alwaysOnTop');
     const includeCopilot = document.getElementById('includeCopilot');
     const includeClaude = document.getElementById('includeClaude');
@@ -1726,6 +1812,7 @@
     const maxSessions = document.getElementById('maxSessions');
     const refreshIntervalSeconds = document.getElementById('refreshIntervalSeconds');
     const maxCardsPerRow = document.getElementById('maxCardsPerRow');
+    const waitingAlertDurationSeconds = document.getElementById('waitingAlertDurationSeconds');
     const bridgeStatus = document.getElementById('bridgeStatus');
     const bridgeAction = document.getElementById('bridgeAction');
     const urgentChip = document.getElementById('urgentChip');
@@ -1742,7 +1829,7 @@
     const sessionPreview = document.getElementById('sessionPreview');
     const appTitle = document.querySelector('.app-name strong');
     const appSubtitle = document.querySelector('.app-name span');
-    let cards = Array.from(document.querySelectorAll('.session-card'));
+    let cards = Array.from(document.querySelectorAll('.lane .session-card'));
     const lanes = Array.from(document.querySelectorAll('.lane'));
     let logicalTotals = { all: 51, waiting: 8, running: 12, idle: 31 };
     let sessionData = new Map();
@@ -1760,15 +1847,17 @@
       activeWindowDays: 7,
       maxSessions: 80,
       refreshIntervalSeconds: 15,
-      maxCardsPerRow: 10
+      maxCardsPerRow: 10,
+      waitingAlertSize: 'medium',
+      waitingAlertDurationSeconds: 15
     };
     let settings = loadSettings();
     const i18n = {
       en: {
-        allSessions: 'All agent sessions', watched: '83 workspaces watched', filterActive: 'Workspace filter active', waitingChip: '8 waiting', workspace: 'Workspace', allWorkspaces: 'All workspaces', perRow: 'Per row', visibleNow: 'visible now', inQueue: 'in scroll queue', sessions: 'sessions', updated: 'Updated 2s ago', workspacePrefix: 'Workspace: ', overflow: 'Scroll continues by priority: waiting, running, idle', priority: 'priority', live: 'live', quiet: 'quiet', waiting: 'Waiting', running: 'Running', idle: 'Idle', all: 'All', wait: 'Wait', run: 'Run', col: 'col', cols: 'cols', perRowButton: '/ row', iconsPerRow: 'icons per row', windowSize: 'Window size', openWorkspace: 'Open VS Code workspace: ', openingAgents: 'Opening session...', openedAgents: 'Session opened', themeLight: 'Light theme', themeDark: 'Dark theme', settings: 'Settings', appearance: 'Appearance', language: 'Language', theme: 'Theme', layout: 'Layout', horizontal: 'Horizontal', vertical: 'Vertical', lastUser: 'Last user', lastAi: 'Last AI', noUserMessage: 'No user message captured', noAiMessage: 'No AI message captured', tailOnly: 'tail', errorExcerpt: 'error', windowBehavior: 'Window', alwaysOnTop: 'Always on top', dataSources: 'Data', includeCopilot: 'Copilot sessions', includeClaude: 'Claude sessions', hideArchived: 'Hide archived', scanLimits: 'Scan limits', activeWindowDays: 'Active window (days)', maxSessions: 'Max sessions', refreshInterval: 'Refresh interval (sec)', settingsSaved: 'Settings updated', maxCardsPerRow: 'Max cards per row'
+        allSessions: 'All agent sessions', watched: '83 workspaces watched', filterActive: 'Workspace filter active', waitingChip: '8 waiting', workspace: 'Workspace', allWorkspaces: 'All workspaces', perRow: 'Per row', visibleNow: 'visible now', inQueue: 'in scroll queue', sessions: 'sessions', updated: 'Updated 2s ago', workspacePrefix: 'Workspace: ', overflow: 'Scroll continues by priority: waiting, running, idle', priority: 'priority', live: 'live', quiet: 'quiet', waiting: 'Waiting', running: 'Running', idle: 'Idle', all: 'All', wait: 'Wait', run: 'Run', col: 'col', cols: 'cols', perRowButton: '/ row', iconsPerRow: 'icons per row', windowSize: 'Window size', openWorkspace: 'Open VS Code workspace: ', openingAgents: 'Opening session...', openedAgents: 'Session opened', themeLight: 'Light theme', themeDark: 'Dark theme', settings: 'Settings', appearance: 'Appearance', language: 'Language', theme: 'Theme', layout: 'Layout', horizontal: 'Horizontal', vertical: 'Vertical', lastUser: 'Last user', lastAi: 'Last AI', noUserMessage: 'No user message captured', noAiMessage: 'No AI message captured', tailOnly: 'tail', errorExcerpt: 'error', windowBehavior: 'Window', alwaysOnTop: 'Always on top', dataSources: 'Data', includeCopilot: 'Copilot sessions', includeClaude: 'Claude sessions', hideArchived: 'Hide archived', scanLimits: 'Scan limits', activeWindowDays: 'Active window (days)', maxSessions: 'Max sessions', refreshInterval: 'Refresh interval (sec)', settingsSaved: 'Settings updated', maxCardsPerRow: 'Max cards per row', waitingAlertSize: 'Waiting alert size', waitingAlertDuration: 'Waiting alert duration (sec)', small: 'Small', medium: 'Medium', large: 'Large', waitingAlertAria: 'New waiting session'
       },
       zh: {
-        allSessions: '全部 Agent 会话', watched: '已监控 83 个 workspace', filterActive: '已启用 workspace 过滤', waitingChip: '8 待回复', workspace: 'Workspace', allWorkspaces: '全部 workspace', perRow: '每排数量', visibleNow: '当前可见', inQueue: '在滚动队列', sessions: '个会话', updated: '2 秒前更新', workspacePrefix: 'Workspace：', overflow: '按优先级继续滚动：待回复、运行中、闲置', priority: '优先', live: '实时', quiet: '静默', waiting: '待回复', running: '运行中', idle: '闲置', all: '全部', wait: '待回', run: '运行', col: '列', cols: '列', perRowButton: '/ 排', iconsPerRow: '个/排', windowSize: '窗口尺寸', openWorkspace: '打开 VS Code workspace：', openingAgents: '正在打开会话...', openedAgents: '已打开会话', themeLight: '浅色主题', themeDark: '深色主题', settings: '设置', appearance: '外观', language: '语言', theme: '主题', layout: '布局', horizontal: '横版', vertical: '竖版', lastUser: '最后用户输入', lastAi: '最后 AI 回复', noUserMessage: '未捕获到用户输入', noAiMessage: '未捕获到 AI 回复', tailOnly: '尾部', errorExcerpt: '错误', windowBehavior: '窗口', alwaysOnTop: '永远置顶', dataSources: '数据', includeCopilot: 'Copilot 会话', includeClaude: 'Claude 会话', hideArchived: '隐藏归档', scanLimits: '扫描限制', activeWindowDays: '活跃窗口（天）', maxSessions: '最大会话数', refreshInterval: '刷新间隔（秒）', settingsSaved: '设置已更新', maxCardsPerRow: '每排最大数量'
+        allSessions: '全部 Agent 会话', watched: '已监控 83 个 workspace', filterActive: '已启用 workspace 过滤', waitingChip: '8 待回复', workspace: 'Workspace', allWorkspaces: '全部 workspace', perRow: '每排数量', visibleNow: '当前可见', inQueue: '在滚动队列', sessions: '个会话', updated: '2 秒前更新', workspacePrefix: 'Workspace：', overflow: '按优先级继续滚动：待回复、运行中、闲置', priority: '优先', live: '实时', quiet: '静默', waiting: '待回复', running: '运行中', idle: '闲置', all: '全部', wait: '待回', run: '运行', col: '列', cols: '列', perRowButton: '/ 排', iconsPerRow: '个/排', windowSize: '窗口尺寸', openWorkspace: '打开 VS Code workspace：', openingAgents: '正在打开会话...', openedAgents: '已打开会话', themeLight: '浅色主题', themeDark: '深色主题', settings: '设置', appearance: '外观', language: '语言', theme: '主题', layout: '布局', horizontal: '横版', vertical: '竖版', lastUser: '最后用户输入', lastAi: '最后 AI 回复', noUserMessage: '未捕获到用户输入', noAiMessage: '未捕获到 AI 回复', tailOnly: '尾部', errorExcerpt: '错误', windowBehavior: '窗口', alwaysOnTop: '永远置顶', dataSources: '数据', includeCopilot: 'Copilot 会话', includeClaude: 'Claude 会话', hideArchived: '隐藏归档', scanLimits: '扫描限制', activeWindowDays: '活跃窗口（天）', maxSessions: '最大会话数', refreshInterval: '刷新间隔（秒）', settingsSaved: '设置已更新', maxCardsPerRow: '每排最大数量', waitingAlertSize: '待回复提醒尺寸', waitingAlertDuration: '待回复提醒持续时间（秒）', small: '小', medium: '中', large: '大', waitingAlertAria: '新的待回复会话'
       }
     };
     let currentLang = settings.language;
@@ -1786,6 +1875,10 @@
     document.body.dataset.theme = settings.theme;
     document.body.dataset.layout = settings.layout;
     let toastTimer = 0;
+    let waitingSessionStatusSnapshot = new Map();
+    let waitingAlertBaselineReady = false;
+    const waitingAlertItems = new Map();
+    let browserMockWaitingAlertQueued = false;
 
     function t(key) {
       return i18n[currentLang][key];
@@ -1797,9 +1890,189 @@
       return Math.max(min, Math.min(max, Math.round(numberValue)));
     }
 
+    function collectSessionCards() {
+      return Array.from(document.querySelectorAll('.lane .session-card'));
+    }
+
+    function normalizedSessionStatus(session) {
+      return ['waiting', 'running', 'idle'].includes(session?.status) ? session.status : 'idle';
+    }
+
+    function waitingAlertPreset() {
+      return WAITING_ALERT_SIZE_PRESETS[settings.waitingAlertSize] || WAITING_ALERT_SIZE_PRESETS.medium;
+    }
+
+    function applyWaitingAlertSize() {
+      const preset = waitingAlertPreset();
+      const cardWidth = preset.size;
+      root.style.setProperty('--waiting-alert-size', cardWidth + 'px');
+      root.style.setProperty('--waiting-alert-padding', Math.max(6, Math.round(cardWidth * 0.064)) + 'px');
+      root.style.setProperty('--waiting-alert-title', Math.max(11, Math.min(18, Math.round(cardWidth * 0.095))) + 'px');
+      root.style.setProperty('--waiting-alert-meta', Math.max(10, Math.min(15, Math.round(cardWidth * 0.082))) + 'px');
+      root.style.setProperty('--waiting-alert-provider', Math.max(18, Math.min(32, Math.round(cardWidth * 0.18))) + 'px');
+      waitingAlertLayer?.classList.toggle('compact-cards', cardWidth < 110);
+      waitingAlertLayer?.classList.toggle('dense-cards', cardWidth < 85);
+      waitingAlertLayer?.classList.toggle('micro-cards', cardWidth < 60);
+    }
+
+    function syncWaitingAlertLayout() {
+      if (!waitingAlertLayer || isPreviewWindow) return;
+      applyWaitingAlertSize();
+      syncCompactRail();
+
+      const railRect = compactRail.getBoundingClientRect();
+      const railLeft = Number.parseFloat(compactRail.style.left) || railRect.left;
+      const railTop = Number.parseFloat(compactRail.style.top) || railRect.top;
+      const preset = waitingAlertPreset();
+      const stack = waitingAlertStackMetrics();
+      const stackSpan = stack.span || preset.size;
+      waitingAlertLayer.style.left = '';
+      waitingAlertLayer.style.right = '';
+      waitingAlertLayer.style.top = '';
+      waitingAlertLayer.style.bottom = '';
+      waitingAlertLayer.style.minWidth = '';
+      waitingAlertLayer.style.minHeight = '';
+
+      if (isHorizontalLayout()) {
+        waitingAlertLayer.style.left = Math.round(railLeft) + 'px';
+        waitingAlertLayer.style.bottom = Math.round(window.innerHeight - railTop + WAITING_ALERT_GAP + 1) + 'px';
+        waitingAlertLayer.style.minWidth = preset.size + 'px';
+        return;
+      }
+
+      waitingAlertLayer.style.right = Math.round(window.innerWidth - railLeft + WAITING_ALERT_GAP + 1) + 'px';
+      waitingAlertLayer.style.top = Math.round(railTop) + 'px';
+      waitingAlertLayer.style.minHeight = preset.size + 'px';
+    }
+
+    function waitingAlertDurationMs() {
+      return clampNumber(settings.waitingAlertDurationSeconds, 1, 300, defaultSettings.waitingAlertDurationSeconds) * 1000;
+    }
+
+    function waitingAlertStackMetrics() {
+      const count = waitingAlertItems.size;
+      const size = waitingAlertPreset().size;
+      if (!count) return { count: 0, size, span: 0 };
+      return { count, size, span: count * size + Math.max(0, count - 1) * WAITING_ALERT_GAP };
+    }
+
+    function waitingAlertOuterOffset() {
+      const stack = waitingAlertStackMetrics();
+      return stack.count ? stack.span + WAITING_ALERT_GAP : 0;
+    }
+
+    function syncRailOnlySizeForWaitingAlerts() {
+      if (document.body.classList.contains('is-rail-only')) syncNativeWindowSize(true);
+    }
+
+    function sessionFromCard(card, fallbackId) {
+      const providerText = cardText(card, '.provider');
+      return {
+        id: card.dataset.sessionId || fallbackId,
+        status: cardStatus(card),
+        workspace: card.dataset.workspace || card.dataset.open || cardText(card, '.workspace') || 'Unknown',
+        provider: providerText === 'GH' ? 'copilot' : 'claude',
+        providerLabel: providerText || 'C',
+        timeLabel: cardText(card, '.time'),
+        title: cardText(card, '.session-title') || card.dataset.open || 'Session',
+        branch: cardText(card, '.card-foot span') || statusText(cardStatus(card))
+      };
+    }
+
+    function initializeWaitingAlertSnapshotFromCards() {
+      const nextSnapshot = new Map();
+      collectSessionCards().forEach((card, index) => {
+        if (!card.dataset.sessionId) card.dataset.sessionId = 'mock-card-' + index;
+        nextSnapshot.set(card.dataset.sessionId, cardStatus(card));
+      });
+      waitingSessionStatusSnapshot = nextSnapshot;
+      waitingAlertBaselineReady = true;
+    }
+
+    function collectNewWaitingAlerts(sessions) {
+      const nextSnapshot = new Map();
+      const alerts = [];
+
+      (Array.isArray(sessions) ? sessions : []).forEach(session => {
+        if (!session || !session.id) return;
+        const sessionId = String(session.id);
+        const nextStatus = normalizedSessionStatus(session);
+        const previousStatus = waitingSessionStatusSnapshot.get(sessionId);
+        nextSnapshot.set(sessionId, nextStatus);
+
+        if (waitingAlertBaselineReady && nextStatus === 'waiting' && previousStatus !== 'waiting') {
+          alerts.push({ ...session, id: sessionId, status: 'waiting' });
+        }
+      });
+
+      waitingSessionStatusSnapshot = nextSnapshot;
+      waitingAlertBaselineReady = true;
+      return alerts;
+    }
+
+    function dismissWaitingAlert(alertId, immediate = false) {
+      const item = waitingAlertItems.get(alertId);
+      if (!item) return;
+
+      window.clearTimeout(item.timer);
+      waitingAlertItems.delete(alertId);
+      if (previewCard === item.card) hideSessionPreview();
+
+      if (immediate) {
+        item.card.remove();
+        syncWaitingAlertLayout();
+        syncRailOnlySizeForWaitingAlerts();
+        return;
+      }
+
+      item.card.classList.add('is-dismissing');
+      window.setTimeout(() => {
+        item.card.remove();
+        syncWaitingAlertLayout();
+        syncRailOnlySizeForWaitingAlerts();
+      }, 150);
+    }
+
+    function showWaitingAlert(session) {
+      if (!waitingAlertLayer || isPreviewWindow || !session?.id) return;
+
+      const alertId = String(session.id);
+      dismissWaitingAlert(alertId, true);
+      sessionData.set(alertId, session);
+
+      const card = createSessionCard({ ...session, status: 'waiting' });
+      card.classList.add('waiting-alert-card');
+      card.dataset.alertId = alertId;
+      card.setAttribute('aria-label', t('waitingAlertAria') + ': ' + (session.workspace || shortCardId(alertId)));
+      bindCardClickHandlers(card);
+      waitingAlertLayer.appendChild(card);
+
+      const timer = window.setTimeout(() => dismissWaitingAlert(alertId), waitingAlertDurationMs());
+      waitingAlertItems.set(alertId, { card, timer, session });
+      syncWaitingAlertLayout();
+      syncRailOnlySizeForWaitingAlerts();
+    }
+
+    function queueBrowserMockWaitingAlert() {
+      if (tauriInvoke || isPreviewWindow || browserMockWaitingAlertQueued) return;
+      const mockSource = collectSessionCards().find(card => cardStatus(card) === 'waiting');
+      if (!mockSource) return;
+
+      browserMockWaitingAlertQueued = true;
+      window.setTimeout(() => {
+        const session = sessionFromCard(mockSource, 'mock-waiting-alert-' + Date.now());
+        session.id = 'mock-waiting-alert-' + Date.now();
+        session.status = 'waiting';
+        showWaitingAlert(session);
+      }, 700);
+    }
+
     function loadSettings() {
       try {
         const savedSettings = JSON.parse(localStorage.getItem('agentwatcher.settings') || '{}');
+        const savedAlertSize = WAITING_ALERT_SIZE_PRESETS[savedSettings.waitingAlertSize]
+          ? savedSettings.waitingAlertSize
+          : defaultSettings.waitingAlertSize;
         return {
           language: ['en', 'zh'].includes(savedSettings.language) ? savedSettings.language : defaultSettings.language,
           theme: ['dark', 'light'].includes(savedSettings.theme) ? savedSettings.theme : defaultSettings.theme,
@@ -1811,7 +2084,9 @@
           activeWindowDays: clampNumber(savedSettings.activeWindowDays, 1, 30, defaultSettings.activeWindowDays),
           maxSessions: clampNumber(savedSettings.maxSessions, 1, 5000, defaultSettings.maxSessions),
           refreshIntervalSeconds: clampNumber(savedSettings.refreshIntervalSeconds, 1, 3600, defaultSettings.refreshIntervalSeconds),
-          maxCardsPerRow: clampNumber(savedSettings.maxCardsPerRow, 1, 20, defaultSettings.maxCardsPerRow)
+          maxCardsPerRow: clampNumber(savedSettings.maxCardsPerRow, 1, 20, defaultSettings.maxCardsPerRow),
+          waitingAlertSize: savedAlertSize,
+          waitingAlertDurationSeconds: clampNumber(savedSettings.waitingAlertDurationSeconds, 1, 300, defaultSettings.waitingAlertDurationSeconds)
         };
       } catch (error) {
         return { ...defaultSettings };
@@ -1868,6 +2143,7 @@
       settingLangButtons.forEach(button => button.classList.toggle('is-active', button.dataset.settingLang === settings.language));
       settingThemeButtons.forEach(button => button.classList.toggle('is-active', button.dataset.settingTheme === settings.theme));
       settingLayoutButtons.forEach(button => button.classList.toggle('is-active', button.dataset.settingLayout === settings.layout));
+      waitingAlertSizeButtons.forEach(button => button.classList.toggle('is-active', button.dataset.settingAlertSize === settings.waitingAlertSize));
       alwaysOnTop.checked = settings.alwaysOnTop;
       includeCopilot.checked = settings.includeCopilot;
       includeClaude.checked = settings.includeClaude;
@@ -1876,12 +2152,15 @@
       maxSessions.value = String(settings.maxSessions);
       refreshIntervalSeconds.value = String(settings.refreshIntervalSeconds);
       maxCardsPerRow.value = String(settings.maxCardsPerRow);
+      waitingAlertDurationSeconds.value = String(settings.waitingAlertDurationSeconds);
       sizeRange.max = String(settings.maxCardsPerRow);
       settingsToggle.classList.toggle('is-active', !settingsPanel.hidden);
       settingsToggle.setAttribute('aria-label', t('settings'));
       document.querySelectorAll('[data-i18n]').forEach(element => {
         element.textContent = t(element.dataset.i18n);
       });
+      applyWaitingAlertSize();
+      syncWaitingAlertLayout();
     }
 
     function updateSetting(key, value, options = {}) {
@@ -1891,6 +2170,7 @@
       applyLanguage();
       setIconsPerRow(sizeRange.value, false);
       requestAnimationFrame(syncCompactRail);
+      requestAnimationFrame(syncWaitingAlertLayout);
       if (document.body.classList.contains('is-rail-only')) syncNativeWindowSize(true);
       if (options.reschedule) scheduleSessionRefresh();
       if (options.refresh !== false) refreshSessions(true);
@@ -1978,16 +2258,20 @@
     }
 
     function syncCompactRail() {
+      const alertOffset = waitingAlertOuterOffset();
+      root.style.setProperty('--waiting-alert-offset-x', isHorizontalLayout() ? '0px' : alertOffset + 'px');
+      root.style.setProperty('--waiting-alert-offset-y', isHorizontalLayout() ? alertOffset + 'px' : '0px');
+
       if (isHorizontalLayout()) {
         compactRail.style.left = '8px';
-        compactRail.style.top = '8px';
+        compactRail.style.top = Math.round(8 + alertOffset) + 'px';
         compactRail.style.width = '184px';
         compactRail.style.height = '52px';
         return;
       }
 
       if (document.body.classList.contains('is-rail-only')) {
-        compactRail.style.left = '8px';
+        compactRail.style.left = Math.round(8 + alertOffset) + 'px';
         compactRail.style.top = '8px';
         compactRail.style.width = '52px';
         compactRail.style.height = '184px';
@@ -1995,17 +2279,29 @@
       }
 
       const stableTop = watcherWindow.offsetTop || 8;
-      const stableHeight = watcherWindow.offsetHeight || watcherWindow.getBoundingClientRect().height;
-      compactRail.style.left = '8px';
+      compactRail.style.left = Math.round(8 + alertOffset) + 'px';
       compactRail.style.top = Math.round(stableTop) + 'px';
       compactRail.style.width = '52px';
-      compactRail.style.height = Math.round(Math.min(184, Math.max(156, stableHeight * 0.34))) + 'px';
+      compactRail.style.height = '184px';
     }
 
     function railLogicalSize() {
+      const stack = waitingAlertStackMetrics();
+      if (!stack.count) {
+        return isHorizontalLayout()
+          ? { width: 200, height: 68 }
+          : { width: 68, height: 200 };
+      }
+
       return isHorizontalLayout()
-        ? { width: 200, height: 68 }
-        : { width: 68, height: 200 };
+        ? { width: Math.max(200, 16 + stack.size), height: 68 + WAITING_ALERT_GAP + stack.span }
+        : { width: 68 + WAITING_ALERT_GAP + stack.span, height: Math.max(200, 16 + stack.size) };
+    }
+
+    function desiredNativeWaitingAlertOffset(compact) {
+      if (!compact) return { x: 0, y: 0 };
+      const offset = waitingAlertOuterOffset();
+      return isHorizontalLayout() ? { x: 0, y: offset } : { x: offset, y: 0 };
     }
 
     function captureExpandedSize() {
@@ -2016,6 +2312,25 @@
     async function syncNativeWindowSize(compact) {
       if (!tauriWindow || !LogicalSizeClass) return;
       try {
+        const desiredOffset = desiredNativeWaitingAlertOffset(compact);
+        const deltaX = desiredOffset.x - nativeWaitingAlertOffset.x;
+        const deltaY = desiredOffset.y - nativeWaitingAlertOffset.y;
+        if ((deltaX || deltaY) && tauriWindow.outerPosition && tauriWindow.setPosition && PhysicalPositionClass) {
+          try {
+            const [position, scaleFactor] = await Promise.all([
+              tauriWindow.outerPosition(),
+              tauriWindow.scaleFactor()
+            ]);
+            await tauriWindow.setPosition(new PhysicalPositionClass(
+              Math.round(position.x - deltaX * scaleFactor),
+              Math.round(position.y - deltaY * scaleFactor)
+            ));
+            nativeWaitingAlertOffset = desiredOffset;
+          } catch (positionError) {
+            console.warn('[AW] syncNativeWindowSize position failed', positionError);
+          }
+        }
+
         if (compact) {
           const { width, height } = railLogicalSize();
           if (tauriWindow.setMinSize) {
@@ -2042,6 +2357,7 @@
       compactRail.setAttribute('aria-expanded', enabled ? 'false' : 'true');
       railLogo.setAttribute('aria-expanded', enabled ? 'false' : 'true');
       railLogo.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+      if (enabled) nativeWaitingAlertOffset = desiredNativeWaitingAlertOffset(true);
       requestAnimationFrame(syncCompactRail);
       await syncNativeWindowSize(enabled);
     }
@@ -2253,7 +2569,7 @@
 
     function refreshCardState(shouldRecalculate = true) {
       normalizeSessionCardElements();
-      cards = Array.from(document.querySelectorAll('.session-card'));
+      cards = collectSessionCards();
       cards.forEach(card => {
         card.dataset.workspace = card.dataset.workspace || card.dataset.open;
       });
@@ -2303,7 +2619,7 @@
     }
 
     function normalizeSessionCardElements() {
-      document.querySelectorAll('button.session-card').forEach(btn => {
+      document.querySelectorAll('.lane button.session-card').forEach(btn => {
         const div = document.createElement('div');
         div.className = btn.className;
         div.setAttribute('role', 'button');
@@ -2315,37 +2631,44 @@
       });
     }
 
-    function bindCardClicks() {
-      cards.forEach(card => {
-        card.onclick = () => openCard(card);
-        card.onkeydown = (e) => {
-          if (e.target.closest('.card-expand-btn')) return;
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            openCard(card);
-          }
-        };
-        card.onpointerenter = null;
-        card.onpointerleave = null;
-        card.onfocus = null;
-        card.onblur = null;
-        const btn = card.querySelector('.card-expand-btn');
-        if (btn) {
-          btn.onpointerdown = (e) => { e.stopPropagation(); };
-          btn.onclick = (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-          };
-          btn.onpointerenter = () => showSessionPreview(card, btn);
-          btn.onpointerleave = scheduleSessionPreviewHide;
-          btn.onfocus = () => showSessionPreview(card, btn);
-          btn.onblur = scheduleSessionPreviewHide;
+    function bindCardClickHandlers(card) {
+      card.onclick = () => {
+        openCard(card);
+        if (card.dataset.alertId) dismissWaitingAlert(card.dataset.alertId);
+      };
+      card.onkeydown = (e) => {
+        if (e.target.closest('.card-expand-btn')) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          openCard(card);
+          if (card.dataset.alertId) dismissWaitingAlert(card.dataset.alertId);
         }
-      });
+      };
+      card.onpointerenter = null;
+      card.onpointerleave = null;
+      card.onfocus = null;
+      card.onblur = null;
+      const btn = card.querySelector('.card-expand-btn');
+      if (btn) {
+        btn.onpointerdown = (e) => { e.stopPropagation(); };
+        btn.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        };
+        btn.onpointerenter = () => showSessionPreview(card, btn);
+        btn.onpointerleave = scheduleSessionPreviewHide;
+        btn.onfocus = () => showSessionPreview(card, btn);
+        btn.onblur = scheduleSessionPreviewHide;
+      }
+    }
+
+    function bindCardClicks() {
+      cards.forEach(bindCardClickHandlers);
     }
 
     async function openCard(card) {
-      const session = sessionData.get(card.dataset.sessionId);
+      const alertSession = card.dataset.alertId ? waitingAlertItems.get(card.dataset.alertId)?.session : null;
+      const session = sessionData.get(card.dataset.sessionId) || alertSession;
       if (!session || !tauriInvoke) {
         showToast(t('openWorkspace') + card.dataset.open);
         return;
@@ -2797,7 +3120,7 @@
         sessionData.set(String(session.id), session);
       });
 
-      cards = Array.from(document.querySelectorAll('.session-card'));
+      cards = collectSessionCards();
       recalculateTotals();
       populateWorkspaceFilter();
       bindCardClicks();
@@ -2818,6 +3141,7 @@
       try {
         const sessions = await tauriInvoke('scan_sessions', { options: scanOptions() });
         lastRefreshMs = Date.now();
+        const waitingAlerts = collectNewWaitingAlerts(sessions);
         const nextSignature = buildSessionSignature(sessions);
         if (nextSignature !== lastSessionSignature) {
           lastSessionSignature = nextSignature;
@@ -2825,6 +3149,7 @@
         } else {
           applyFilters({ preserveScroll: true });
         }
+        waitingAlerts.forEach(showWaitingAlert);
       } catch (error) {
         if (!silent) showToast(String(error));
       }
@@ -2876,6 +3201,7 @@
       }).catch(() => {});
 
       refreshCardState(false);
+      if (!tauriInvoke) initializeWaitingAlertSnapshotFromCards();
 
       document.querySelectorAll('.segment').forEach(segment => {
         segment.addEventListener('click', () => {
@@ -2929,6 +3255,9 @@
       settingLayoutButtons.forEach(button => {
         button.addEventListener('click', () => updateSetting('layout', button.dataset.settingLayout, { announce: true, refresh: false }));
       });
+      waitingAlertSizeButtons.forEach(button => {
+        button.addEventListener('click', () => updateSetting('waitingAlertSize', button.dataset.settingAlertSize, { announce: true, refresh: false }));
+      });
       alwaysOnTop.addEventListener('change', () => {
         updateSetting('alwaysOnTop', alwaysOnTop.checked, { announce: true, refresh: false });
         applyAlwaysOnTopSetting();
@@ -2940,6 +3269,7 @@
       maxSessions.addEventListener('change', () => updateSetting('maxSessions', clampNumber(maxSessions.value, 1, 5000, defaultSettings.maxSessions), { announce: true }));
       refreshIntervalSeconds.addEventListener('change', () => updateSetting('refreshIntervalSeconds', clampNumber(refreshIntervalSeconds.value, 1, 3600, defaultSettings.refreshIntervalSeconds), { announce: true, reschedule: true }));
       maxCardsPerRow.addEventListener('change', () => updateSetting('maxCardsPerRow', clampNumber(maxCardsPerRow.value, 1, 20, defaultSettings.maxCardsPerRow), { announce: true, refresh: false }));
+      waitingAlertDurationSeconds.addEventListener('change', () => updateSetting('waitingAlertDurationSeconds', clampNumber(waitingAlertDurationSeconds.value, 1, 300, defaultSettings.waitingAlertDurationSeconds), { announce: true, refresh: false }));
       bridgeAction.addEventListener('click', installBridge);
       [dragRegion, document.querySelector('.native-titlebar'), appHeader, compactRail].forEach(source => source?.addEventListener('pointerdown', startWindowDrag));
       windowActionButtons.forEach(button => button.addEventListener('click', () => runWindowAction(button.dataset.windowAction)));
@@ -2954,11 +3284,13 @@
       new ResizeObserver(() => {
         requestAnimationFrame(syncCardScale);
         requestAnimationFrame(syncCompactRail);
+        requestAnimationFrame(syncWaitingAlertLayout);
       }).observe(watcherWindow);
       window.addEventListener('resize', () => {
         captureExpandedSize();
         if (!sessionPreview.hidden) positionSessionPreview();
         requestAnimationFrame(syncCompactRail);
+        requestAnimationFrame(syncWaitingAlertLayout);
       });
       captureExpandedSize();
       applySettingsControls();
@@ -2967,10 +3299,13 @@
       setIconsPerRow(sizeRange.value, false);
       applyFilters();
       syncCompactRail();
+      syncWaitingAlertLayout();
       if (tauriInvoke) {
         refreshSessions(false);
         checkBridgeStatus();
         scheduleSessionRefresh();
+      } else {
+        queueBrowserMockWaitingAlert();
       }
     }
   </script>
