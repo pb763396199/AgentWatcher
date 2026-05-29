@@ -4,6 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AgentWatcher</title>
+  <script>
+    if (new URLSearchParams(window.location.search).get('preview') === '1') {
+      document.documentElement.classList.add('is-preview-window-pending');
+    }
+  </script>
   <style>
     :root {
       --surface: #202020;
@@ -94,35 +99,40 @@
     body[data-theme="light"] .rail-count.idle { color: var(--idle); }
 
     body[data-theme="light"] .session-scroll,
-    body[data-theme="light"] .session-preview,
+    body[data-theme="light"] .session-preview-body,
     body[data-theme="light"] .settings-panel {
       scrollbar-color: #c8c8c8 #f3f3f3;
     }
 
     body[data-theme="light"] .session-scroll::-webkit-scrollbar-track,
-    body[data-theme="light"] .session-preview::-webkit-scrollbar-track,
+    body[data-theme="light"] .session-preview-body::-webkit-scrollbar-track,
     body[data-theme="light"] .settings-panel::-webkit-scrollbar-track {
       background: #f3f3f3;
     }
 
     body[data-theme="light"] .session-scroll::-webkit-scrollbar-thumb,
-    body[data-theme="light"] .session-preview::-webkit-scrollbar-thumb,
+    body[data-theme="light"] .session-preview-body::-webkit-scrollbar-thumb,
     body[data-theme="light"] .settings-panel::-webkit-scrollbar-thumb {
       border-color: #f3f3f3;
       background: #c8c8c8;
     }
 
     body[data-theme="light"] .session-scroll::-webkit-scrollbar-thumb:hover,
-    body[data-theme="light"] .session-preview::-webkit-scrollbar-thumb:hover,
+    body[data-theme="light"] .session-preview-body::-webkit-scrollbar-thumb:hover,
     body[data-theme="light"] .settings-panel::-webkit-scrollbar-thumb:hover {
       background: #a6a6a6;
     }
 
     body[data-theme="light"] .session-preview {
-      border-color: #b8d7f0;
-      background: #ffffff;
+      border-color: #d0d0d0;
+      background: #f8f8f8;
       color: #1f1f1f;
-      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16);
+      box-shadow: none;
+    }
+
+    body[data-theme="light"] .card-expand-btn:hover,
+    body[data-theme="light"] .card-expand-btn:focus-visible {
+      background: rgba(0, 0, 0, 0.08);
     }
 
     body[data-theme="light"] .session-preview-text {
@@ -676,7 +686,8 @@
     .queue-shell {
       min-height: 0;
       display: grid;
-      grid-template-rows: 26px 1fr 28px;
+      grid-template-rows: 26px minmax(0, 1fr) 28px;
+      overflow: hidden;
       background: #1f1f1f;
     }
 
@@ -873,6 +884,19 @@
       display: none;
     }
 
+    .watcher-window.micro-cards .card-expand-btn {
+      right: 3px;
+      bottom: 3px;
+      width: 12px;
+      height: 12px;
+      opacity: 0.72;
+    }
+
+    .watcher-window.micro-cards .card-expand-btn svg {
+      width: 8px;
+      height: 8px;
+    }
+
     .card-head {
       display: flex;
       align-items: center;
@@ -931,7 +955,7 @@
     .card-foot {
       position: absolute;
       left: var(--tile-padding);
-      right: var(--tile-padding);
+      right: calc(var(--tile-padding) + 24px);
       bottom: var(--tile-padding);
       display: flex;
       align-items: center;
@@ -948,39 +972,139 @@
       white-space: nowrap;
     }
 
+    .card-expand-btn {
+      position: absolute;
+      right: var(--tile-padding);
+      bottom: var(--tile-padding);
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      padding: 0;
+      border: 1px solid transparent;
+      border-radius: 3px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      opacity: 0.78;
+      transition: opacity 0.12s, background 0.12s, color 0.12s;
+      line-height: 1;
+    }
+
+    .session-card:hover .card-expand-btn,
+    .session-card:focus-within .card-expand-btn { opacity: 1; }
+
+    .card-expand-btn:hover,
+    .card-expand-btn:focus-visible {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text);
+      border-color: var(--border);
+      opacity: 1;
+      outline: none;
+    }
+
     .session-preview {
       position: fixed;
       z-index: 20;
-      left: 0;
-      top: 0;
-      width: min(380px, calc(100vw - 20px));
-      min-width: min(260px, calc(100vw - 20px));
-      max-width: calc(100vw - 20px);
-      min-height: min(198px, calc(100vh - 20px));
-      max-height: calc(100vh - 20px);
-      padding: 12px;
-      overflow: auto;
-      resize: both;
-      border: 1px solid var(--focus);
+      width: 420px;
+      height: 360px;
+      min-width: 280px;
+      min-height: 220px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      margin: 0;
+      border: 1px solid var(--border);
       border-radius: 7px;
       background: var(--surface-2);
       color: var(--text);
-      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.38);
+      box-shadow: none;
       scrollbar-width: thin;
       scrollbar-color: #5f5f5f #252526;
     }
 
     .session-preview[hidden] { display: none; }
 
-    .session-preview::-webkit-scrollbar,
+    body.is-preview-window .desktop {
+      width: 100vw;
+      height: 100vh;
+    }
+
+    html.is-preview-window-pending .watcher-window,
+    html.is-preview-window-pending .compact-rail,
+    html.is-preview-window-pending .toast,
+    body.is-preview-window .watcher-window,
+    body.is-preview-window .compact-rail,
+    body.is-preview-window .toast {
+      display: none;
+    }
+
+    body.is-preview-window .session-preview {
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      min-width: 0;
+      min-height: 0;
+      border-radius: 7px;
+    }
+
+    .session-preview-body::-webkit-scrollbar,
     .session-preview-text::-webkit-scrollbar { width: 10px; height: 10px; }
-    .session-preview::-webkit-scrollbar-track,
+    .session-preview-body::-webkit-scrollbar-track,
     .session-preview-text::-webkit-scrollbar-track { background: #252526; }
-    .session-preview::-webkit-scrollbar-thumb,
+    .session-preview-body::-webkit-scrollbar-thumb,
     .session-preview-text::-webkit-scrollbar-thumb {
       border: 2px solid #252526;
       border-radius: 999px;
       background: #5f5f5f;
+    }
+
+    .session-preview-body {
+      flex: 1 1 auto;
+      height: auto;
+      min-height: 0;
+      overflow: auto;
+      padding: 12px;
+      scrollbar-width: thin;
+      scrollbar-color: #5f5f5f #252526;
+    }
+
+    .session-preview-resize-handle {
+      position: absolute;
+      z-index: 2;
+      width: 14px;
+      height: 14px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: transparent;
+      touch-action: none;
+    }
+
+    .session-preview-resize-handle.nw {
+      left: -1px;
+      top: -1px;
+      cursor: nwse-resize;
+    }
+
+    .session-preview-resize-handle.ne {
+      right: -1px;
+      top: -1px;
+      cursor: nesw-resize;
+    }
+
+    .session-preview-resize-handle.sw {
+      left: -1px;
+      bottom: -1px;
+      cursor: nesw-resize;
+    }
+
+    .session-preview-resize-handle.se {
+      right: -1px;
+      bottom: -1px;
+      cursor: nwse-resize;
     }
 
     .session-preview-head {
@@ -1533,7 +1657,7 @@
       <button class="resize-handle se" data-resize="se" type="button" aria-label="Resize from bottom right"></button>
     </section>
 
-    <aside class="session-preview" id="sessionPreview" aria-live="polite" hidden></aside>
+    <div class="session-preview" id="sessionPreview" aria-live="polite" hidden></div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
@@ -1542,23 +1666,39 @@
   <script type="module">
     let tauriWindow = null;
     let PhysicalPositionClass = null;
+    let LogicalPositionClass = null;
     let LogicalSizeClass = null;
+    let WebviewWindowClass = null;
     let tauriInvoke = null;
+    let tauriListen = null;
+    let tauriEmitTo = null;
     let expandedSize = null;
+    let nativePreviewWindow = null;
+    let latestSessionPreviewData = null;
+    let sessionPreviewDesiredVisible = false;
+    let sessionPreviewRequestId = 0;
+    const isPreviewWindow = new URLSearchParams(window.location.search).get('preview') === '1';
     const EXPANDED_MIN_WIDTH = 360;
     const EXPANDED_MIN_HEIGHT = 460;
 
     if (window.__TAURI_INTERNALS__) {
-      const [dpiApi, windowApi, coreApi] = await Promise.all([
+      const [dpiApi, windowApi, coreApi, webviewWindowApi, eventApi] = await Promise.all([
         import('@tauri-apps/api/dpi'),
         import('@tauri-apps/api/window'),
-        import('@tauri-apps/api/core')
+        import('@tauri-apps/api/core'),
+        import('@tauri-apps/api/webviewWindow'),
+        import('@tauri-apps/api/event')
       ]);
       PhysicalPositionClass = dpiApi.PhysicalPosition;
+      LogicalPositionClass = dpiApi.LogicalPosition;
       LogicalSizeClass = dpiApi.LogicalSize;
+      WebviewWindowClass = webviewWindowApi.WebviewWindow;
       tauriWindow = windowApi.getCurrentWindow();
       tauriInvoke = coreApi.invoke;
+      tauriListen = eventApi.listen;
+      tauriEmitTo = eventApi.emitTo;
     }
+    if (isPreviewWindow) document.body.classList.add('is-preview-window');
     const root = document.documentElement;
     const toast = document.getElementById('toast');
     const sessionScroll = document.getElementById('sessionScroll');
@@ -1633,8 +1773,15 @@
     };
     let currentLang = settings.language;
     let previewCard = null;
-    let previewHideTimer = 0;
-    let isPreviewHovered = false;
+    let previewAnchorButton = null;
+    let sessionPreviewHideTimer = 0;
+    let sessionPreviewResizing = false;
+    let sessionPreviewSizeSaveTimer = 0;
+    const SESSION_PREVIEW_SIZE_KEY = 'agentwatcher.sessionPreviewSize';
+    const SESSION_PREVIEW_MIN_WIDTH = 280;
+    const SESSION_PREVIEW_MIN_HEIGHT = 220;
+    const SESSION_PREVIEW_DEFAULT_SIZE = { width: 420, height: 360 };
+    let sessionPreviewSize = loadSessionPreviewSize();
     document.body.dataset.lang = settings.language;
     document.body.dataset.theme = settings.theme;
     document.body.dataset.layout = settings.layout;
@@ -1673,6 +1820,34 @@
 
     function saveSettings() {
       localStorage.setItem('agentwatcher.settings', JSON.stringify(settings));
+    }
+
+    function loadSessionPreviewSize() {
+      try {
+        const savedSize = JSON.parse(localStorage.getItem(SESSION_PREVIEW_SIZE_KEY) || '{}');
+        return {
+          width: Math.max(SESSION_PREVIEW_MIN_WIDTH, Math.round(Number(savedSize.width) || SESSION_PREVIEW_DEFAULT_SIZE.width)),
+          height: Math.max(SESSION_PREVIEW_MIN_HEIGHT, Math.round(Number(savedSize.height) || SESSION_PREVIEW_DEFAULT_SIZE.height))
+        };
+      } catch (error) {
+        return { ...SESSION_PREVIEW_DEFAULT_SIZE };
+      }
+    }
+
+    function saveSessionPreviewSize() {
+      localStorage.setItem(SESSION_PREVIEW_SIZE_KEY, JSON.stringify(sessionPreviewSize));
+    }
+
+    function scheduleSaveSessionPreviewSize() {
+      window.clearTimeout(sessionPreviewSizeSaveTimer);
+      sessionPreviewSizeSaveTimer = window.setTimeout(saveSessionPreviewSize, 140);
+    }
+
+    function publishSessionPreviewData(data) {
+      const payload = { ...data, version: 1, updatedAt: Date.now() };
+      latestSessionPreviewData = payload;
+      tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', payload).catch(() => {});
+      return payload;
     }
 
     function scanOptions() {
@@ -1716,7 +1891,6 @@
       applyLanguage();
       setIconsPerRow(sizeRange.value, false);
       requestAnimationFrame(syncCompactRail);
-      positionSessionPreview();
       if (document.body.classList.contains('is-rail-only')) syncNativeWindowSize(true);
       if (options.reschedule) scheduleSessionRefresh();
       if (options.refresh !== false) refreshSessions(true);
@@ -1727,12 +1901,10 @@
       try {
         if (tauriInvoke) {
           await tauriInvoke('set_window_always_on_top', { alwaysOnTop: settings.alwaysOnTop });
-          return;
-        }
-
-        if (tauriWindow?.setAlwaysOnTop) {
+        } else if (tauriWindow?.setAlwaysOnTop) {
           await tauriWindow.setAlwaysOnTop(settings.alwaysOnTop);
         }
+
       } catch (error) {
         console.warn('Failed to update always-on-top setting', error);
       }
@@ -2080,6 +2252,7 @@
     }
 
     function refreshCardState(shouldRecalculate = true) {
+      normalizeSessionCardElements();
       cards = Array.from(document.querySelectorAll('.session-card'));
       cards.forEach(card => {
         card.dataset.workspace = card.dataset.workspace || card.dataset.open;
@@ -2129,13 +2302,45 @@
       updateWorkspaceOptionLabel();
     }
 
+    function normalizeSessionCardElements() {
+      document.querySelectorAll('button.session-card').forEach(btn => {
+        const div = document.createElement('div');
+        div.className = btn.className;
+        div.setAttribute('role', 'button');
+        div.setAttribute('tabindex', '0');
+        for (const [k, v] of Object.entries(btn.dataset)) { div.dataset[k] = v; }
+        div.innerHTML = btn.innerHTML;
+        if (!div.querySelector('.card-expand-btn')) div.appendChild(makeExpandBtn());
+        btn.parentNode.replaceChild(div, btn);
+      });
+    }
+
     function bindCardClicks() {
       cards.forEach(card => {
         card.onclick = () => openCard(card);
-        card.onpointerenter = () => showSessionPreview(card);
-        card.onpointerleave = scheduleHideSessionPreview;
-        card.onfocus = () => showSessionPreview(card);
-        card.onblur = scheduleHideSessionPreview;
+        card.onkeydown = (e) => {
+          if (e.target.closest('.card-expand-btn')) return;
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            openCard(card);
+          }
+        };
+        card.onpointerenter = null;
+        card.onpointerleave = null;
+        card.onfocus = null;
+        card.onblur = null;
+        const btn = card.querySelector('.card-expand-btn');
+        if (btn) {
+          btn.onpointerdown = (e) => { e.stopPropagation(); };
+          btn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          };
+          btn.onpointerenter = () => showSessionPreview(card, btn);
+          btn.onpointerleave = scheduleSessionPreviewHide;
+          btn.onfocus = () => showSessionPreview(card, btn);
+          btn.onblur = scheduleSessionPreviewHide;
+        }
       });
     }
 
@@ -2209,6 +2414,25 @@
       return element;
     }
 
+    function makeExpandBtn() {
+      const btn = document.createElement('button');
+      btn.className = 'card-expand-btn';
+      btn.type = 'button';
+      btn.title = 'Preview';
+      btn.setAttribute('aria-label', 'Preview session');
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('width', '12');
+      svg.setAttribute('height', '12');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('fill', 'currentColor');
+      svg.setAttribute('aria-hidden', 'true');
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', 'M3 3h7v2H5v5H3zm11 0h7v7h-2V5h-5zm7 11v7h-7v-2h5v-5zm-11 7H3v-7h2v5h5z');
+      svg.appendChild(path);
+      btn.appendChild(svg);
+      return btn;
+    }
+
     function cardText(card, selector) {
       return card.querySelector(selector)?.textContent?.trim() || '';
     }
@@ -2235,6 +2459,9 @@
     function renderSessionPreview(data) {
       sessionPreview.replaceChildren();
 
+      const body = document.createElement('div');
+      body.className = 'session-preview-body';
+
       const header = document.createElement('div');
       header.className = 'session-preview-head';
       const titleGroup = document.createElement('div');
@@ -2242,7 +2469,7 @@
       appendText(titleGroup, 'div', 'session-preview-title', data.title);
       header.appendChild(titleGroup);
       appendText(header, 'div', 'session-preview-status ' + data.statusClass, data.statusText);
-      sessionPreview.appendChild(header);
+      body.appendChild(header);
 
       function makeLabelWithBadge(labelText, badgeKey, badgeClass) {
         const label = document.createElement('div');
@@ -2261,7 +2488,7 @@
       userSection.className = 'session-preview-section';
       userSection.appendChild(makeLabelWithBadge(t('lastUser'), data.lastUserTruncated ? 'tailOnly' : null, null));
       appendText(userSection, 'div', 'session-preview-text', data.lastUser);
-      sessionPreview.appendChild(userSection);
+      body.appendChild(userSection);
 
       const aiSection = document.createElement('section');
       aiSection.className = 'session-preview-section';
@@ -2269,61 +2496,266 @@
       const aiBadgeClass = data.lastAiExcerptKind === 'error' ? 'error' : null;
       aiSection.appendChild(makeLabelWithBadge(t('lastAi'), aiBadgeKey, aiBadgeClass));
       appendText(aiSection, 'div', 'session-preview-text', data.lastAi);
-      sessionPreview.appendChild(aiSection);
+      body.appendChild(aiSection);
+      sessionPreview.appendChild(body);
+
+      ['nw', 'ne', 'sw', 'se'].forEach(corner => {
+        const handle = document.createElement('button');
+        handle.className = 'session-preview-resize-handle ' + corner;
+        handle.type = 'button';
+        handle.dataset.previewResize = corner;
+        handle.setAttribute('aria-label', 'Resize preview from ' + corner);
+        sessionPreview.appendChild(handle);
+      });
     }
 
-    function showSessionPreview(card) {
-      window.clearTimeout(previewHideTimer);
+    async function showSessionPreview(card, anchorButton) {
+      cancelSessionPreviewHide();
+      sessionPreviewDesiredVisible = true;
+      const requestId = ++sessionPreviewRequestId;
       previewCard = card;
-      renderSessionPreview(sessionPreviewData(card));
-      sessionPreview.hidden = false;
-      requestAnimationFrame(positionSessionPreview);
-    }
+      previewAnchorButton = anchorButton || card.querySelector('.card-expand-btn');
+      const data = sessionPreviewData(card);
+      publishSessionPreviewData(data);
+      if (await showNativeSessionPreview(requestId)) return;
 
-    function scheduleHideSessionPreview() {
-      window.clearTimeout(previewHideTimer);
-      previewHideTimer = window.setTimeout(() => {
-        if (!isPreviewHovered) hideSessionPreview();
-      }, 220);
+      renderSessionPreview(data);
+      applySessionPreviewSize();
+      positionSessionPreview();
+      sessionPreview.hidden = false;
     }
 
     function hideSessionPreview() {
-      window.clearTimeout(previewHideTimer);
+      cancelSessionPreviewHide();
+      sessionPreviewDesiredVisible = false;
+      sessionPreviewRequestId++;
+      if (isPreviewWindow) {
+        closePreviewWindow();
+        return;
+      }
+
+      if (nativePreviewWindow) {
+        nativePreviewWindow.hide().catch(() => {});
+      }
       sessionPreview.hidden = true;
       previewCard = null;
+      previewAnchorButton = null;
+    }
+
+    function scheduleSessionPreviewHide() {
+      window.clearTimeout(sessionPreviewHideTimer);
+      sessionPreviewHideTimer = window.setTimeout(hideSessionPreview, WebviewWindowClass && !isPreviewWindow ? 520 : 220);
+    }
+
+    function cancelSessionPreviewHide() {
+      window.clearTimeout(sessionPreviewHideTimer);
+      sessionPreviewHideTimer = 0;
+    }
+
+    function applySessionPreviewSize() {
+      sessionPreview.style.width = sessionPreviewSize.width + 'px';
+      sessionPreview.style.height = sessionPreviewSize.height + 'px';
     }
 
     function positionSessionPreview() {
-      if (!previewCard || sessionPreview.hidden) return;
+      const anchor = previewAnchorButton || previewCard;
+      if (!anchor) return;
 
-      const cardRect = previewCard.getBoundingClientRect();
-      const previewRect = sessionPreview.getBoundingClientRect();
-      const margin = 10;
-      const previewWidth = Math.min(previewRect.width || 380, window.innerWidth - margin * 2);
-      const previewHeight = Math.min(previewRect.height || 220, window.innerHeight - margin * 2);
-      let left = cardRect.right + margin;
-      let top = cardRect.top;
+      const anchorRect = anchor.getBoundingClientRect();
+      sessionPreview.style.left = Math.round(anchorRect.left) + 'px';
+      sessionPreview.style.top = Math.round(anchorRect.bottom + 6) + 'px';
+    }
 
-      if (left + previewWidth > window.innerWidth - margin) {
-        left = cardRect.left - previewWidth - margin;
-      }
-      if (left < margin) {
-        left = Math.max(margin, Math.min(cardRect.left, window.innerWidth - previewWidth - margin));
-      }
-      if (top + previewHeight > window.innerHeight - margin) {
-        top = window.innerHeight - previewHeight - margin;
-      }
-      if (top < margin) top = margin;
+    async function nativeSessionPreviewPosition() {
+      const anchor = previewAnchorButton || previewCard;
+      if (!anchor || !tauriWindow) return null;
 
-      sessionPreview.style.left = Math.round(left) + 'px';
-      sessionPreview.style.top = Math.round(top) + 'px';
+      const anchorRect = anchor.getBoundingClientRect();
+      const [windowPosition, scaleFactor] = await Promise.all([
+        tauriWindow.outerPosition(),
+        tauriWindow.scaleFactor()
+      ]);
+      return {
+        x: Math.round(windowPosition.x / scaleFactor + anchorRect.left),
+        y: Math.round(windowPosition.y / scaleFactor + anchorRect.bottom + 6)
+      };
+    }
+
+    async function showNativeSessionPreview(requestId) {
+      if (!WebviewWindowClass || isPreviewWindow) return false;
+
+      try {
+        sessionPreviewSize = loadSessionPreviewSize();
+        const position = await nativeSessionPreviewPosition();
+        if (!position) return false;
+
+        const existing = nativePreviewWindow || await WebviewWindowClass.getByLabel('session-preview');
+        if (existing) {
+          nativePreviewWindow = existing;
+          await existing.setSize(new LogicalSizeClass(sessionPreviewSize.width, sessionPreviewSize.height)).catch(() => {});
+          await existing.setPosition(new LogicalPositionClass(position.x, position.y)).catch(() => {});
+          if (latestSessionPreviewData) {
+            await tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', latestSessionPreviewData).catch(() => {});
+          }
+          if (!sessionPreviewDesiredVisible || requestId !== sessionPreviewRequestId) {
+            await existing.hide().catch(() => {});
+            return true;
+          }
+          await existing.show().catch(() => {});
+          await existing.setFocus().catch(() => {});
+          return true;
+        }
+
+        nativePreviewWindow = new WebviewWindowClass('session-preview', {
+          url: (window.location.pathname || '/') + '?preview=1',
+          title: 'Session Preview',
+          x: position.x,
+          y: position.y,
+          width: sessionPreviewSize.width,
+          height: sessionPreviewSize.height,
+          minWidth: SESSION_PREVIEW_MIN_WIDTH,
+          minHeight: SESSION_PREVIEW_MIN_HEIGHT,
+          resizable: true,
+          decorations: false,
+          transparent: true,
+          alwaysOnTop: !!settings.alwaysOnTop,
+          skipTaskbar: true,
+          shadow: false,
+          focus: false,
+          visible: false,
+          preventOverflow: false
+        });
+        nativePreviewWindow.once('tauri://destroyed', () => { nativePreviewWindow = null; });
+        nativePreviewWindow.once('tauri://error', () => { nativePreviewWindow = null; });
+        return true;
+      } catch (error) {
+        showToast(String(error));
+        return false;
+      }
+    }
+
+    async function closePreviewWindow() {
+      tauriEmitTo?.('main', 'agentwatcher-preview-close', {}).catch(() => {});
+      if (tauriWindow) {
+        try {
+          await tauriWindow.hide();
+          return;
+        } catch (error) {
+          try {
+            await tauriWindow.close();
+            return;
+          } catch (closeError) {
+            await tauriWindow.destroy().catch(() => {});
+          }
+        }
+      }
+
+      sessionPreview.hidden = true;
+    }
+
+    function updatePreviewWindowContent(data) {
+      if (!data) return;
+      renderSessionPreview(data);
+      sessionPreview.hidden = false;
+      sessionPreview.style.left = '0px';
+      sessionPreview.style.top = '0px';
+      sessionPreview.style.width = '100vw';
+      sessionPreview.style.height = '100vh';
+    }
+
+    function setupSessionPreviewWindow() {
+      updatePreviewWindowContent({
+        workspace: 'AgentWatcher',
+        title: 'Session Preview',
+        statusClass: 'idle',
+        statusText: statusText('idle'),
+        lastUser: t('noUserMessage'),
+        lastUserTruncated: false,
+        lastAi: t('noAiMessage'),
+        lastAiTruncated: false,
+        lastAiExcerptKind: null
+      });
+
+      tauriListen?.('agentwatcher-preview-data', event => updatePreviewWindowContent(event.payload)).catch(() => {});
+      tauriEmitTo?.('main', 'agentwatcher-preview-ready', {}).catch(() => {});
+    }
+
+    function resizeSessionPreviewFromPointer(event) {
+      const corner = event.target.dataset.previewResize;
+      if (!corner) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      cancelSessionPreviewHide();
+      sessionPreviewResizing = true;
+
+      if (isPreviewWindow && tauriWindow) {
+        const resizeDirections = { nw: 'NorthWest', ne: 'NorthEast', sw: 'SouthWest', se: 'SouthEast' };
+        tauriWindow.startResizeDragging(resizeDirections[corner]).catch(error => showToast(String(error)));
+        window.setTimeout(() => { sessionPreviewResizing = false; }, 300);
+        return;
+      }
+
+      const startRect = sessionPreview.getBoundingClientRect();
+      const startX = event.clientX;
+      const startY = event.clientY;
+
+      function onPointerMove(moveEvent) {
+        const dx = moveEvent.clientX - startX;
+        const dy = moveEvent.clientY - startY;
+        let width = startRect.width;
+        let height = startRect.height;
+        let left = startRect.left;
+        let top = startRect.top;
+
+        if (corner.includes('e')) width = Math.max(SESSION_PREVIEW_MIN_WIDTH, startRect.width + dx);
+        if (corner.includes('s')) height = Math.max(SESSION_PREVIEW_MIN_HEIGHT, startRect.height + dy);
+        if (corner.includes('w')) {
+          width = Math.max(SESSION_PREVIEW_MIN_WIDTH, startRect.width - dx);
+          left = startRect.right - width;
+        }
+        if (corner.includes('n')) {
+          height = Math.max(SESSION_PREVIEW_MIN_HEIGHT, startRect.height - dy);
+          top = startRect.bottom - height;
+        }
+
+        sessionPreviewSize = { width: Math.round(width), height: Math.round(height) };
+        sessionPreview.style.width = sessionPreviewSize.width + 'px';
+        sessionPreview.style.height = sessionPreviewSize.height + 'px';
+        sessionPreview.style.left = Math.round(left) + 'px';
+        sessionPreview.style.top = Math.round(top) + 'px';
+      }
+
+      function cleanupResizeListeners() {
+        sessionPreviewResizing = false;
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', onPointerUp);
+        window.removeEventListener('pointercancel', onPointerCancel);
+        window.removeEventListener('blur', onPointerCancel);
+      }
+
+      function onPointerUp() {
+        cleanupResizeListeners();
+        saveSessionPreviewSize();
+      }
+
+      function onPointerCancel() {
+        cleanupResizeListeners();
+        saveSessionPreviewSize();
+      }
+
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', onPointerUp);
+      window.addEventListener('pointercancel', onPointerCancel);
+      window.addEventListener('blur', onPointerCancel);
     }
 
     function createSessionCard(session) {
       const status = ['waiting', 'running', 'idle'].includes(session.status) ? session.status : 'idle';
-      const card = document.createElement('button');
+      const card = document.createElement('div');
       card.className = 'session-card ' + status;
-      card.type = 'button';
+      card.setAttribute('role', 'button');
+      card.setAttribute('tabindex', '0');
       card.dataset.sessionId = String(session.id || '');
       card.dataset.workspace = session.workspace || 'Unknown';
       card.dataset.open = session.workspace || 'Unknown';
@@ -2343,6 +2775,7 @@
       const footText = session.branch || (session.messageCount ? session.messageCount + ' msgs' : statusText(status));
       appendText(cardFoot, 'span', '', footText);
       card.appendChild(cardFoot);
+      card.appendChild(makeExpandBtn());
 
       return card;
     }
@@ -2406,99 +2839,139 @@
       refreshTimer = window.setInterval(() => refreshSessions(true), refreshIntervalMs);
     }
 
-    refreshCardState(false);
-
-    document.querySelectorAll('.segment').forEach(segment => {
-      segment.addEventListener('click', () => {
-        document.querySelectorAll('.segment').forEach(item => item.classList.remove('active'));
-        segment.classList.add('active');
-        applyFilters();
+    if (isPreviewWindow) {
+      applyLanguage();
+      setupSessionPreviewWindow();
+      sessionPreview.addEventListener('pointerenter', () => {
+        cancelSessionPreviewHide();
+        tauriEmitTo?.('main', 'agentwatcher-preview-hover', {}).catch(() => {});
       });
-    });
+      sessionPreview.addEventListener('pointerleave', () => {
+        if (!sessionPreviewResizing) closePreviewWindow();
+      });
+      sessionPreview.addEventListener('pointerdown', resizeSessionPreviewFromPointer);
+      window.addEventListener('resize', () => {
+        sessionPreviewSize = {
+          width: Math.max(SESSION_PREVIEW_MIN_WIDTH, Math.round(window.innerWidth)),
+          height: Math.max(SESSION_PREVIEW_MIN_HEIGHT, Math.round(window.innerHeight))
+        };
+        scheduleSaveSessionPreviewSize();
+      });
+    } else {
+      tauriListen?.('agentwatcher-preview-hover', cancelSessionPreviewHide).catch(() => {});
+      tauriListen?.('agentwatcher-preview-close', () => { sessionPreviewDesiredVisible = false; }).catch(() => {});
+      tauriListen?.('agentwatcher-preview-ready', async () => {
+        const existing = nativePreviewWindow || await WebviewWindowClass?.getByLabel('session-preview');
+        if (existing) {
+          nativePreviewWindow = existing;
+          if (latestSessionPreviewData) {
+            await tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', latestSessionPreviewData).catch(() => {});
+          }
+          if (sessionPreviewDesiredVisible) {
+            await existing.show().catch(() => {});
+          } else {
+            await existing.hide().catch(() => {});
+          }
+        }
+      }).catch(() => {});
 
-    workspaceFilter.addEventListener('change', applyFilters);
-    sizeRange.addEventListener('input', event => setIconsPerRow(event.target.value, false));
-    sizePreset.addEventListener('click', () => {
-      const current = Number(sizeRange.value);
-      const maxCols = settings.maxCardsPerRow || 10;
-      const nextColumns = (current % maxCols) + 1;
-      setIconsPerRow(nextColumns, true);
-    });
-    settingsToggle.addEventListener('click', () => {
-      const shouldOpen = settingsPanel.hidden;
-      settingsPanel.hidden = !shouldOpen;
-      settingsToggle.classList.toggle('is-active', shouldOpen);
-      if (shouldOpen) {
-        checkBridgeStatus();
-      }
-    });
-    document.addEventListener('pointerdown', event => {
-      if (settingsPanel.hidden) return;
-      if (settingsPanel.contains(event.target) || settingsToggle.contains(event.target)) return;
-      settingsPanel.hidden = true;
-      settingsToggle.classList.remove('is-active');
-    });
-    settingLangButtons.forEach(button => {
-      button.addEventListener('click', () => updateSetting('language', button.dataset.settingLang, { announce: true, refresh: false }));
-    });
-    settingThemeButtons.forEach(button => {
-      button.addEventListener('click', () => updateSetting('theme', button.dataset.settingTheme, { announce: true, refresh: false }));
-    });
-    settingLayoutButtons.forEach(button => {
-      button.addEventListener('click', () => updateSetting('layout', button.dataset.settingLayout, { announce: true, refresh: false }));
-    });
-    alwaysOnTop.addEventListener('change', () => {
-      updateSetting('alwaysOnTop', alwaysOnTop.checked, { announce: true, refresh: false });
-      applyAlwaysOnTopSetting();
-    });
-    includeCopilot.addEventListener('change', () => updateSetting('includeCopilot', includeCopilot.checked, { announce: true }));
-    includeClaude.addEventListener('change', () => updateSetting('includeClaude', includeClaude.checked, { announce: true }));
-    hideArchived.addEventListener('change', () => updateSetting('hideArchived', hideArchived.checked, { announce: true }));
-    activeWindowDays.addEventListener('change', () => updateSetting('activeWindowDays', clampNumber(activeWindowDays.value, 1, 30, defaultSettings.activeWindowDays), { announce: true }));
-    maxSessions.addEventListener('change', () => updateSetting('maxSessions', clampNumber(maxSessions.value, 1, 5000, defaultSettings.maxSessions), { announce: true }));
-    refreshIntervalSeconds.addEventListener('change', () => updateSetting('refreshIntervalSeconds', clampNumber(refreshIntervalSeconds.value, 1, 3600, defaultSettings.refreshIntervalSeconds), { announce: true, reschedule: true }));
-    maxCardsPerRow.addEventListener('change', () => updateSetting('maxCardsPerRow', clampNumber(maxCardsPerRow.value, 1, 20, defaultSettings.maxCardsPerRow), { announce: true, refresh: false }));
-    bridgeAction.addEventListener('click', installBridge);
-    [dragRegion, document.querySelector('.native-titlebar'), appHeader, compactRail].forEach(source => source?.addEventListener('pointerdown', startWindowDrag));
-    windowActionButtons.forEach(button => button.addEventListener('click', () => runWindowAction(button.dataset.windowAction)));
-    railLogo.addEventListener('click', toggleRailWindow);
-    railLogo.addEventListener('keydown', event => {
-      if (event.key !== 'Enter' && event.key !== ' ') return;
-      event.preventDefault();
-      toggleRailWindow();
-    });
-    resizeHandles.forEach(handle => handle.addEventListener('pointerdown', resizeWatcherFromPointer));
-    sessionPreview.addEventListener('pointerenter', () => {
-      isPreviewHovered = true;
-      window.clearTimeout(previewHideTimer);
-    });
-    sessionPreview.addEventListener('pointerleave', () => {
-      isPreviewHovered = false;
-      scheduleHideSessionPreview();
-    });
-    sessionScroll.addEventListener('scroll', () => requestAnimationFrame(positionSessionPreview), { passive: true });
+      refreshCardState(false);
 
-    new ResizeObserver(() => {
-      requestAnimationFrame(syncCardScale);
-      requestAnimationFrame(syncCompactRail);
-    }).observe(watcherWindow);
-    new ResizeObserver(() => requestAnimationFrame(positionSessionPreview)).observe(sessionPreview);
-    window.addEventListener('resize', () => {
+      document.querySelectorAll('.segment').forEach(segment => {
+        segment.addEventListener('click', () => {
+          document.querySelectorAll('.segment').forEach(item => item.classList.remove('active'));
+          segment.classList.add('active');
+          applyFilters();
+        });
+      });
+
+      workspaceFilter.addEventListener('change', applyFilters);
+      sizeRange.addEventListener('input', event => setIconsPerRow(event.target.value, false));
+      sizePreset.addEventListener('click', () => {
+        const current = Number(sizeRange.value);
+        const maxCols = settings.maxCardsPerRow || 10;
+        const nextColumns = (current % maxCols) + 1;
+        setIconsPerRow(nextColumns, true);
+      });
+      settingsToggle.addEventListener('click', () => {
+        const shouldOpen = settingsPanel.hidden;
+        settingsPanel.hidden = !shouldOpen;
+        settingsToggle.classList.toggle('is-active', shouldOpen);
+        if (shouldOpen) {
+          checkBridgeStatus();
+        }
+      });
+      document.addEventListener('pointerdown', event => {
+        const inSettings = settingsPanel.contains(event.target) || settingsToggle.contains(event.target);
+        const inPreview = !sessionPreview.hidden && sessionPreview.contains(event.target);
+        const onExpandButton = !!event.target.closest('.card-expand-btn');
+
+        if (!settingsPanel.hidden && !inSettings) {
+          settingsPanel.hidden = true;
+          settingsToggle.classList.remove('is-active');
+        }
+
+        if (!sessionPreview.hidden && !inPreview && !inSettings && !onExpandButton) {
+          hideSessionPreview();
+        }
+      });
+      sessionPreview.addEventListener('mouseenter', cancelSessionPreviewHide);
+      sessionPreview.addEventListener('pointerleave', () => {
+        if (!sessionPreviewResizing) hideSessionPreview();
+      });
+      sessionPreview.addEventListener('pointerdown', resizeSessionPreviewFromPointer);
+      settingLangButtons.forEach(button => {
+        button.addEventListener('click', () => updateSetting('language', button.dataset.settingLang, { announce: true, refresh: false }));
+      });
+      settingThemeButtons.forEach(button => {
+        button.addEventListener('click', () => updateSetting('theme', button.dataset.settingTheme, { announce: true, refresh: false }));
+      });
+      settingLayoutButtons.forEach(button => {
+        button.addEventListener('click', () => updateSetting('layout', button.dataset.settingLayout, { announce: true, refresh: false }));
+      });
+      alwaysOnTop.addEventListener('change', () => {
+        updateSetting('alwaysOnTop', alwaysOnTop.checked, { announce: true, refresh: false });
+        applyAlwaysOnTopSetting();
+      });
+      includeCopilot.addEventListener('change', () => updateSetting('includeCopilot', includeCopilot.checked, { announce: true }));
+      includeClaude.addEventListener('change', () => updateSetting('includeClaude', includeClaude.checked, { announce: true }));
+      hideArchived.addEventListener('change', () => updateSetting('hideArchived', hideArchived.checked, { announce: true }));
+      activeWindowDays.addEventListener('change', () => updateSetting('activeWindowDays', clampNumber(activeWindowDays.value, 1, 30, defaultSettings.activeWindowDays), { announce: true }));
+      maxSessions.addEventListener('change', () => updateSetting('maxSessions', clampNumber(maxSessions.value, 1, 5000, defaultSettings.maxSessions), { announce: true }));
+      refreshIntervalSeconds.addEventListener('change', () => updateSetting('refreshIntervalSeconds', clampNumber(refreshIntervalSeconds.value, 1, 3600, defaultSettings.refreshIntervalSeconds), { announce: true, reschedule: true }));
+      maxCardsPerRow.addEventListener('change', () => updateSetting('maxCardsPerRow', clampNumber(maxCardsPerRow.value, 1, 20, defaultSettings.maxCardsPerRow), { announce: true, refresh: false }));
+      bridgeAction.addEventListener('click', installBridge);
+      [dragRegion, document.querySelector('.native-titlebar'), appHeader, compactRail].forEach(source => source?.addEventListener('pointerdown', startWindowDrag));
+      windowActionButtons.forEach(button => button.addEventListener('click', () => runWindowAction(button.dataset.windowAction)));
+      railLogo.addEventListener('click', toggleRailWindow);
+      railLogo.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        toggleRailWindow();
+      });
+      resizeHandles.forEach(handle => handle.addEventListener('pointerdown', resizeWatcherFromPointer));
+
+      new ResizeObserver(() => {
+        requestAnimationFrame(syncCardScale);
+        requestAnimationFrame(syncCompactRail);
+      }).observe(watcherWindow);
+      window.addEventListener('resize', () => {
+        captureExpandedSize();
+        if (!sessionPreview.hidden) positionSessionPreview();
+        requestAnimationFrame(syncCompactRail);
+      });
       captureExpandedSize();
-      requestAnimationFrame(syncCompactRail);
-      requestAnimationFrame(positionSessionPreview);
-    });
-    captureExpandedSize();
-    applySettingsControls();
-    applyLanguage();
-    applyAlwaysOnTopSetting();
-    setIconsPerRow(sizeRange.value, false);
-    applyFilters();
-    syncCompactRail();
-    if (tauriInvoke) {
-      refreshSessions(false);
-      checkBridgeStatus();
-      scheduleSessionRefresh();
+      applySettingsControls();
+      applyLanguage();
+      applyAlwaysOnTopSetting();
+      setIconsPerRow(sizeRange.value, false);
+      applyFilters();
+      syncCompactRail();
+      if (tauriInvoke) {
+        refreshSessions(false);
+        checkBridgeStatus();
+        scheduleSessionRefresh();
+      }
     }
   </script>
 </body>

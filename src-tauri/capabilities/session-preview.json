@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "session-preview",
+  "description": "Minimal permissions for the frameless AgentWatcher session preview tooltip.",
+  "windows": ["session-preview"],
+  "permissions": [
+    "core:event:default",
+    "core:window:allow-close",
+    "core:window:allow-destroy",
+    "core:window:allow-hide",
+    "core:window:allow-start-resize-dragging"
+  ]
+}
