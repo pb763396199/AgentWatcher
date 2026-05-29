@@ -1207,9 +1207,30 @@ fn sampled_message_count(head_message_count: u32, tail_message_count: u32, tail_
 fn update_copilot_status_hint(status_hint: &mut Option<SessionStatusHint>, json_value: &Value) {
     if let Some(response_hint) = copilot_response_status_hint(json_value) {
         *status_hint = Some(response_hint);
+    } else if copilot_request_finished_status_hint(json_value) {
+        *status_hint = Some(SessionStatusHint::Running);
     } else if input_text_from_copilot_event(json_value).is_some() {
         *status_hint = Some(SessionStatusHint::Running);
     }
+}
+
+fn copilot_request_finished_status_hint(json_value: &Value) -> bool {
+    if key_path_ends_with(json_value, &["result"])
+        || key_path_ends_with(json_value, &["followups"])
+        || key_path_ends_with(json_value, &["elapsedMs"])
+    {
+        return true;
+    }
+
+    if !key_path_ends_with(json_value, &["modelState"]) {
+        return false;
+    }
+
+    json_value
+        .get("v")
+        .or_else(|| json_value.pointer("/data/v"))
+        .and_then(|model_state| model_state.pointer("/completedAt"))
+        .is_some()
 }
 
 fn copilot_response_status_hint(json_value: &Value) -> Option<SessionStatusHint> {
@@ -1221,7 +1242,10 @@ fn copilot_response_status_hint(json_value: &Value) -> Option<SessionStatusHint>
         .get("v")
         .or_else(|| json_value.pointer("/data/v"))
         .and_then(Value::as_array)?;
-    let mut response_hint = None;
+    let mut saw_activity = false;
+    let mut has_waiting_carousel = false;
+    let mut has_unresolved_ask_tool = false;
+    let mut has_resolved_question = false;
     for response_item in response_items {
         let Some(kind) = string_at(response_item, &["/kind"]) else {
             continue;
@@ -1231,18 +1255,40 @@ fn copilot_response_status_hint(json_value: &Value) -> Option<SessionStatusHint>
         }
 
         if kind == "questionCarousel" {
-            response_hint = Some(SessionStatusHint::Waiting);
+            if copilot_question_carousel_is_resolved(response_item) {
+                saw_activity = true;
+                has_resolved_question = true;
+            } else {
+                has_waiting_carousel = true;
+            }
         } else if kind == "toolInvocationSerialized"
             && string_at(response_item, &["/toolId"]) == Some("vscode_askQuestions")
             && !bool_at(response_item, &["/isComplete"]).unwrap_or(false)
         {
-            response_hint = Some(SessionStatusHint::Waiting);
+            if is_skipped_json(response_item) {
+                saw_activity = true;
+                has_resolved_question = true;
+            } else {
+                has_unresolved_ask_tool = true;
+            }
         } else {
-            response_hint = Some(SessionStatusHint::Running);
+            saw_activity = true;
         }
     }
 
-    response_hint
+    if has_waiting_carousel || (has_unresolved_ask_tool && !has_resolved_question) {
+        Some(SessionStatusHint::Waiting)
+    } else if saw_activity || has_resolved_question {
+        Some(SessionStatusHint::Running)
+    } else {
+        None
+    }
+}
+
+fn copilot_question_carousel_is_resolved(response_item: &Value) -> bool {
+    bool_at(response_item, &["/isUsed"]) == Some(true)
+        || is_skipped_json(response_item)
+        || response_item.get("data").is_some()
 }
 
 fn copilot_response_preview_text(json_value: &Value) -> Option<String> {
@@ -1337,7 +1383,15 @@ fn update_claude_status_hint(
     pending_ask_user_question_ids: &mut HashSet<String>,
     json_value: &Value,
 ) {
-    let mut saw_regular_activity = false;
+    let tool_use_result_resolved = json_value
+        .pointer("/toolUseResult")
+        .map(is_skipped_or_empty_answer_json)
+        .unwrap_or(false);
+    if tool_use_result_resolved {
+        pending_ask_user_question_ids.clear();
+    }
+
+    let mut saw_regular_activity = tool_use_result_resolved;
     if let Some(content_blocks) = json_array_at(json_value, &["/message/content"]) {
         for content_block in content_blocks {
             match string_at(content_block, &["/type"]) {
@@ -1441,6 +1495,41 @@ fn is_skip_sentinel(s: &str) -> bool {
     )
 }
 
+fn is_skipped_json(value: &Value) -> bool {
+    bool_at(
+        value,
+        &[
+            "/skipped",
+            "/isSkipped",
+            "/data/skipped",
+            "/data/isSkipped",
+            "/toolUseResult/skipped",
+            "/toolUseResult/isSkipped",
+            "/toolSpecificData/skipped",
+            "/toolSpecificData/isSkipped",
+            "/resultDetails/skipped",
+            "/resultDetails/isSkipped",
+        ],
+    ) == Some(true)
+}
+
+fn is_skipped_or_empty_answer_json(value: &Value) -> bool {
+    if is_skipped_json(value) {
+        return true;
+    }
+
+    let Some(answers) = value
+        .pointer("/answers")
+        .or_else(|| value.pointer("/toolUseResult/answers"))
+    else {
+        return false;
+    };
+
+    let mut answer_parts = Vec::new();
+    collect_interactive_answer_strings(answers, &mut answer_parts);
+    answer_parts.is_empty()
+}
+
 fn collect_interactive_answer_strings(value: &Value, parts: &mut Vec<String>) {
     match value {
         Value::String(s) => {
@@ -1455,7 +1544,7 @@ fn collect_interactive_answer_strings(value: &Value, parts: &mut Vec<String>) {
             }
         }
         Value::Object(obj) => {
-            if bool_at(value, &["/skipped", "/isSkipped"]) == Some(true) {
+            if is_skipped_json(value) {
                 return;
             }
             for (_key, val) in obj {
@@ -1877,7 +1966,7 @@ fn copilot_interactive_user_text(json_value: &Value) -> Option<String> {
         if bool_at(response_item, &["/isUsed"]) != Some(true) {
             continue;
         }
-        if bool_at(response_item, &["/skipped", "/isSkipped"]) == Some(true) {
+        if is_skipped_json(response_item) {
             continue;
         }
         let Some(data) = response_item.get("data") else {
@@ -1898,7 +1987,7 @@ fn copilot_interactive_user_text(json_value: &Value) -> Option<String> {
 }
 
 fn collect_copilot_carousel_answer(carousel_item: &Value, answer_value: &Value, answer_parts: &mut Vec<String>) {
-    if bool_at(answer_value, &["/skipped", "/isSkipped"]) == Some(true) {
+    if is_skipped_json(answer_value) {
         return;
     }
     if let Some(freeform) = string_at(answer_value, &["/freeformValue"]) {
@@ -3017,6 +3106,78 @@ fn apply_native_always_on_top<R: tauri::Runtime>(window: &tauri::WebviewWindow<R
         for target_hwnd in hwnds {
             let _ = SetWindowPos(target_hwnd, insert_after, 0, 0, 0, 0, flags);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn copilot_unanswered_question_carousel_is_waiting() {
+        let event = json!({
+            "k": ["requests", 0, "response"],
+            "v": [{ "kind": "questionCarousel" }]
+        });
+
+        assert_eq!(copilot_response_status_hint(&event), Some(SessionStatusHint::Waiting));
+    }
+
+    #[test]
+    fn copilot_used_question_carousel_resolves_unfinished_ask_tool() {
+        let event = json!({
+            "k": ["requests", 0, "response"],
+            "v": [
+                {
+                    "kind": "toolInvocationSerialized",
+                    "toolId": "vscode_askQuestions",
+                    "isComplete": false
+                },
+                {
+                    "kind": "questionCarousel",
+                    "isUsed": true,
+                    "data": { "answer": { "isSkipped": true } }
+                }
+            ]
+        });
+
+        assert_eq!(copilot_response_status_hint(&event), Some(SessionStatusHint::Running));
+    }
+
+    #[test]
+    fn copilot_completed_request_clears_prior_question_waiting() {
+        let mut status_hint = None;
+        let ask_event = json!({
+            "k": ["requests", 0, "response"],
+            "v": [{ "kind": "questionCarousel" }]
+        });
+        let done_event = json!({
+            "k": ["requests", 0, "modelState"],
+            "v": { "value": 2, "completedAt": 1779513991274_u64 }
+        });
+
+        update_copilot_status_hint(&mut status_hint, &ask_event);
+        assert_eq!(status_hint, Some(SessionStatusHint::Waiting));
+
+        update_copilot_status_hint(&mut status_hint, &done_event);
+        assert_eq!(status_hint, Some(SessionStatusHint::Running));
+    }
+
+    #[test]
+    fn claude_empty_tool_use_result_answers_clear_pending_ask() {
+        let mut status_hint = Some(SessionStatusHint::Waiting);
+        let mut pending_ask_ids = HashSet::new();
+        pending_ask_ids.insert("ask-1".to_string());
+        let event = json!({
+            "type": "user",
+            "toolUseResult": { "answers": [] }
+        });
+
+        update_claude_status_hint(&mut status_hint, &mut pending_ask_ids, &event);
+
+        assert!(pending_ask_ids.is_empty());
+        assert_eq!(status_hint, Some(SessionStatusHint::Running));
     }
 }
 
