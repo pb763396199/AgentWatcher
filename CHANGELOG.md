@@ -14,7 +14,7 @@
 
 发布包：`AgentWatcher-v0.1.1-windows-x64.zip`
 
-SHA256：`D91A1900C505144F9E39DEFEE7FCA052EC5D1A8CB7DF081E8C0E037F5C7FBF86`
+SHA256：`0D8A9B96336D91BCA692BDC8C1ACBB12825C443619FD37801CD3DB5C63C32EF8`
 
 验证：`git diff --check`、`npm run build:ui`、`cargo test --manifest-path src-tauri/Cargo.toml`、`npm run package:exe`。
 
