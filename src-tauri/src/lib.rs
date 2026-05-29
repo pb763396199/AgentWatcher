@@ -18,9 +18,14 @@ const COPILOT_TITLE_SAMPLE_LINES: usize = 240;
 const CLAUDE_TITLE_SAMPLE_LINES: usize = 240;
 const JSONL_HEAD_SAMPLE_BYTES: usize = 128 * 1024;
 const JSONL_TAIL_SAMPLE_BYTES: usize = 256 * 1024;
+const COPILOT_PROMPT_SCAN_BYTES: usize = 16 * 1024 * 1024;
+const CLAUDE_PROMPT_SCAN_BYTES: usize = 8 * 1024 * 1024;
 const STATUS_RUNNING_HINT_WINDOW_MS: u64 = 2 * 60 * 60_000;
 const STATUS_RECENT_CONTENT_WINDOW_MS: u64 = 10 * 60_000;
 const STATUS_RECENT_FILE_WINDOW_MS: u64 = 3 * 60_000;
+const SESSION_PREVIEW_SOURCE_MAX_CHARS: usize = 64 * 1024;
+const USER_PREVIEW_MAX_CHARS: usize = 400;
+const AI_PREVIEW_MAX_CHARS: usize = 800;
 const BRIDGE_EXTENSION_FOLDER_PREFIX: &str = "agentwatcher.agentwatcher-bridge-";
 const BRIDGE_EXTENSION_URI_AUTHORITY: &str = "agentwatcher.agentwatcher-bridge";
 const RUNTIME_ICON_SIZE: u32 = 256;
@@ -43,6 +48,11 @@ struct AgentSession {
     time_label: String,
     updated_ms: u64,
     message_count: u32,
+    last_user_message: Option<String>,
+    last_user_message_truncated: bool,
+    last_ai_message: Option<String>,
+    last_ai_message_truncated: bool,
+    last_ai_message_excerpt_kind: Option<String>,
     branch: Option<String>,
 }
 
@@ -117,6 +127,11 @@ struct CopilotSessionSummary {
     status_hint: Option<SessionStatusHint>,
     latest_timestamp_ms: Option<u64>,
     message_count: u32,
+    last_user_message: Option<String>,
+    last_user_message_truncated: bool,
+    last_ai_message: Option<String>,
+    last_ai_message_truncated: bool,
+    last_ai_message_excerpt_kind: Option<String>,
     archived: bool,
 }
 
@@ -128,6 +143,11 @@ struct ClaudeSessionSummary {
     status_hint: Option<SessionStatusHint>,
     latest_timestamp_ms: Option<u64>,
     message_count: u32,
+    last_user_message: Option<String>,
+    last_user_message_truncated: bool,
+    last_ai_message: Option<String>,
+    last_ai_message_truncated: bool,
+    last_ai_message_excerpt_kind: Option<String>,
     archived: bool,
 }
 
@@ -550,6 +570,11 @@ fn read_copilot_session(
         status_hint,
         latest_timestamp_ms,
         message_count,
+        last_user_message,
+        last_user_message_truncated,
+        last_ai_message,
+        last_ai_message_truncated,
+        last_ai_message_excerpt_kind,
         archived,
     } = summary;
     if options.hide_archived && archived {
@@ -580,6 +605,11 @@ fn read_copilot_session(
         time_label: time_label(updated_ms, scan_time_ms),
         updated_ms,
         message_count,
+        last_user_message,
+        last_user_message_truncated,
+        last_ai_message,
+        last_ai_message_truncated,
+        last_ai_message_excerpt_kind,
         branch: None,
     })
 }
@@ -659,6 +689,11 @@ fn read_claude_jsonl_session(
         status_hint,
         latest_timestamp_ms,
         message_count,
+        last_user_message,
+        last_user_message_truncated,
+        last_ai_message,
+        last_ai_message_truncated,
+        last_ai_message_excerpt_kind,
         archived,
     } = summary;
     if options.hide_archived && archived {
@@ -694,6 +729,11 @@ fn read_claude_jsonl_session(
         time_label: time_label(updated_ms, scan_time_ms),
         updated_ms,
         message_count,
+        last_user_message,
+        last_user_message_truncated,
+        last_ai_message,
+        last_ai_message_truncated,
+        last_ai_message_excerpt_kind,
         branch,
     })
 }
@@ -722,6 +762,8 @@ fn read_copilot_session_summary(
     let mut status_hint = None;
     let mut archived = false;
     let mut latest_timestamp_ms = None;
+    let mut last_user_message = None;
+    let mut last_ai_message = None;
     let mut head_message_count = 0u32;
     let mut tail_message_count = 0u32;
 
@@ -752,18 +794,44 @@ fn read_copilot_session_summary(
         if is_copilot_message_event(json_value) {
             tail_message_count = tail_message_count.saturating_add(1);
         }
+        let next_user = copilot_interactive_user_text(json_value)
+            .or_else(|| copilot_request_user_text(json_value));
+        if let Some(next_user_message) = next_user {
+            if !is_user_system_error_text(&next_user_message) {
+                last_user_message = Some(next_user_message);
+            }
+        }
+        if let Some(next_ai_message) = copilot_response_preview_text(json_value) {
+            if !is_ai_model_noise_text(&next_ai_message) {
+                last_ai_message = Some(next_ai_message);
+            }
+        }
         update_copilot_status_hint(&mut status_hint, json_value);
         if let Some(next_title) = copilot_alias_title_text(json_value).and_then(title_candidate_from_text) {
             alias_title = Some(next_title);
         }
     });
 
+    if last_user_message.is_none() {
+        last_user_message = read_latest_copilot_user_message(session_path, fingerprint.len);
+    }
+    if last_ai_message.is_none() {
+        last_ai_message = read_latest_copilot_ai_message(session_path, fingerprint.len);
+    }
+
+    let (last_user_message, last_user_message_truncated) = apply_user_preview_budget(last_user_message);
+    let (last_ai_message, last_ai_message_truncated, last_ai_message_excerpt_kind) = apply_ai_preview_budget(last_ai_message);
     Some(CopilotSessionSummary {
         session_id,
         title: alias_title.or(prompt_title),
         status_hint,
         latest_timestamp_ms,
         message_count: sampled_message_count(head_message_count, tail_message_count, tail_covers_file),
+        last_user_message,
+        last_user_message_truncated,
+        last_ai_message,
+        last_ai_message_truncated,
+        last_ai_message_excerpt_kind,
         archived,
     })
 }
@@ -792,6 +860,9 @@ fn read_claude_session_summary(
     let mut workspace_path = None;
     let mut branch = None;
     let mut status_hint = None;
+    let mut first_user_message = None;
+    let mut last_user_message = None;
+    let mut last_ai_message = None;
     let mut pending_ask_user_question_ids = HashSet::new();
     let mut archived = false;
     let mut latest_timestamp_ms = None;
@@ -820,8 +891,21 @@ fn read_claude_session_summary(
         } else if slug_title.is_none() {
             slug_title = string_at(json_value, &["/slug"]).and_then(title_candidate_from_text);
         }
-        if prompt_title.is_none() && event_type == Some("user") {
-            prompt_title = claude_message_text(json_value).and_then(title_candidate_from_text);
+        if event_type == Some("user") {
+            if let Some(clean_text) = claude_clean_user_text(json_value) {
+                if prompt_title.is_none() {
+                    prompt_title = title_candidate_from_text(&clean_text);
+                }
+                if first_user_message.is_none() {
+                    first_user_message = Some(clean_text);
+                }
+            }
+        } else if event_type == Some("last-prompt") {
+            if let Some(lp_text) = string_at(json_value, &["/lastPrompt"]) {
+                if prompt_title.is_none() {
+                    prompt_title = title_candidate_from_text(lp_text);
+                }
+            }
         }
     })?;
 
@@ -834,6 +918,28 @@ fn read_claude_session_summary(
         if is_claude_message_event(json_value) {
             tail_message_count = tail_message_count.saturating_add(1);
         }
+        match string_at(json_value, &["/type"]) {
+            Some("user") => {
+                let next = claude_interactive_user_text(json_value)
+                    .or_else(|| claude_clean_user_text(json_value));
+                if let Some(next_user_message) = next {
+                    if !is_user_system_error_text(&next_user_message) {
+                        last_user_message = Some(next_user_message);
+                    }
+                }
+            }
+            Some("assistant") => {
+                if let Some(next_ai_message) = claude_assistant_text(json_value) {
+                    if !is_ai_model_noise_text(&next_ai_message) {
+                        last_ai_message = Some(next_ai_message);
+                    }
+                }
+            }
+            Some("last-prompt") => {
+                // Only used for title/fallback; do not overwrite real user messages here.
+            }
+            _ => {}
+        }
         update_claude_status_hint(&mut status_hint, &mut pending_ask_user_question_ids, json_value);
         if let Some(next_title) = claude_alias_title_text(json_value).and_then(title_candidate_from_text) {
             alias_title = Some(next_title);
@@ -842,6 +948,15 @@ fn read_claude_session_summary(
         }
     });
 
+    if last_user_message.is_none() {
+        last_user_message = read_latest_claude_user_message(session_path, fingerprint.len);
+    }
+    if last_ai_message.is_none() {
+        last_ai_message = read_latest_claude_ai_message(session_path, fingerprint.len);
+    }
+
+    let (last_user_message, last_user_message_truncated) = apply_user_preview_budget(last_user_message.or(first_user_message));
+    let (last_ai_message, last_ai_message_truncated, last_ai_message_excerpt_kind) = apply_ai_preview_budget(last_ai_message);
     Some(ClaudeSessionSummary {
         title: alias_title.or(slug_title).or(prompt_title),
         workspace_path,
@@ -849,8 +964,93 @@ fn read_claude_session_summary(
         status_hint,
         latest_timestamp_ms,
         message_count: sampled_message_count(head_message_count, tail_message_count, tail_covers_file),
+        last_user_message,
+        last_user_message_truncated,
+        last_ai_message,
+        last_ai_message_truncated,
+        last_ai_message_excerpt_kind,
         archived,
     })
+}
+
+fn read_latest_copilot_user_message(session_path: &Path, file_len: u64) -> Option<String> {
+    let text = read_file_suffix_text(session_path, file_len, COPILOT_PROMPT_SCAN_BYTES)?;
+    for line_text in text.lines().rev() {
+        if let Some(json_value) = json_value_from_jsonl_line(line_text) {
+            if let Some(msg) = copilot_interactive_user_text(&json_value) {
+                if !is_user_system_error_text(&msg) {
+                    return Some(msg);
+                }
+                continue;
+            }
+            if let Some(user_message) = copilot_request_user_text(&json_value) {
+                if !is_user_system_error_text(&user_message) {
+                    return Some(user_message);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn read_latest_copilot_ai_message(session_path: &Path, file_len: u64) -> Option<String> {
+    let text = read_file_suffix_text(session_path, file_len, COPILOT_PROMPT_SCAN_BYTES)?;
+    for line_text in text.lines().rev() {
+        if let Some(json_value) = json_value_from_jsonl_line(line_text) {
+            if let Some(ai_message) = copilot_response_preview_text(&json_value) {
+                if !is_ai_model_noise_text(&ai_message) {
+                    return Some(ai_message);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn read_latest_claude_user_message(session_path: &Path, file_len: u64) -> Option<String> {
+    let text = read_file_suffix_text(session_path, file_len, CLAUDE_PROMPT_SCAN_BYTES)?;
+    let mut last_prompt_fallback: Option<String> = None;
+    for line_text in text.lines().rev() {
+        if let Some(json_value) = json_value_from_jsonl_line(line_text) {
+            match string_at(&json_value, &["/type"]) {
+                Some("last-prompt") => {
+                    if last_prompt_fallback.is_none() {
+                        if let Some(lp_text) = string_at(&json_value, &["/lastPrompt"]) {
+                            last_prompt_fallback = clean_preview_text(lp_text);
+                        }
+                    }
+                }
+                Some("user") => {
+                    let found = claude_interactive_user_text(&json_value)
+                        .or_else(|| claude_clean_user_text(&json_value));
+                    if let Some(clean) = found {
+                        if !is_user_system_error_text(&clean) {
+                            return Some(clean);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    last_prompt_fallback
+}
+
+fn read_latest_claude_ai_message(session_path: &Path, file_len: u64) -> Option<String> {
+    let text = read_file_suffix_text(session_path, file_len, CLAUDE_PROMPT_SCAN_BYTES)?;
+    for line_text in text.lines().rev() {
+        if let Some(json_value) = json_value_from_jsonl_line(line_text) {
+            if string_at(&json_value, &["/type"]) != Some("assistant") {
+                continue;
+            }
+            if let Some(ai_message) = claude_assistant_text(&json_value) {
+                if !is_ai_model_noise_text(&ai_message) {
+                    return Some(ai_message);
+                }
+            }
+        }
+    }
+    None
 }
 
 fn cached_jsonl_summary<T: Clone>(
@@ -1045,6 +1245,93 @@ fn copilot_response_status_hint(json_value: &Value) -> Option<SessionStatusHint>
     response_hint
 }
 
+fn copilot_response_preview_text(json_value: &Value) -> Option<String> {
+    if key_path_ends_with(json_value, &["response"]) {
+        let response_items = json_value
+            .get("v")
+            .or_else(|| json_value.pointer("/data/v"))
+            .and_then(Value::as_array)?;
+        return copilot_visible_response_text(response_items.iter());
+    }
+
+    let snapshot_requests = json_value.pointer("/v/requests")?.as_array()?;
+    for request in snapshot_requests.iter().rev() {
+        if let Some(response_items) = request.pointer("/response").and_then(Value::as_array) {
+            if let Some(text) = copilot_visible_response_text(response_items.iter()) {
+                return Some(text);
+            }
+        }
+    }
+
+    None
+}
+
+fn copilot_visible_response_text<'a>(response_items: impl Iterator<Item = &'a Value>) -> Option<String> {
+    let mut text_parts = Vec::new();
+
+    for response_item in response_items {
+        if text_parts
+            .iter()
+            .map(|text_part: &String| text_part.chars().count())
+            .sum::<usize>()
+            >= SESSION_PREVIEW_SOURCE_MAX_CHARS
+        {
+            break;
+        }
+
+        if let Some(text) = copilot_visible_response_item_text(response_item) {
+            text_parts.push(text);
+        }
+    }
+
+    clean_preview_text(&text_parts.join("\n"))
+}
+
+fn copilot_visible_response_item_text(response_item: &Value) -> Option<String> {
+    match string_at(response_item, &["/kind"]) {
+        None | Some("") => copilot_visible_markdown_value(response_item),
+        Some("text") | Some("markdownContent") | Some("content") | Some("message") => {
+            copilot_direct_response_text(response_item)
+        }
+        _ => None,
+    }
+}
+
+fn copilot_direct_response_text(response_item: &Value) -> Option<String> {
+    for path in ["/value", "/text", "/markdown", "/content", "/message"] {
+        if let Some(text) = string_at(response_item, &[path]) {
+            return clean_copilot_visible_reply_text(text);
+        }
+    }
+    None
+}
+
+fn copilot_visible_markdown_value(response_item: &Value) -> Option<String> {
+    let has_markdown_shape = response_item.get("value").is_some()
+        && (response_item.get("supportThemeIcons").is_some()
+            || response_item.get("supportHtml").is_some()
+            || response_item.get("baseUri").is_some()
+            || response_item.get("isTrusted").is_some());
+    if !has_markdown_shape {
+        return None;
+    }
+    let text = string_at(response_item, &["/value"])?;
+    clean_copilot_visible_reply_text(text)
+}
+
+fn clean_copilot_visible_reply_text(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || is_pure_markdown_fence(trimmed) || is_ai_model_noise_text(trimmed) {
+        return None;
+    }
+    clean_preview_text(trimmed)
+}
+
+fn is_pure_markdown_fence(text: &str) -> bool {
+    let lines: Vec<&str> = text.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    !lines.is_empty() && lines.len() <= 2 && lines.iter().all(|line| line.starts_with("```"))
+}
+
 fn update_claude_status_hint(
     status_hint: &mut Option<SessionStatusHint>,
     pending_ask_user_question_ids: &mut HashSet<String>,
@@ -1092,13 +1379,124 @@ fn is_claude_message_event(json_value: &Value) -> bool {
     matches!(string_at(json_value, &["/type"]), Some("user") | Some("assistant"))
 }
 
-fn claude_message_text(json_value: &Value) -> Option<&str> {
-    if let Some(content_text) = string_at(json_value, &["/message/content", "/message/text", "/content", "/text"]) {
-        return Some(content_text);
-    }
+const CLAUDE_CONTEXT_PREFIXES: &[&str] = &[
+    "<ide_",
+    "<environment_context>",
+    "<system-reminder>",
+    "<command-message>",
+    "Base directory for this skill:",
+];
 
-    text_from_content_blocks(json_value.pointer("/message/content"))
-        .or_else(|| text_from_content_blocks(json_value.pointer("/content")))
+fn is_claude_context_text(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    CLAUDE_CONTEXT_PREFIXES.iter().any(|prefix| trimmed.starts_with(prefix))
+}
+
+fn claude_interactive_user_text(json_value: &Value) -> Option<String> {
+    if string_at(json_value, &["/type"]) != Some("user") {
+        return None;
+    }
+    let content_value = json_value
+        .pointer("/message/content")
+        .or_else(|| json_value.pointer("/content"))?;
+    let content_blocks = content_value.as_array()?;
+    let mut parts: Vec<String> = Vec::new();
+    for block in content_blocks {
+        if string_at(block, &["/type"]) != Some("tool_result") {
+            continue;
+        }
+        if let Some(answers) = json_value.pointer("/toolUseResult/answers") {
+            collect_interactive_answer_strings(answers, &mut parts);
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    clean_preview_text(&parts.join("\n"))
+}
+
+fn collect_interactive_answer_strings(value: &Value, parts: &mut Vec<String>) {
+    match value {
+        Value::String(s) => {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                parts.push(trimmed.to_string());
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr {
+                collect_interactive_answer_strings(item, parts);
+            }
+        }
+        Value::Object(obj) => {
+            for (_key, val) in obj {
+                collect_interactive_answer_strings(val, parts);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn claude_clean_user_text(json_value: &Value) -> Option<String> {
+    if bool_at(json_value, &["/isMeta"]) == Some(true) {
+        return None;
+    }
+    let content_value = json_value
+        .pointer("/message/content")
+        .or_else(|| json_value.pointer("/content"))?;
+    if let Some(content_str) = content_value.as_str() {
+        if is_claude_context_text(content_str) {
+            return None;
+        }
+        return clean_preview_text(content_str);
+    }
+    let content_blocks = content_value.as_array()?;
+    let has_tool_result = content_blocks
+        .iter()
+        .any(|block| string_at(block, &["/type"]) == Some("tool_result"));
+    if has_tool_result {
+        return None;
+    }
+    let mut texts: Vec<&str> = Vec::new();
+    for block in content_blocks {
+        if string_at(block, &["/type"]) != Some("text") {
+            continue;
+        }
+        if let Some(text) = string_at(block, &["/text"]) {
+            if !text.trim().is_empty() && !is_claude_context_text(text) {
+                texts.push(text);
+            }
+        }
+    }
+    if texts.is_empty() {
+        return None;
+    }
+    clean_preview_text(&texts.join("\n"))
+}
+
+fn claude_assistant_text(json_value: &Value) -> Option<String> {
+    let content_value = json_value
+        .pointer("/message/content")
+        .or_else(|| json_value.pointer("/content"))?;
+    if let Some(content_str) = content_value.as_str() {
+        return clean_preview_text(content_str);
+    }
+    let content_blocks = content_value.as_array()?;
+    let mut texts: Vec<&str> = Vec::new();
+    for block in content_blocks {
+        if string_at(block, &["/type"]) != Some("text") {
+            continue;
+        }
+        if let Some(text) = string_at(block, &["/text"]) {
+            if !text.trim().is_empty() {
+                texts.push(text);
+            }
+        }
+    }
+    if texts.is_empty() {
+        return None;
+    }
+    clean_preview_text(&texts.join("\n"))
 }
 
 fn text_from_content_blocks(content_value: Option<&Value>) -> Option<&str> {
@@ -1169,9 +1567,10 @@ fn read_claude_entry(
         .and_then(display_name_from_path)
         .or_else(|| index_path.parent().and_then(display_name_from_path))
         .unwrap_or_else(|| "Claude".to_string());
+    let first_prompt = string_at(entry_json, &["/firstPrompt"]).and_then(clean_preview_text);
     let title = string_at(entry_json, &["/aiTitle", "/customTitle", "/sessionTitle", "/title", "/slug"])
         .and_then(title_candidate_from_text)
-        .or_else(|| string_at(entry_json, &["/firstPrompt"]).and_then(title_candidate_from_text))
+        .or_else(|| first_prompt.as_deref().and_then(title_candidate_from_text))
         .unwrap_or_else(|| format!("Claude {}", short_id(&session_id)));
     let message_count = entry_json
         .get("messageCount")
@@ -1181,6 +1580,7 @@ fn read_claude_entry(
     let branch = string_at(entry_json, &["/gitBranch", "/branch"])
         .filter(|branch_text| !branch_text.trim().is_empty())
         .map(|branch_text| clean_label(branch_text, 48));
+    let first_prompt_preview = apply_user_preview_budget(first_prompt);
 
     Some(AgentSession {
         id: format!("claude:{}", session_id),
@@ -1195,6 +1595,11 @@ fn read_claude_entry(
         time_label: time_label(updated_ms, scan_time_ms),
         updated_ms,
         message_count,
+        last_user_message: first_prompt_preview.0,
+        last_user_message_truncated: first_prompt_preview.1,
+        last_ai_message: None,
+        last_ai_message_truncated: false,
+        last_ai_message_excerpt_kind: None,
         branch,
     })
 }
@@ -1378,6 +1783,151 @@ fn copilot_title_text(json_value: &Value) -> Option<&str> {
         .or_else(|| text_from_content_blocks(json_value.pointer("/data/request/message/content")))
         .or_else(|| text_from_content_blocks(json_value.pointer("/v/message/content")))
         .or_else(|| text_from_content_blocks(json_value.pointer("/v/request/message/content")))
+}
+
+fn copilot_event_requests(json_value: &Value) -> Option<&Vec<Value>> {
+    let key_path = json_value
+        .get("k")
+        .or_else(|| json_value.pointer("/data/k"))
+        .and_then(Value::as_array);
+    if let Some(key_path) = key_path {
+        if json_path_ends_with(key_path, &["requests"]) {
+            if let Some(arr) = json_value
+                .get("v")
+                .or_else(|| json_value.pointer("/data/v"))
+                .and_then(Value::as_array)
+            {
+                return Some(arr);
+            }
+        }
+    }
+    json_array_at(json_value, &["/v/requests", "/requests"])
+}
+
+fn is_copilot_system_request(request: &Value) -> bool {
+    bool_at(request, &["/isSystemInitiated"]) == Some(true)
+        || string_at(request, &["/systemInitiatedLabel"])
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+        || string_at(request, &["/terminalExecutionId"])
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+}
+
+fn copilot_request_message_text(request: &Value) -> Option<&str> {
+    if let Some(text) = string_at(request, &["/message/text"]) {
+        if !text.trim().is_empty() {
+            return Some(text);
+        }
+    }
+    if let Some(parts) = json_array_at(request, &["/message/parts"]) {
+        for part in parts {
+            if let Some(text) = string_at(part, &["/text"]) {
+                if !text.trim().is_empty() {
+                    return Some(text);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn copilot_interactive_user_text(json_value: &Value) -> Option<String> {
+    if !key_path_ends_with(json_value, &["response"]) {
+        return None;
+    }
+    let response_items = json_value
+        .get("v")
+        .or_else(|| json_value.pointer("/data/v"))
+        .and_then(Value::as_array)?;
+    let mut answer_parts: Vec<String> = Vec::new();
+    for response_item in response_items {
+        if string_at(response_item, &["/kind"]) != Some("questionCarousel") {
+            continue;
+        }
+        if bool_at(response_item, &["/isUsed"]) != Some(true) {
+            continue;
+        }
+        let Some(data) = response_item.get("data") else {
+            continue;
+        };
+        if let Some(data_object) = data.as_object() {
+            for answer_value in data_object.values() {
+                collect_copilot_carousel_answer(response_item, answer_value, &mut answer_parts);
+            }
+        } else {
+            collect_copilot_carousel_answer(response_item, data, &mut answer_parts);
+        }
+    }
+    if answer_parts.is_empty() {
+        return None;
+    }
+    clean_preview_text(&answer_parts.join(", "))
+}
+
+fn collect_copilot_carousel_answer(carousel_item: &Value, answer_value: &Value, answer_parts: &mut Vec<String>) {
+    if let Some(freeform) = string_at(answer_value, &["/freeformValue"]) {
+        let trimmed = freeform.trim();
+        if !trimmed.is_empty() {
+            answer_parts.push(trimmed.to_string());
+        }
+    }
+
+    if let Some(selected_id) = answer_value.get("selectedValue").and_then(Value::as_str) {
+        if let Some(label) = resolve_carousel_option_label(carousel_item, selected_id) {
+            answer_parts.push(label);
+        }
+    }
+
+    if let Some(selected_vals) = answer_value.get("selectedValues").and_then(Value::as_array) {
+        for selected_val in selected_vals {
+            if let Some(selected_id) = selected_val.as_str() {
+                if let Some(label) = resolve_carousel_option_label(carousel_item, selected_id) {
+                    answer_parts.push(label);
+                }
+            }
+        }
+    }
+}
+
+fn resolve_carousel_option_label(carousel_item: &Value, selected_id: &str) -> Option<String> {
+    let trimmed = selected_id.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(questions) = carousel_item.get("questions").and_then(Value::as_array) {
+        for question in questions {
+            if let Some(options) = question.get("options").and_then(Value::as_array) {
+                for option in options {
+                    let option_id = string_at(option, &["/id"]).unwrap_or("");
+                    let option_value = string_at(option, &["/value"]).unwrap_or("");
+                    if option_id == trimmed || option_value == trimmed {
+                        return Some(
+                            string_at(option, &["/label"])
+                                .or_else(|| string_at(option, &["/value"]))
+                                .unwrap_or(trimmed)
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+    Some(trimmed.to_string())
+}
+
+fn copilot_request_user_text(json_value: &Value) -> Option<String> {
+    let requests = copilot_event_requests(json_value)?;
+    let mut last_text: Option<&str> = None;
+    for request in requests {
+        if is_copilot_system_request(request) {
+            continue;
+        }
+        if let Some(text) = copilot_request_message_text(request) {
+            last_text = Some(text);
+        }
+    }
+    last_text.and_then(clean_preview_text)
 }
 
 fn input_text_from_copilot_event(json_value: &Value) -> Option<&str> {
@@ -1645,6 +2195,108 @@ fn clean_label(label_text: &str, max_chars: usize) -> String {
     }
 
     output
+}
+
+fn clean_preview_text(raw_text: &str) -> Option<String> {
+    let raw_text = raw_text.trim();
+    let raw_char_count = raw_text.chars().count();
+    let source_was_truncated = raw_char_count > SESSION_PREVIEW_SOURCE_MAX_CHARS;
+    let source_text = if source_was_truncated {
+        let start_char = raw_char_count - SESSION_PREVIEW_SOURCE_MAX_CHARS;
+        let start_byte = raw_text
+            .char_indices()
+            .nth(start_char)
+            .map(|(index, _)| index)
+            .unwrap_or(0);
+        &raw_text[start_byte..]
+    } else {
+        raw_text
+    };
+
+    let mut output = String::new();
+    for text_char in source_text.chars() {
+        if text_char == '\r' {
+            continue;
+        }
+        if text_char.is_control() && text_char != '\n' && text_char != '\t' {
+            continue;
+        }
+
+        output.push(if text_char == '\t' { ' ' } else { text_char });
+    }
+
+    let mut output = output.trim().to_string();
+    if output.is_empty() {
+        return None;
+    }
+    if source_was_truncated {
+        output.insert_str(0, "...\n");
+    }
+
+    Some(output)
+}
+
+const USER_SYSTEM_ERROR_SUBSTRINGS: &[&str] = &["Prompt is too long", "Context is too long"];
+
+// Patterns that identify model-level/system-level noise, not real AI prose responses.
+const AI_MODEL_NOISE_SUBSTRINGS: &[&str] = &[
+    "there's an issue with the selected model",
+    "selected model",
+    "may not exist or you may not have access",
+    "does not exist or you do not have access",
+    "run --model",
+    "prompt is too long",
+    "context is too long",
+    "api error",
+    "rate limit",
+    "overloaded",
+];
+
+fn is_user_system_error_text(text: &str) -> bool {
+    USER_SYSTEM_ERROR_SUBSTRINGS.iter().any(|s| text.contains(s))
+}
+
+fn is_ai_model_noise_text(text: &str) -> bool {
+    let lower_text = text.to_ascii_lowercase();
+    AI_MODEL_NOISE_SUBSTRINGS.iter().any(|s| lower_text.contains(s))
+}
+
+fn apply_tail_budget(cleaned: &str, max_chars: usize) -> (String, bool) {
+    let text = cleaned.trim();
+    let char_count = text.chars().count();
+    if char_count <= max_chars {
+        return (text.to_string(), false);
+    }
+    let start_char = char_count - max_chars;
+    let start_byte = text.char_indices().nth(start_char).map(|(i, _)| i).unwrap_or(0);
+    let raw_tail = &text[start_byte..];
+    let tail = if let Some(newline_index) = raw_tail.find('\n') {
+        if newline_index <= 80 {
+            &raw_tail[newline_index + 1..]
+        } else {
+            raw_tail
+        }
+    } else {
+        raw_tail
+    };
+    let tail = tail.trim_start();
+    (format!("...{}{}", if tail.contains('\n') { "\n" } else { "" }, tail), true)
+}
+
+fn apply_user_preview_budget(msg: Option<String>) -> (Option<String>, bool) {
+    let Some(text) = msg else { return (None, false); };
+    let (result, trunc) = apply_tail_budget(&text, USER_PREVIEW_MAX_CHARS);
+    if result.is_empty() { (None, false) } else { (Some(result), trunc) }
+}
+
+fn apply_ai_preview_budget(msg: Option<String>) -> (Option<String>, bool, Option<String>) {
+    let Some(text) = msg else { return (None, false, None); };
+    let clean = text.trim();
+    // Tail-first: show the most recent content of the AI response.
+    // No error-keyword prioritization — model/system errors are filtered upstream.
+    let (result, trunc) = apply_tail_budget(clean, AI_PREVIEW_MAX_CHARS);
+    let excerpt_kind = if trunc { Some("tail".to_string()) } else { None };
+    if result.is_empty() { (None, false, None) } else { (Some(result), trunc, excerpt_kind) }
 }
 
 fn short_id(session_id: &str) -> String {

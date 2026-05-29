@@ -94,24 +94,47 @@
     body[data-theme="light"] .rail-count.idle { color: var(--idle); }
 
     body[data-theme="light"] .session-scroll,
+    body[data-theme="light"] .session-preview,
     body[data-theme="light"] .settings-panel {
       scrollbar-color: #c8c8c8 #f3f3f3;
     }
 
     body[data-theme="light"] .session-scroll::-webkit-scrollbar-track,
+    body[data-theme="light"] .session-preview::-webkit-scrollbar-track,
     body[data-theme="light"] .settings-panel::-webkit-scrollbar-track {
       background: #f3f3f3;
     }
 
     body[data-theme="light"] .session-scroll::-webkit-scrollbar-thumb,
+    body[data-theme="light"] .session-preview::-webkit-scrollbar-thumb,
     body[data-theme="light"] .settings-panel::-webkit-scrollbar-thumb {
       border-color: #f3f3f3;
       background: #c8c8c8;
     }
 
     body[data-theme="light"] .session-scroll::-webkit-scrollbar-thumb:hover,
+    body[data-theme="light"] .session-preview::-webkit-scrollbar-thumb:hover,
     body[data-theme="light"] .settings-panel::-webkit-scrollbar-thumb:hover {
       background: #a6a6a6;
+    }
+
+    body[data-theme="light"] .session-preview {
+      border-color: #b8d7f0;
+      background: #ffffff;
+      color: #1f1f1f;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16);
+    }
+
+    body[data-theme="light"] .session-preview-text {
+      border-color: #d0d0d0;
+      background: #f8f8f8;
+      scrollbar-color: #c8c8c8 #f3f3f3;
+    }
+
+    body[data-theme="light"] .session-preview-text::-webkit-scrollbar-track { background: #f3f3f3; }
+    body[data-theme="light"] .session-preview-text::-webkit-scrollbar-thumb {
+      border-color: #f3f3f3;
+      background: #c8c8c8;
     }
 
     body[data-theme="light"] .provider {
@@ -471,6 +494,13 @@
       display: grid;
       grid-template-rows: 76px 40px 58px 1fr 30px;
       min-height: 0;
+    }
+
+    body[data-layout="horizontal"] .watcher-window {
+      left: 8px;
+      right: 8px;
+      top: 70px;
+      bottom: 8px;
     }
 
     .app-header {
@@ -918,6 +948,133 @@
       white-space: nowrap;
     }
 
+    .session-preview {
+      position: fixed;
+      z-index: 20;
+      left: 0;
+      top: 0;
+      width: min(380px, calc(100vw - 20px));
+      min-width: min(260px, calc(100vw - 20px));
+      max-width: calc(100vw - 20px);
+      min-height: min(198px, calc(100vh - 20px));
+      max-height: calc(100vh - 20px);
+      padding: 12px;
+      overflow: auto;
+      resize: both;
+      border: 1px solid var(--focus);
+      border-radius: 7px;
+      background: var(--surface-2);
+      color: var(--text);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.38);
+      scrollbar-width: thin;
+      scrollbar-color: #5f5f5f #252526;
+    }
+
+    .session-preview[hidden] { display: none; }
+
+    .session-preview::-webkit-scrollbar,
+    .session-preview-text::-webkit-scrollbar { width: 10px; height: 10px; }
+    .session-preview::-webkit-scrollbar-track,
+    .session-preview-text::-webkit-scrollbar-track { background: #252526; }
+    .session-preview::-webkit-scrollbar-thumb,
+    .session-preview-text::-webkit-scrollbar-thumb {
+      border: 2px solid #252526;
+      border-radius: 999px;
+      background: #5f5f5f;
+    }
+
+    .session-preview-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: start;
+      min-width: 0;
+      margin-bottom: 8px;
+    }
+
+    .session-preview-workspace,
+    .session-preview-title {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .session-preview-workspace {
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 18px;
+    }
+
+    .session-preview-title {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 17px;
+    }
+
+    .session-preview-status {
+      max-width: 92px;
+      overflow: hidden;
+      padding: 3px 7px;
+      border: 1px solid currentColor;
+      border-radius: 999px;
+      font-size: 11px;
+      line-height: 14px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .session-preview-status.waiting { color: var(--waiting); }
+    .session-preview-status.running { color: var(--running); }
+    .session-preview-status.idle { color: var(--idle); }
+
+    .session-preview-section + .session-preview-section { margin-top: 9px; }
+
+    .session-preview-label {
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .preview-badge {
+      display: inline-block;
+      margin-left: 5px;
+      padding: 1px 5px;
+      border: 1px solid currentColor;
+      border-radius: 999px;
+      color: var(--soft);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      vertical-align: middle;
+    }
+
+    .preview-badge.error { color: var(--waiting); }
+
+    body[data-theme="light"] .preview-badge { color: #767676; }
+    body[data-theme="light"] .preview-badge.error { color: #a4262c; }
+
+    .session-preview-text {
+      max-height: 150px;
+      min-height: 48px;
+      overflow: auto;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      font-size: 12px;
+      line-height: 17px;
+      overflow-wrap: anywhere;
+      scrollbar-width: thin;
+      scrollbar-color: #5f5f5f #252526;
+      white-space: pre-wrap;
+    }
+
     .overflow-footer {
       display: grid;
       grid-template-columns: 1fr auto;
@@ -973,7 +1130,15 @@
       border-radius: 8px;
       background: #202020;
       box-shadow: none;
-      transition: top 180ms ease, height 180ms ease, border-color 140ms ease, background 140ms ease;
+      transition: left 180ms ease, top 180ms ease, width 180ms ease, height 180ms ease, border-color 140ms ease, background 140ms ease;
+    }
+
+    body[data-layout="horizontal"] .compact-rail {
+      width: 184px;
+      height: 52px;
+      flex-direction: row;
+      justify-content: space-between;
+      padding: 0 8px;
     }
 
     .rail-logo {
@@ -1050,6 +1215,11 @@
       gap: 7px;
     }
 
+    body[data-layout="horizontal"] .rail-counts {
+      flex-direction: row;
+      gap: 7px;
+    }
+
     .rail-count {
       width: 34px;
       height: 27px;
@@ -1095,6 +1265,11 @@
       color: #dcdcdc;
       box-shadow: var(--shadow);
       font-size: 12px;
+    }
+
+    body[data-layout="horizontal"] .toast {
+      left: 8px;
+      right: 8px;
     }
 
     .toast.show { display: flex; }
@@ -1171,7 +1346,7 @@
     }
   </style>
 </head>
-<body data-theme="dark" data-lang="en">
+<body data-theme="dark" data-lang="en" data-layout="horizontal">
   <main class="desktop" aria-label="AgentWatcher runtime shell">
     <aside class="compact-rail" aria-label="Compact floating rail preview">
       <div class="rail-logo" role="button" tabindex="0" aria-label="Toggle AgentWatcher window" aria-expanded="true">AW</div>
@@ -1207,6 +1382,13 @@
             <div aria-labelledby="themeSettingLabel">
               <button class="setting-toggle" type="button" data-setting-theme="dark">Dark</button>
               <button class="setting-toggle" type="button" data-setting-theme="light">Light</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <label id="layoutSettingLabel" data-i18n="layout">Layout</label>
+            <div aria-labelledby="layoutSettingLabel">
+              <button class="setting-toggle" type="button" data-setting-layout="horizontal" data-i18n="horizontal">Horizontal</button>
+              <button class="setting-toggle" type="button" data-setting-layout="vertical" data-i18n="vertical">Vertical</button>
             </div>
           </div>
         </div>
@@ -1347,6 +1529,8 @@
       <button class="resize-handle se" data-resize="se" type="button" aria-label="Resize from bottom right"></button>
     </section>
 
+    <aside class="session-preview" id="sessionPreview" aria-live="polite" hidden></aside>
+
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   </main>
@@ -1354,7 +1538,11 @@
   <script type="module">
     let tauriWindow = null;
     let PhysicalPositionClass = null;
+    let LogicalSizeClass = null;
     let tauriInvoke = null;
+    let expandedSize = null;
+    const EXPANDED_MIN_WIDTH = 360;
+    const EXPANDED_MIN_HEIGHT = 460;
 
     if (window.__TAURI_INTERNALS__) {
       const [dpiApi, windowApi, coreApi] = await Promise.all([
@@ -1363,6 +1551,7 @@
         import('@tauri-apps/api/core')
       ]);
       PhysicalPositionClass = dpiApi.PhysicalPosition;
+      LogicalSizeClass = dpiApi.LogicalSize;
       tauriWindow = windowApi.getCurrentWindow();
       tauriInvoke = coreApi.invoke;
     }
@@ -1384,6 +1573,7 @@
     const settingsPanel = document.getElementById('settingsPanel');
     const settingLangButtons = Array.from(document.querySelectorAll('[data-setting-lang]'));
     const settingThemeButtons = Array.from(document.querySelectorAll('[data-setting-theme]'));
+    const settingLayoutButtons = Array.from(document.querySelectorAll('[data-setting-layout]'));
     const alwaysOnTop = document.getElementById('alwaysOnTop');
     const includeCopilot = document.getElementById('includeCopilot');
     const includeClaude = document.getElementById('includeClaude');
@@ -1404,6 +1594,7 @@
     const queueNow = document.getElementById('queueNow');
     const sessionTotal = document.getElementById('sessionTotal');
     const filterState = document.getElementById('filterState');
+    const sessionPreview = document.getElementById('sessionPreview');
     const appTitle = document.querySelector('.app-name strong');
     const appSubtitle = document.querySelector('.app-name span');
     let cards = Array.from(document.querySelectorAll('.session-card'));
@@ -1416,6 +1607,7 @@
     const defaultSettings = {
       language: document.body.dataset.lang || 'en',
       theme: document.body.dataset.theme || 'dark',
+      layout: document.body.dataset.layout || 'horizontal',
       alwaysOnTop: true,
       includeCopilot: true,
       includeClaude: true,
@@ -1428,15 +1620,19 @@
     const columnPresets = [1, 2, 3, 4, 5, 6];
     const i18n = {
       en: {
-        allSessions: 'All agent sessions', watched: '83 workspaces watched', filterActive: 'Workspace filter active', waitingChip: '8 waiting', workspace: 'Workspace', allWorkspaces: 'All workspaces', perRow: 'Per row', visibleNow: 'visible now', inQueue: 'in scroll queue', sessions: 'sessions', updated: 'Updated 2s ago', workspacePrefix: 'Workspace: ', overflow: 'Scroll continues by priority: waiting, running, idle', priority: 'priority', live: 'live', quiet: 'quiet', waiting: 'Waiting', running: 'Running', idle: 'Idle', all: 'All', wait: 'Wait', run: 'Run', col: 'col', cols: 'cols', perRowButton: '/ row', iconsPerRow: 'icons per row', windowSize: 'Window size', openWorkspace: 'Open VS Code workspace: ', openingAgents: 'Opening session...', openedAgents: 'Session opened', themeLight: 'Light theme', themeDark: 'Dark theme', settings: 'Settings', appearance: 'Appearance', language: 'Language', theme: 'Theme', windowBehavior: 'Window', alwaysOnTop: 'Always on top', dataSources: 'Data', includeCopilot: 'Copilot sessions', includeClaude: 'Claude sessions', hideArchived: 'Hide archived', scanLimits: 'Scan limits', activeWindowDays: 'Active window (days)', maxSessions: 'Max sessions', refreshInterval: 'Refresh interval (sec)', settingsSaved: 'Settings updated'
+        allSessions: 'All agent sessions', watched: '83 workspaces watched', filterActive: 'Workspace filter active', waitingChip: '8 waiting', workspace: 'Workspace', allWorkspaces: 'All workspaces', perRow: 'Per row', visibleNow: 'visible now', inQueue: 'in scroll queue', sessions: 'sessions', updated: 'Updated 2s ago', workspacePrefix: 'Workspace: ', overflow: 'Scroll continues by priority: waiting, running, idle', priority: 'priority', live: 'live', quiet: 'quiet', waiting: 'Waiting', running: 'Running', idle: 'Idle', all: 'All', wait: 'Wait', run: 'Run', col: 'col', cols: 'cols', perRowButton: '/ row', iconsPerRow: 'icons per row', windowSize: 'Window size', openWorkspace: 'Open VS Code workspace: ', openingAgents: 'Opening session...', openedAgents: 'Session opened', themeLight: 'Light theme', themeDark: 'Dark theme', settings: 'Settings', appearance: 'Appearance', language: 'Language', theme: 'Theme', layout: 'Layout', horizontal: 'Horizontal', vertical: 'Vertical', lastUser: 'Last user', lastAi: 'Last AI', noUserMessage: 'No user message captured', noAiMessage: 'No AI message captured', tailOnly: 'tail', errorExcerpt: 'error', windowBehavior: 'Window', alwaysOnTop: 'Always on top', dataSources: 'Data', includeCopilot: 'Copilot sessions', includeClaude: 'Claude sessions', hideArchived: 'Hide archived', scanLimits: 'Scan limits', activeWindowDays: 'Active window (days)', maxSessions: 'Max sessions', refreshInterval: 'Refresh interval (sec)', settingsSaved: 'Settings updated'
       },
       zh: {
-        allSessions: '全部 Agent 会话', watched: '已监控 83 个 workspace', filterActive: '已启用 workspace 过滤', waitingChip: '8 待回复', workspace: 'Workspace', allWorkspaces: '全部 workspace', perRow: '每排数量', visibleNow: '当前可见', inQueue: '在滚动队列', sessions: '个会话', updated: '2 秒前更新', workspacePrefix: 'Workspace：', overflow: '按优先级继续滚动：待回复、运行中、闲置', priority: '优先', live: '实时', quiet: '静默', waiting: '待回复', running: '运行中', idle: '闲置', all: '全部', wait: '待回', run: '运行', col: '列', cols: '列', perRowButton: '/ 排', iconsPerRow: '个/排', windowSize: '窗口尺寸', openWorkspace: '打开 VS Code workspace：', openingAgents: '正在打开会话...', openedAgents: '已打开会话', themeLight: '浅色主题', themeDark: '深色主题', settings: '设置', appearance: '外观', language: '语言', theme: '主题', windowBehavior: '窗口', alwaysOnTop: '永远置顶', dataSources: '数据', includeCopilot: 'Copilot 会话', includeClaude: 'Claude 会话', hideArchived: '隐藏归档', scanLimits: '扫描限制', activeWindowDays: '活跃窗口（天）', maxSessions: '最大会话数', refreshInterval: '刷新间隔（秒）', settingsSaved: '设置已更新'
+        allSessions: '全部 Agent 会话', watched: '已监控 83 个 workspace', filterActive: '已启用 workspace 过滤', waitingChip: '8 待回复', workspace: 'Workspace', allWorkspaces: '全部 workspace', perRow: '每排数量', visibleNow: '当前可见', inQueue: '在滚动队列', sessions: '个会话', updated: '2 秒前更新', workspacePrefix: 'Workspace：', overflow: '按优先级继续滚动：待回复、运行中、闲置', priority: '优先', live: '实时', quiet: '静默', waiting: '待回复', running: '运行中', idle: '闲置', all: '全部', wait: '待回', run: '运行', col: '列', cols: '列', perRowButton: '/ 排', iconsPerRow: '个/排', windowSize: '窗口尺寸', openWorkspace: '打开 VS Code workspace：', openingAgents: '正在打开会话...', openedAgents: '已打开会话', themeLight: '浅色主题', themeDark: '深色主题', settings: '设置', appearance: '外观', language: '语言', theme: '主题', layout: '布局', horizontal: '横版', vertical: '竖版', lastUser: '最后用户输入', lastAi: '最后 AI 回复', noUserMessage: '未捕获到用户输入', noAiMessage: '未捕获到 AI 回复', tailOnly: '尾部', errorExcerpt: '错误', windowBehavior: '窗口', alwaysOnTop: '永远置顶', dataSources: '数据', includeCopilot: 'Copilot 会话', includeClaude: 'Claude 会话', hideArchived: '隐藏归档', scanLimits: '扫描限制', activeWindowDays: '活跃窗口（天）', maxSessions: '最大会话数', refreshInterval: '刷新间隔（秒）', settingsSaved: '设置已更新'
       }
     };
     let currentLang = settings.language;
+    let previewCard = null;
+    let previewHideTimer = 0;
+    let isPreviewHovered = false;
     document.body.dataset.lang = settings.language;
     document.body.dataset.theme = settings.theme;
+    document.body.dataset.layout = settings.layout;
     let toastTimer = 0;
 
     function t(key) {
@@ -1455,6 +1651,7 @@
         return {
           language: ['en', 'zh'].includes(savedSettings.language) ? savedSettings.language : defaultSettings.language,
           theme: ['dark', 'light'].includes(savedSettings.theme) ? savedSettings.theme : defaultSettings.theme,
+          layout: ['horizontal', 'vertical'].includes(savedSettings.layout) ? savedSettings.layout : defaultSettings.layout,
           alwaysOnTop: savedSettings.alwaysOnTop !== false,
           includeCopilot: savedSettings.includeCopilot !== false,
           includeClaude: savedSettings.includeClaude !== false,
@@ -1486,8 +1683,10 @@
       currentLang = settings.language;
       document.body.dataset.lang = settings.language;
       document.body.dataset.theme = settings.theme;
+      document.body.dataset.layout = settings.layout;
       settingLangButtons.forEach(button => button.classList.toggle('is-active', button.dataset.settingLang === settings.language));
       settingThemeButtons.forEach(button => button.classList.toggle('is-active', button.dataset.settingTheme === settings.theme));
+      settingLayoutButtons.forEach(button => button.classList.toggle('is-active', button.dataset.settingLayout === settings.layout));
       alwaysOnTop.checked = settings.alwaysOnTop;
       includeCopilot.checked = settings.includeCopilot;
       includeClaude.checked = settings.includeClaude;
@@ -1508,6 +1707,9 @@
       applySettingsControls();
       applyLanguage();
       setIconsPerRow(sizeRange.value, false);
+      requestAnimationFrame(syncCompactRail);
+      positionSessionPreview();
+      if (document.body.classList.contains('is-rail-only')) syncNativeWindowSize(true);
       if (options.reschedule) scheduleSessionRefresh();
       if (options.refresh !== false) refreshSessions(true);
       if (options.announce) showToast(t('settingsSaved'));
@@ -1591,10 +1793,23 @@
       updateWorkspaceOptionLabel();
     }
 
+    function isHorizontalLayout() {
+      return document.body.dataset.layout === 'horizontal';
+    }
+
     function syncCompactRail() {
+      if (isHorizontalLayout()) {
+        compactRail.style.left = '8px';
+        compactRail.style.top = '8px';
+        compactRail.style.width = '184px';
+        compactRail.style.height = '52px';
+        return;
+      }
+
       if (document.body.classList.contains('is-rail-only')) {
         compactRail.style.left = '8px';
         compactRail.style.top = '8px';
+        compactRail.style.width = '52px';
         compactRail.style.height = '184px';
         return;
       }
@@ -1603,16 +1818,52 @@
       const stableHeight = watcherWindow.offsetHeight || watcherWindow.getBoundingClientRect().height;
       compactRail.style.left = '8px';
       compactRail.style.top = Math.round(stableTop) + 'px';
+      compactRail.style.width = '52px';
       compactRail.style.height = Math.round(Math.min(184, Math.max(156, stableHeight * 0.34))) + 'px';
     }
 
-    function setRailOnly(enabled) {
+    function railLogicalSize() {
+      return isHorizontalLayout()
+        ? { width: 200, height: 68 }
+        : { width: 68, height: 200 };
+    }
+
+    function captureExpandedSize() {
+      if (document.body.classList.contains('is-rail-only')) return;
+      expandedSize = { width: window.innerWidth, height: window.innerHeight };
+    }
+
+    async function syncNativeWindowSize(compact) {
+      if (!tauriWindow || !LogicalSizeClass) return;
+      try {
+        if (compact) {
+          const { width, height } = railLogicalSize();
+          if (tauriWindow.setMinSize) {
+            await tauriWindow.setMinSize(new LogicalSizeClass(width, height));
+          }
+          await tauriWindow.setSize(new LogicalSizeClass(width, height));
+        } else if (expandedSize) {
+          const width = Math.max(expandedSize.width, EXPANDED_MIN_WIDTH);
+          const height = Math.max(expandedSize.height, EXPANDED_MIN_HEIGHT);
+          await tauriWindow.setSize(new LogicalSizeClass(width, height));
+          if (tauriWindow.setMinSize) {
+            await tauriWindow.setMinSize(new LogicalSizeClass(EXPANDED_MIN_WIDTH, EXPANDED_MIN_HEIGHT));
+          }
+        }
+      } catch (e) {
+        console.warn('[AW] syncNativeWindowSize failed', e);
+      }
+    }
+
+    async function setRailOnly(enabled) {
+      if (enabled) captureExpandedSize();
       document.body.classList.toggle('is-rail-only', enabled);
       watcherWindow.setAttribute('aria-hidden', enabled ? 'true' : 'false');
       compactRail.setAttribute('aria-expanded', enabled ? 'false' : 'true');
       railLogo.setAttribute('aria-expanded', enabled ? 'false' : 'true');
       railLogo.setAttribute('aria-pressed', enabled ? 'true' : 'false');
       requestAnimationFrame(syncCompactRail);
+      await syncNativeWindowSize(enabled);
     }
 
     function playRailSearchAnimation() {
@@ -1623,9 +1874,9 @@
       window.setTimeout(() => railLogo.classList.remove('is-scanning', 'is-pressed'), 620);
     }
 
-    function toggleRailWindow() {
+    async function toggleRailWindow() {
       playRailSearchAnimation();
-      setRailOnly(!document.body.classList.contains('is-rail-only'));
+      await setRailOnly(!document.body.classList.contains('is-rail-only'));
     }
 
     function cardStatus(card) {
@@ -1760,7 +2011,7 @@
 
     async function runWindowAction(action) {
       if (action === 'minimize') {
-        setRailOnly(true);
+        await setRailOnly(true);
         return;
       }
 
@@ -1871,6 +2122,10 @@
     function bindCardClicks() {
       cards.forEach(card => {
         card.onclick = () => openCard(card);
+        card.onpointerenter = () => showSessionPreview(card);
+        card.onpointerleave = scheduleHideSessionPreview;
+        card.onfocus = () => showSessionPreview(card);
+        card.onblur = scheduleHideSessionPreview;
       });
     }
 
@@ -1944,6 +2199,116 @@
       return element;
     }
 
+    function cardText(card, selector) {
+      return card.querySelector(selector)?.textContent?.trim() || '';
+    }
+
+    function sessionPreviewData(card) {
+      const session = sessionData.get(card.dataset.sessionId) || {};
+      const status = cardStatus(card);
+      const workspace = session.workspace || cardText(card, '.workspace') || card.dataset.open || 'Unknown';
+      const title = session.title || cardText(card, '.session-title') || shortCardId(card.dataset.sessionId);
+
+      return {
+        workspace,
+        title,
+        statusClass: status,
+        statusText: statusText(status),
+        lastUser: session.lastUserMessage || t('noUserMessage'),
+        lastUserTruncated: !!session.lastUserMessageTruncated,
+        lastAi: session.lastAiMessage || t('noAiMessage'),
+        lastAiTruncated: !!session.lastAiMessageTruncated,
+        lastAiExcerptKind: session.lastAiMessageExcerptKind || null,
+      };
+    }
+
+    function renderSessionPreview(data) {
+      sessionPreview.replaceChildren();
+
+      const header = document.createElement('div');
+      header.className = 'session-preview-head';
+      const titleGroup = document.createElement('div');
+      appendText(titleGroup, 'div', 'session-preview-workspace', data.workspace);
+      appendText(titleGroup, 'div', 'session-preview-title', data.title);
+      header.appendChild(titleGroup);
+      appendText(header, 'div', 'session-preview-status ' + data.statusClass, data.statusText);
+      sessionPreview.appendChild(header);
+
+      function makeLabelWithBadge(labelText, badgeKey, badgeClass) {
+        const label = document.createElement('div');
+        label.className = 'session-preview-label';
+        label.textContent = labelText;
+        if (badgeKey) {
+          const badge = document.createElement('span');
+          badge.className = 'preview-badge' + (badgeClass ? ' ' + badgeClass : '');
+          badge.textContent = t(badgeKey);
+          label.appendChild(badge);
+        }
+        return label;
+      }
+
+      const userSection = document.createElement('section');
+      userSection.className = 'session-preview-section';
+      userSection.appendChild(makeLabelWithBadge(t('lastUser'), data.lastUserTruncated ? 'tailOnly' : null, null));
+      appendText(userSection, 'div', 'session-preview-text', data.lastUser);
+      sessionPreview.appendChild(userSection);
+
+      const aiSection = document.createElement('section');
+      aiSection.className = 'session-preview-section';
+      const aiBadgeKey = data.lastAiExcerptKind === 'error' ? 'errorExcerpt' : data.lastAiExcerptKind === 'tail' ? 'tailOnly' : null;
+      const aiBadgeClass = data.lastAiExcerptKind === 'error' ? 'error' : null;
+      aiSection.appendChild(makeLabelWithBadge(t('lastAi'), aiBadgeKey, aiBadgeClass));
+      appendText(aiSection, 'div', 'session-preview-text', data.lastAi);
+      sessionPreview.appendChild(aiSection);
+    }
+
+    function showSessionPreview(card) {
+      window.clearTimeout(previewHideTimer);
+      previewCard = card;
+      renderSessionPreview(sessionPreviewData(card));
+      sessionPreview.hidden = false;
+      requestAnimationFrame(positionSessionPreview);
+    }
+
+    function scheduleHideSessionPreview() {
+      window.clearTimeout(previewHideTimer);
+      previewHideTimer = window.setTimeout(() => {
+        if (!isPreviewHovered) hideSessionPreview();
+      }, 220);
+    }
+
+    function hideSessionPreview() {
+      window.clearTimeout(previewHideTimer);
+      sessionPreview.hidden = true;
+      previewCard = null;
+    }
+
+    function positionSessionPreview() {
+      if (!previewCard || sessionPreview.hidden) return;
+
+      const cardRect = previewCard.getBoundingClientRect();
+      const previewRect = sessionPreview.getBoundingClientRect();
+      const margin = 10;
+      const previewWidth = Math.min(previewRect.width || 380, window.innerWidth - margin * 2);
+      const previewHeight = Math.min(previewRect.height || 220, window.innerHeight - margin * 2);
+      let left = cardRect.right + margin;
+      let top = cardRect.top;
+
+      if (left + previewWidth > window.innerWidth - margin) {
+        left = cardRect.left - previewWidth - margin;
+      }
+      if (left < margin) {
+        left = Math.max(margin, Math.min(cardRect.left, window.innerWidth - previewWidth - margin));
+      }
+      if (top + previewHeight > window.innerHeight - margin) {
+        top = window.innerHeight - previewHeight - margin;
+      }
+      if (top < margin) top = margin;
+
+      sessionPreview.style.left = Math.round(left) + 'px';
+      sessionPreview.style.top = Math.round(top) + 'px';
+    }
+
     function createSessionCard(session) {
       const status = ['waiting', 'running', 'idle'].includes(session.status) ? session.status : 'idle';
       const card = document.createElement('button');
@@ -2000,7 +2365,7 @@
 
     function buildSessionSignature(sessions) {
       return (Array.isArray(sessions) ? sessions : [])
-        .map(session => [session.id, session.status, session.updatedMs, session.timeLabel, session.title].join(':'))
+        .map(session => [session.id, session.status, session.updatedMs, session.timeLabel, session.title, session.lastUserMessage, session.lastAiMessage].join(':'))
         .join('|');
     }
 
@@ -2068,6 +2433,9 @@
     settingThemeButtons.forEach(button => {
       button.addEventListener('click', () => updateSetting('theme', button.dataset.settingTheme, { announce: true, refresh: false }));
     });
+    settingLayoutButtons.forEach(button => {
+      button.addEventListener('click', () => updateSetting('layout', button.dataset.settingLayout, { announce: true, refresh: false }));
+    });
     alwaysOnTop.addEventListener('change', () => {
       updateSetting('alwaysOnTop', alwaysOnTop.checked, { announce: true, refresh: false });
       applyAlwaysOnTopSetting();
@@ -2088,12 +2456,27 @@
       toggleRailWindow();
     });
     resizeHandles.forEach(handle => handle.addEventListener('pointerdown', resizeWatcherFromPointer));
+    sessionPreview.addEventListener('pointerenter', () => {
+      isPreviewHovered = true;
+      window.clearTimeout(previewHideTimer);
+    });
+    sessionPreview.addEventListener('pointerleave', () => {
+      isPreviewHovered = false;
+      scheduleHideSessionPreview();
+    });
+    sessionScroll.addEventListener('scroll', () => requestAnimationFrame(positionSessionPreview), { passive: true });
 
     new ResizeObserver(() => {
       requestAnimationFrame(syncCardScale);
       requestAnimationFrame(syncCompactRail);
     }).observe(watcherWindow);
-    window.addEventListener('resize', () => requestAnimationFrame(syncCompactRail));
+    new ResizeObserver(() => requestAnimationFrame(positionSessionPreview)).observe(sessionPreview);
+    window.addEventListener('resize', () => {
+      captureExpandedSize();
+      requestAnimationFrame(syncCompactRail);
+      requestAnimationFrame(positionSessionPreview);
+    });
+    captureExpandedSize();
     applySettingsControls();
     applyLanguage();
     applyAlwaysOnTopSetting();
