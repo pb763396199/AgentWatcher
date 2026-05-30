@@ -83,6 +83,9 @@
 
     body[data-theme="light"] .segment,
     body[data-theme="light"] .workspace-select,
+    body[data-theme="light"] .workspace-picker-button,
+    body[data-theme="light"] .workspace-picker-search input,
+    body[data-theme="light"] .workspace-picker-option,
     body[data-theme="light"] .preset-btn,
     body[data-theme="light"] .title-tool,
     body[data-theme="light"] .session-card,
@@ -623,6 +626,10 @@
       min-width: 0;
     }
 
+    .workspace-row {
+      position: relative;
+    }
+
     .control-label {
       overflow: hidden;
       color: var(--muted);
@@ -631,7 +638,9 @@
       white-space: nowrap;
     }
 
-    .workspace-select {
+    .workspace-select,
+    .workspace-picker-button,
+    .workspace-picker-search input {
       width: 100%;
       height: 23px;
       min-width: 0;
@@ -640,6 +649,168 @@
       background: #252526;
       color: #dcdcdc;
       font: inherit;
+      font-size: 11px;
+    }
+
+    .workspace-picker {
+      position: relative;
+      min-width: 0;
+    }
+
+    .workspace-picker-button {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 6px;
+      padding: 0 7px;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .workspace-picker-button:hover,
+    .workspace-picker-button:focus-visible {
+      outline: none;
+      border-color: var(--focus);
+      background: rgba(14, 99, 156, 0.25);
+      color: #ffffff;
+    }
+
+    .workspace-picker-value,
+    .workspace-picker-caret {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .workspace-picker-caret {
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .workspace-picker-popover {
+      position: absolute;
+      z-index: 12;
+      left: 0;
+      right: 0;
+      top: calc(100% + 4px);
+      max-height: var(--workspace-picker-max-height, min(340px, calc(100vh - 180px)));
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #1f1f1f;
+      box-shadow: var(--shadow);
+    }
+
+    .workspace-picker-popover[hidden] {
+      display: none;
+    }
+
+    .workspace-picker-search {
+      padding: 6px;
+      border-bottom: 1px solid var(--border);
+      background: #252526;
+    }
+
+    .workspace-picker-search input {
+      height: 26px;
+      padding: 0 7px;
+      background: #1b1b1b;
+    }
+
+    .workspace-picker-search input:focus {
+      outline: none;
+      border-color: var(--focus);
+    }
+
+    .workspace-picker-options {
+      max-height: var(--workspace-picker-options-max-height, min(300px, calc(100vh - 226px)));
+      overflow: auto;
+      padding: 5px;
+      scrollbar-width: thin;
+      scrollbar-color: #5f5f5f #252526;
+    }
+
+    .workspace-picker-options::-webkit-scrollbar { width: 10px; }
+    .workspace-picker-options::-webkit-scrollbar-track { background: #252526; }
+    .workspace-picker-options::-webkit-scrollbar-thumb {
+      border: 2px solid #252526;
+      border-radius: 999px;
+      background: #5f5f5f;
+    }
+
+    .workspace-picker-option {
+      width: 100%;
+      min-width: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 7px;
+      padding: 6px;
+      border: 1px solid transparent;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--text);
+      cursor: pointer;
+      font: inherit;
+      text-align: left;
+    }
+
+    .workspace-picker-option:hover,
+    .workspace-picker-option:focus-visible,
+    .workspace-picker-option.is-active {
+      outline: none;
+      border-color: var(--focus);
+      background: rgba(14, 99, 156, 0.25);
+      color: #ffffff;
+    }
+
+    .workspace-option-title,
+    .workspace-option-path {
+      display: block;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .workspace-option-title {
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 16px;
+    }
+
+    .workspace-option-path {
+      margin-top: 1px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 14px;
+    }
+
+    .workspace-option-counts {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      white-space: nowrap;
+    }
+
+    .workspace-count-pill {
+      min-width: 18px;
+      padding: 1px 4px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 10px;
+      line-height: 14px;
+      text-align: center;
+    }
+
+    .workspace-count-pill.waiting { color: #ffb4b4; border-color: rgba(241, 76, 76, 0.55); }
+    .workspace-count-pill.running { color: #9cdcfe; border-color: rgba(55, 148, 255, 0.55); }
+    .workspace-count-pill.idle { color: #b5cea8; border-color: rgba(106, 153, 85, 0.55); }
+
+    .workspace-picker-empty {
+      padding: 9px 7px;
+      color: var(--muted);
       font-size: 11px;
     }
 
@@ -1137,6 +1308,7 @@
     }
 
     .session-preview-workspace,
+    .session-preview-path,
     .session-preview-title {
       min-width: 0;
       overflow: hidden;
@@ -1156,6 +1328,13 @@
       color: var(--muted);
       font-size: 12px;
       line-height: 17px;
+    }
+
+    .session-preview-path {
+      margin-top: 1px;
+      color: var(--soft);
+      font-size: 11px;
+      line-height: 15px;
     }
 
     .session-preview-status {
@@ -1660,12 +1839,19 @@
         </nav>
 
         <section class="control-strip" aria-label="Display controls">
-          <label class="workspace-row">
+          <div class="workspace-row">
             <span class="control-label" id="workspaceLabel">Workspace</span>
-            <select class="workspace-select" id="workspaceFilter" aria-label="Filter by workspace">
-              <option value="">All workspaces</option>
-            </select>
-          </label>
+            <div class="workspace-picker" id="workspacePicker">
+              <button class="workspace-picker-button" id="workspacePickerButton" type="button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="workspaceLabel workspacePickerValue">
+                <span class="workspace-picker-value" id="workspacePickerValue">All workspaces</span>
+                <span class="workspace-picker-caret" aria-hidden="true">v</span>
+              </button>
+              <div class="workspace-picker-popover" id="workspacePickerPopover" hidden>
+                <div class="workspace-picker-search"><input id="workspacePickerSearch" type="search" autocomplete="off" aria-label="Search workspace" /></div>
+                <div class="workspace-picker-options" id="workspacePickerOptions" role="listbox" aria-label="Workspace options"></div>
+              </div>
+            </div>
+          </div>
           <div class="size-row">
             <span class="control-label" id="perRowLabel">Per row</span>
             <div class="size-tools">
@@ -1786,7 +1972,12 @@
     const root = document.documentElement;
     const toast = document.getElementById('toast');
     const sessionScroll = document.getElementById('sessionScroll');
-    const workspaceFilter = document.getElementById('workspaceFilter');
+    const workspacePicker = document.getElementById('workspacePicker');
+    const workspacePickerButton = document.getElementById('workspacePickerButton');
+    const workspacePickerValue = document.getElementById('workspacePickerValue');
+    const workspacePickerPopover = document.getElementById('workspacePickerPopover');
+    const workspacePickerSearch = document.getElementById('workspacePickerSearch');
+    const workspacePickerOptions = document.getElementById('workspacePickerOptions');
     const sizePreset = document.getElementById('sizePreset');
     const sizeRange = document.getElementById('sizeRange');
     const sizeValue = document.getElementById('sizeValue');
@@ -1832,6 +2023,7 @@
     let cards = Array.from(document.querySelectorAll('.lane .session-card'));
     const lanes = Array.from(document.querySelectorAll('.lane'));
     let logicalTotals = { all: 51, waiting: 8, running: 12, idle: 31 };
+    let selectedWorkspaceKey = '';
     let sessionData = new Map();
     let lastRefreshMs = 0;
     let lastSessionSignature = '';
@@ -1902,13 +2094,155 @@
       return ['waiting', 'running', 'idle'].includes(session?.status) ? session.status : 'idle';
     }
 
+    function cleanWorkspaceValue(value, fallback = 'Unknown') {
+      const text = String(value || '').trim();
+      return text || fallback;
+    }
+
+    function workspacePathValue(session) {
+      return String(session?.workspacePath || session?.workspace_path || '').trim();
+    }
+
+    function workspacePathSegments(pathText) {
+      return String(pathText || '')
+        .trim()
+        .replace(/\\/g, '/')
+        .split('/')
+        .map(segment => segment.trim())
+        .filter(segment => segment && !/^[a-z]:$/i.test(segment));
+    }
+
+    function workspaceBasenameFromPath(pathText) {
+      const segments = workspacePathSegments(pathText);
+      return segments[segments.length - 1] || '';
+    }
+
+    function normalizedWorkspacePathKey(pathText) {
+      let normalizedPath = String(pathText || '').trim().replace(/\\/g, '/');
+      if (!normalizedPath) return '';
+      if (/^\/[a-z]:/i.test(normalizedPath)) normalizedPath = normalizedPath.slice(1);
+      const segments = [];
+      normalizedPath.split('/').forEach(segment => {
+        const cleanSegment = segment.trim();
+        if (!cleanSegment || cleanSegment === '.') return;
+        if (cleanSegment === '..') {
+          segments.pop();
+          return;
+        }
+        segments.push(cleanSegment);
+      });
+      return segments.length ? 'path:' + segments.join('/').toLowerCase() : '';
+    }
+
+    function isGenericWorkspaceName(name) {
+      return ['plugins', 'source', 'private', 'public', 'content'].includes(String(name || '').toLowerCase());
+    }
+
+    function labelWithDiscriminator(name, discriminator) {
+      return discriminator ? name + ' \u00b7 ' + discriminator : name;
+    }
+
+    function nearestMeaningfulParent(segments) {
+      for (let index = segments.length - 2; index >= 0; index -= 1) {
+        if (!isGenericWorkspaceName(segments[index])) return segments[index];
+      }
+      return '';
+    }
+
+    function looksLikeUgaBranch(branch) {
+      const upperBranch = String(branch || '').toUpperCase();
+      return upperBranch === 'DEV' || /^DEV_[0-9_]+$/.test(upperBranch);
+    }
+
+    function ugaWorkspaceParts(segments) {
+      for (let index = 0; index < segments.length; index += 1) {
+        if (segments[index].toLowerCase() !== 'uga') continue;
+        const branch = segments[index + 1] || '';
+        if ((segments[index + 2] || '').toLowerCase() !== 'plugins' || !looksLikeUgaBranch(branch)) continue;
+        return { branch, pluginName: segments[index + 3] || '' };
+      }
+      return null;
+    }
+
+    function neonPluginName(segments) {
+      for (let index = 0; index < segments.length; index += 1) {
+        if (segments[index].toLowerCase() !== 'neon') continue;
+        if ((segments[index + 1] || '').toLowerCase() === 'plugins') return segments[index + 2] || '';
+      }
+      return '';
+    }
+
+    function semanticWorkspaceGroup(segments, fallback) {
+      for (const segment of [...segments].reverse()) {
+        if (segment.toLowerCase() === 'uga') return 'UGA';
+        if (segment.toLowerCase() === 'neon') return 'neon';
+        if (segment.toLowerCase() === 'aiproject') return 'AiProject';
+        if (segment.toLowerCase() === 'research') return 'Research';
+      }
+      return fallback || 'Unknown';
+    }
+
+    function derivedWorkspaceIdentity(session) {
+      const pathText = workspacePathValue(session);
+      const segments = workspacePathSegments(pathText);
+      const name = cleanWorkspaceValue(session?.workspaceName || workspaceBasenameFromPath(pathText) || session?.workspace);
+      const ugaParts = ugaWorkspaceParts(segments);
+      if (ugaParts) {
+        const labelName = ugaParts.pluginName || name;
+        return { name, label: labelWithDiscriminator(labelName, ugaParts.branch), group: 'UGA', discriminator: ugaParts.branch };
+      }
+
+      const neonName = neonPluginName(segments);
+      if (neonName) {
+        return { name, label: labelWithDiscriminator(neonName, 'neon/Plugins'), group: 'neon', discriminator: 'neon/Plugins' };
+      }
+
+      const parent = nearestMeaningfulParent(segments);
+      const discriminator = parent || cleanWorkspaceValue(session?.workspaceDiscriminator, 'Unknown');
+      const label = parent ? labelWithDiscriminator(name, parent) : cleanWorkspaceValue(session?.workspaceLabel || session?.workspace || name);
+      return { name, label, group: semanticWorkspaceGroup(segments, discriminator), discriminator };
+    }
+
+    function workspaceIdentity(session) {
+      const derived = derivedWorkspaceIdentity(session || {});
+      const pathText = workspacePathValue(session);
+      const key = cleanWorkspaceValue(
+        session?.workspaceKey || normalizedWorkspacePathKey(pathText) || ('fallback:' + [session?.provider, session?.id, session?.sessionPath || session?.sessionResource || derived.label].filter(Boolean).join(':')).toLowerCase(),
+        'fallback:unknown'
+      );
+      return {
+        key,
+        name: cleanWorkspaceValue(session?.workspaceName || derived.name),
+        label: cleanWorkspaceValue(session?.workspaceLabel || derived.label),
+        group: cleanWorkspaceValue(session?.workspaceGroup || derived.group),
+        discriminator: cleanWorkspaceValue(session?.workspaceDiscriminator || derived.discriminator, 'Unknown'),
+        path: pathText
+      };
+    }
+
+    function normalizeSession(session) {
+      const identity = workspaceIdentity(session || {});
+      return {
+        ...session,
+        workspace: cleanWorkspaceValue(session?.workspace || identity.name),
+        workspacePath: identity.path,
+        workspaceKey: identity.key,
+        workspaceName: identity.name,
+        workspaceLabel: identity.label,
+        workspaceGroup: identity.group,
+        workspaceDiscriminator: identity.discriminator,
+        status: normalizedSessionStatus(session)
+      };
+    }
+
     function waitingAlertSignature(session) {
       const status = normalizedSessionStatus(session);
       if (status !== 'waiting') return status;
+      const identity = workspaceIdentity(session || {});
       return [
         status,
         session?.lastAiMessage || session?.title || '',
-        session?.workspace || '',
+        identity.key || identity.label || session?.workspace || '',
         session?.provider || ''
       ].join('|');
     }
@@ -1992,16 +2326,22 @@
 
     function sessionFromCard(card, fallbackId) {
       const providerText = cardText(card, '.provider');
-      return {
+      return normalizeSession({
         id: card.dataset.sessionId || fallbackId,
         status: cardStatus(card),
-        workspace: card.dataset.workspace || card.dataset.open || cardText(card, '.workspace') || 'Unknown',
+        workspace: card.dataset.workspaceName || card.dataset.workspace || card.dataset.open || cardText(card, '.workspace') || 'Unknown',
+        workspacePath: card.dataset.workspacePath || '',
+        workspaceKey: card.dataset.workspaceKey || '',
+        workspaceName: card.dataset.workspaceName || '',
+        workspaceLabel: card.dataset.workspaceLabel || cardText(card, '.workspace') || '',
+        workspaceGroup: card.dataset.workspaceGroup || '',
+        workspaceDiscriminator: card.dataset.workspaceDiscriminator || '',
         provider: providerText === 'GH' ? 'copilot' : 'claude',
         providerLabel: providerText || 'C',
         timeLabel: cardText(card, '.time'),
         title: cardText(card, '.session-title') || card.dataset.open || 'Session',
         branch: cardText(card, '.card-foot span') || statusText(cardStatus(card))
-      };
+      });
     }
 
     function initializeWaitingAlertSnapshotFromCards() {
@@ -2060,19 +2400,20 @@
     function showWaitingAlert(session) {
       if (!waitingAlertLayer || isPreviewWindow || !session?.id) return;
 
-      const alertId = String(session.id);
+      const normalizedSession = normalizeSession({ ...session, status: 'waiting' });
+      const alertId = String(normalizedSession.id);
       dismissWaitingAlert(alertId, true);
-      sessionData.set(alertId, session);
+      sessionData.set(alertId, normalizedSession);
 
-      const card = createSessionCard({ ...session, status: 'waiting' });
+      const card = createSessionCard(normalizedSession);
       card.classList.add('waiting-alert-card');
       card.dataset.alertId = alertId;
-      card.setAttribute('aria-label', t('waitingAlertAria') + ': ' + (session.workspace || shortCardId(alertId)));
+      card.setAttribute('aria-label', t('waitingAlertAria') + ': ' + (normalizedSession.workspaceLabel || shortCardId(alertId)));
       bindCardClickHandlers(card);
       waitingAlertLayer.appendChild(card);
 
       const timer = window.setTimeout(() => dismissWaitingAlert(alertId), waitingAlertDurationMs());
-      waitingAlertItems.set(alertId, { card, timer, session });
+      waitingAlertItems.set(alertId, { card, timer, session: normalizedSession });
       scheduleWaitingAlertSync();
     }
 
@@ -2214,7 +2555,7 @@
     }
 
     function workspaceCountText() {
-      const count = new Set(cards.map(card => card.dataset.workspace).filter(Boolean)).size;
+      const count = new Set(cards.map(card => card.dataset.workspaceKey).filter(Boolean)).size;
       return currentLang === 'zh' ? '已监控 ' + count + ' 个 workspace' : count + ' workspaces watched';
     }
 
@@ -2253,15 +2594,16 @@
       document.querySelector('.segment[data-status="idle"]').textContent = t('idle') + ' ' + logicalTotals.idle;
     }
 
-    function updateWorkspaceOptionLabel() {
-      const allOption = workspaceFilter.querySelector('option[value=""]');
-      if (allOption) allOption.textContent = t('allWorkspaces');
+    function updateWorkspacePickerLabel() {
+      const selectedItem = workspaceCatalog().find(item => item.key === selectedWorkspaceKey);
+      workspacePickerValue.textContent = selectedItem ? selectedItem.label : t('allWorkspaces');
     }
 
     function applyLanguage() {
       document.body.dataset.lang = currentLang;
       urgentChip.textContent = waitingChipText();
       workspaceLabel.textContent = t('workspace');
+      workspacePickerSearch.placeholder = currentLang === 'zh' ? '搜索 workspace、路径、分支' : 'Search workspace, path, branch';
       perRowLabel.textContent = t('perRow');
       visibleLabel.textContent = t('visibleNow');
       queueLabel.textContent = t('inQueue');
@@ -2273,7 +2615,8 @@
         element.textContent = t(element.dataset.i18n);
       });
       updateSegmentLabels();
-      updateWorkspaceOptionLabel();
+      updateWorkspacePickerLabel();
+      renderWorkspaceOptions();
     }
 
     function isHorizontalLayout() {
@@ -2551,13 +2894,15 @@
     }
 
     function applyFilters(options = {}) {
-      const selectedWorkspace = workspaceFilter.value;
+      const selectedWorkspace = selectedWorkspaceKey;
+      const selectedWorkspaceItem = workspaceCatalog().find(item => item.key === selectedWorkspace);
+      const selectedWorkspaceLabel = selectedWorkspaceItem?.label || '';
       const selectedStatus = activeStatus();
       const laneCounts = { waiting: 0, running: 0, idle: 0 };
       let actualVisible = 0;
 
       cards.forEach(card => {
-        const workspace = card.dataset.workspace;
+        const workspace = card.dataset.workspaceKey;
         const status = cardStatus(card);
         const matchesWorkspace = !selectedWorkspace || workspace === selectedWorkspace;
         const matchesStatus = selectedStatus === 'all' || selectedStatus === status;
@@ -2585,9 +2930,9 @@
       visibleNow.textContent = String(visibleCount);
       queueNow.textContent = String(queueCount);
       sessionTotal.textContent = String(logicalTotal);
-      appTitle.textContent = selectedWorkspace || t('allSessions');
+      appTitle.textContent = selectedWorkspaceLabel || t('allSessions');
       appSubtitle.textContent = selectedWorkspace ? t('filterActive') : workspaceCountText();
-      filterState.textContent = selectedWorkspace ? t('workspacePrefix') + selectedWorkspace : updatedText();
+      filterState.textContent = selectedWorkspace ? t('workspacePrefix') + selectedWorkspaceLabel : updatedText();
       if (!options.preserveScroll) sessionScroll.scrollTop = 0;
       requestAnimationFrame(syncCardScale);
     }
@@ -2596,7 +2941,8 @@
       normalizeSessionCardElements();
       cards = collectSessionCards();
       cards.forEach(card => {
-        card.dataset.workspace = card.dataset.workspace || card.dataset.open;
+        const session = sessionFromCard(card, card.dataset.sessionId || card.dataset.open || 'mock-card');
+        applyWorkspaceIdentityToCard(card, session);
       });
       if (shouldRecalculate) {
         recalculateTotals();
@@ -2624,23 +2970,148 @@
       urgentChip.textContent = waitingChipText();
     }
 
-    function populateWorkspaceFilter() {
-      const currentWorkspace = workspaceFilter.value;
-      const workspaces = [...new Set(cards.map(card => card.dataset.workspace).filter(Boolean))]
-        .sort((left, right) => left.localeCompare(right));
+    function workspaceCatalog() {
+      const catalog = new Map();
+      cards.forEach(card => {
+        const key = card.dataset.workspaceKey;
+        if (!key) return;
 
-      workspaceFilter.replaceChildren();
-      const allOption = document.createElement('option');
-      allOption.value = '';
-      workspaceFilter.appendChild(allOption);
-      workspaces.forEach(workspace => {
-        const option = document.createElement('option');
-        option.value = workspace;
-        option.textContent = workspace;
-        workspaceFilter.appendChild(option);
+        if (!catalog.has(key)) {
+          catalog.set(key, {
+            key,
+            name: card.dataset.workspaceName || card.dataset.workspace || 'Unknown',
+            label: card.dataset.workspaceLabel || card.dataset.workspace || 'Unknown',
+            group: card.dataset.workspaceGroup || 'Unknown',
+            discriminator: card.dataset.workspaceDiscriminator || 'Unknown',
+            path: card.dataset.workspacePath || '',
+            provider: card.dataset.provider || '',
+            waiting: 0,
+            running: 0,
+            idle: 0,
+            total: 0,
+            searchText: ''
+          });
+        }
+
+        const item = catalog.get(key);
+        const status = cardStatus(card);
+        item[status] += 1;
+        item.total += 1;
+        item.searchText += ' ' + [
+          item.label,
+          item.name,
+          item.group,
+          item.discriminator,
+          item.path,
+          item.provider,
+          status,
+          card.dataset.sessionTitle || '',
+          card.dataset.provider || ''
+        ].join(' ').toLowerCase();
       });
-      workspaceFilter.value = workspaces.includes(currentWorkspace) ? currentWorkspace : '';
-      updateWorkspaceOptionLabel();
+
+      return [...catalog.values()].sort((left, right) => {
+        if (right.waiting !== left.waiting) return right.waiting - left.waiting;
+        if (right.running !== left.running) return right.running - left.running;
+        return left.label.localeCompare(right.label);
+      });
+    }
+
+    function workspaceTotals() {
+      return cards.reduce((totals, card) => {
+        const status = cardStatus(card);
+        totals[status] += 1;
+        totals.total += 1;
+        return totals;
+      }, { waiting: 0, running: 0, idle: 0, total: 0 });
+    }
+
+    function populateWorkspaceFilter() {
+      const catalog = workspaceCatalog();
+      if (selectedWorkspaceKey && !catalog.some(item => item.key === selectedWorkspaceKey)) {
+        selectedWorkspaceKey = '';
+      }
+      updateWorkspacePickerLabel();
+      renderWorkspaceOptions();
+    }
+
+    function createWorkspaceOption(item, active) {
+      const option = document.createElement('button');
+      option.className = 'workspace-picker-option' + (active ? ' is-active' : '');
+      option.type = 'button';
+      option.dataset.workspaceKey = item.key;
+      option.setAttribute('role', 'option');
+      option.setAttribute('aria-selected', active ? 'true' : 'false');
+      if (item.path) option.title = item.path;
+
+      const textGroup = document.createElement('span');
+      appendText(textGroup, 'span', 'workspace-option-title', item.label);
+      appendText(textGroup, 'span', 'workspace-option-path', item.path || item.discriminator || item.group);
+      option.appendChild(textGroup);
+
+      const counts = document.createElement('span');
+      counts.className = 'workspace-option-counts';
+      appendText(counts, 'span', 'workspace-count-pill waiting', String(item.waiting));
+      appendText(counts, 'span', 'workspace-count-pill running', String(item.running));
+      appendText(counts, 'span', 'workspace-count-pill idle', String(item.idle));
+      option.appendChild(counts);
+      return option;
+    }
+
+    function renderWorkspaceOptions() {
+      if (!workspacePickerOptions) return;
+      const query = workspacePickerSearch.value.trim().toLowerCase();
+      const totals = workspaceTotals();
+      const allItem = {
+        key: '',
+        label: t('allWorkspaces'),
+        path: currentLang === 'zh' ? '显示所有 workspace 路径' : 'Show every workspace path',
+        waiting: totals.waiting,
+        running: totals.running,
+        idle: totals.idle
+      };
+      const items = workspaceCatalog().filter(item => !query || item.searchText.includes(query));
+
+      workspacePickerOptions.replaceChildren();
+      workspacePickerOptions.appendChild(createWorkspaceOption(allItem, selectedWorkspaceKey === ''));
+      if (!items.length) {
+        appendText(workspacePickerOptions, 'div', 'workspace-picker-empty', currentLang === 'zh' ? '没有匹配的 workspace' : 'No matching workspace');
+        return;
+      }
+
+      items.forEach(item => {
+        workspacePickerOptions.appendChild(createWorkspaceOption(item, item.key === selectedWorkspaceKey));
+      });
+    }
+
+    function updateWorkspacePickerGeometry() {
+      if (!workspacePickerButton || !workspacePickerPopover || !workspacePickerOptions) return;
+      const buttonRect = workspacePickerButton.getBoundingClientRect();
+      const availableHeight = Math.max(150, window.innerHeight - buttonRect.bottom - 12);
+      const popoverHeight = Math.min(340, availableHeight);
+      workspacePickerPopover.style.setProperty('--workspace-picker-max-height', popoverHeight + 'px');
+      workspacePickerOptions.style.setProperty('--workspace-picker-options-max-height', Math.max(96, popoverHeight - 40) + 'px');
+    }
+
+    function openWorkspacePicker() {
+      updateWorkspacePickerGeometry();
+      workspacePickerPopover.hidden = false;
+      workspacePickerButton.setAttribute('aria-expanded', 'true');
+      workspacePickerSearch.value = '';
+      renderWorkspaceOptions();
+      requestAnimationFrame(() => workspacePickerSearch.focus());
+    }
+
+    function closeWorkspacePicker() {
+      workspacePickerPopover.hidden = true;
+      workspacePickerButton.setAttribute('aria-expanded', 'false');
+    }
+
+    function chooseWorkspace(key) {
+      selectedWorkspaceKey = key || '';
+      updateWorkspacePickerLabel();
+      closeWorkspacePicker();
+      applyFilters();
     }
 
     function normalizeSessionCardElements() {
@@ -2788,11 +3259,13 @@
     function sessionPreviewData(card) {
       const session = sessionData.get(card.dataset.sessionId) || {};
       const status = cardStatus(card);
-      const workspace = session.workspace || cardText(card, '.workspace') || card.dataset.open || 'Unknown';
+      const workspace = session.workspaceLabel || card.dataset.workspaceLabel || session.workspace || cardText(card, '.workspace') || card.dataset.open || 'Unknown';
+      const workspacePath = session.workspacePath || card.dataset.workspacePath || '';
       const title = session.title || cardText(card, '.session-title') || shortCardId(card.dataset.sessionId);
 
       return {
         workspace,
+        workspacePath,
         title,
         statusClass: status,
         statusText: statusText(status),
@@ -2814,6 +3287,7 @@
       header.className = 'session-preview-head';
       const titleGroup = document.createElement('div');
       appendText(titleGroup, 'div', 'session-preview-workspace', data.workspace);
+      if (data.workspacePath) appendText(titleGroup, 'div', 'session-preview-path', data.workspacePath);
       appendText(titleGroup, 'div', 'session-preview-title', data.title);
       header.appendChild(titleGroup);
       appendText(header, 'div', 'session-preview-status ' + data.statusClass, data.statusText);
@@ -3098,32 +3572,63 @@
       window.addEventListener('blur', onPointerCancel);
     }
 
+    function applyWorkspaceIdentityToCard(card, session) {
+      const identity = workspaceIdentity(session || {});
+      card.dataset.workspace = identity.name;
+      card.dataset.workspaceKey = identity.key;
+      card.dataset.workspaceName = identity.name;
+      card.dataset.workspaceLabel = identity.label;
+      card.dataset.workspaceGroup = identity.group;
+      card.dataset.workspaceDiscriminator = identity.discriminator;
+      card.dataset.workspacePath = identity.path;
+      card.dataset.provider = session?.provider || card.dataset.provider || '';
+      card.dataset.status = normalizedSessionStatus(session || { status: cardStatus(card) });
+      card.dataset.sessionTitle = session?.title || cardText(card, '.session-title') || '';
+      card.dataset.workspaceSearch = [
+        identity.label,
+        identity.name,
+        identity.group,
+        identity.discriminator,
+        identity.path,
+        session?.provider || '',
+        session?.providerLabel || '',
+        normalizedSessionStatus(session || { status: cardStatus(card) }),
+        session?.title || ''
+      ].join(' ').toLowerCase();
+    }
+
     function createSessionCard(session) {
-      const status = ['waiting', 'running', 'idle'].includes(session.status) ? session.status : 'idle';
+      const normalizedSession = normalizeSession(session || {});
+      const status = normalizedSession.status;
       const card = document.createElement('div');
       card.className = 'session-card ' + status;
       card.setAttribute('role', 'button');
       card.setAttribute('tabindex', '0');
-      card.dataset.sessionId = String(session.id || '');
-      card.dataset.workspace = session.workspace || 'Unknown';
-      card.dataset.open = session.workspace || 'Unknown';
+      card.dataset.sessionId = String(normalizedSession.id || '');
+      card.dataset.open = normalizedSession.workspacePath || normalizedSession.workspaceLabel || normalizedSession.workspace || 'Unknown';
+      applyWorkspaceIdentityToCard(card, normalizedSession);
 
       const cardHead = document.createElement('div');
       cardHead.className = 'card-head';
-      const providerClass = session.provider === 'copilot' ? 'gh' : 'cl';
-      appendText(cardHead, 'span', 'provider ' + providerClass, session.providerLabel || (session.provider === 'copilot' ? 'GH' : 'C'));
-      appendText(cardHead, 'span', 'time', session.timeLabel || '');
+      const providerClass = normalizedSession.provider === 'copilot' ? 'gh' : 'cl';
+      appendText(cardHead, 'span', 'provider ' + providerClass, normalizedSession.providerLabel || (normalizedSession.provider === 'copilot' ? 'GH' : 'C'));
+      appendText(cardHead, 'span', 'time', normalizedSession.timeLabel || '');
       card.appendChild(cardHead);
 
-      appendText(card, 'div', 'workspace', session.workspace || 'Unknown');
-      appendText(card, 'div', 'session-title', session.title || shortCardId(session.id));
+      appendText(card, 'div', 'workspace', normalizedSession.workspaceLabel || normalizedSession.workspace || 'Unknown');
+      appendText(card, 'div', 'session-title', normalizedSession.title || shortCardId(normalizedSession.id));
 
       const cardFoot = document.createElement('div');
       cardFoot.className = 'card-foot';
-      const footText = session.branch || (session.messageCount ? session.messageCount + ' msgs' : statusText(status));
+      const footText = normalizedSession.branch || normalizedSession.workspaceDiscriminator || (normalizedSession.messageCount ? normalizedSession.messageCount + ' msgs' : statusText(status));
       appendText(cardFoot, 'span', '', footText);
       card.appendChild(cardFoot);
       card.appendChild(makeExpandBtn());
+      card.title = [
+        normalizedSession.workspaceLabel || normalizedSession.workspace,
+        normalizedSession.workspacePath,
+        normalizedSession.title
+      ].filter(Boolean).join('\n');
 
       return card;
     }
@@ -3139,10 +3644,11 @@
 
       (Array.isArray(sessions) ? sessions : []).forEach(session => {
         if (!session || !session.id) return;
-        const card = createSessionCard(session);
+        const normalizedSession = normalizeSession(session);
+        const card = createSessionCard(normalizedSession);
         const status = cardStatus(card);
         laneContainers[status].appendChild(card);
-        sessionData.set(String(session.id), session);
+        sessionData.set(String(normalizedSession.id), normalizedSession);
       });
 
       cards = collectSessionCards();
@@ -3156,7 +3662,7 @@
 
     function buildSessionSignature(sessions) {
       return (Array.isArray(sessions) ? sessions : [])
-        .map(session => [session.id, session.status, session.updatedMs, session.title, session.lastUserMessage, session.lastAiMessage].join(':'))
+        .map(session => [session.id, session.status, session.updatedMs, session.workspaceKey, session.workspaceLabel, session.title, session.lastUserMessage, session.lastAiMessage].join(':'))
         .join('|');
     }
 
@@ -3257,7 +3763,31 @@
         });
       });
 
-      workspaceFilter.addEventListener('change', applyFilters);
+      workspacePickerButton.addEventListener('click', () => {
+        if (workspacePickerPopover.hidden) {
+          openWorkspacePicker();
+        } else {
+          closeWorkspacePicker();
+        }
+      });
+      workspacePickerButton.addEventListener('keydown', event => {
+        if (event.key !== 'ArrowDown') return;
+        event.preventDefault();
+        openWorkspacePicker();
+      });
+      workspacePickerSearch.addEventListener('input', renderWorkspaceOptions);
+      workspacePickerSearch.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeWorkspacePicker();
+          workspacePickerButton.focus();
+        }
+      });
+      workspacePickerOptions.addEventListener('click', event => {
+        const option = event.target.closest('.workspace-picker-option');
+        if (!option) return;
+        chooseWorkspace(option.dataset.workspaceKey || '');
+      });
       sizeRange.addEventListener('input', event => setIconsPerRow(event.target.value, false));
       sizePreset.addEventListener('click', () => {
         const current = Number(sizeRange.value);
@@ -3276,7 +3806,12 @@
       document.addEventListener('pointerdown', event => {
         const inSettings = settingsPanel.contains(event.target) || settingsToggle.contains(event.target);
         const inPreview = !sessionPreview.hidden && sessionPreview.contains(event.target);
+        const inWorkspacePicker = workspacePicker.contains(event.target);
         const onExpandButton = !!event.target.closest('.card-expand-btn');
+
+        if (!workspacePickerPopover.hidden && !inWorkspacePicker) {
+          closeWorkspacePicker();
+        }
 
         if (!settingsPanel.hidden && !inSettings) {
           settingsPanel.hidden = true;
@@ -3335,6 +3870,7 @@
       window.addEventListener('resize', () => {
         captureExpandedSize();
         if (!sessionPreview.hidden) positionSessionPreview();
+        if (!workspacePickerPopover.hidden) updateWorkspacePickerGeometry();
         requestAnimationFrame(syncCompactRail);
         requestAnimationFrame(syncWaitingAlertLayout);
       });

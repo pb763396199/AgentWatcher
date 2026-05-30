@@ -46,6 +46,11 @@ struct AgentSession {
     title: String,
     workspace: String,
     workspace_path: Option<String>,
+    workspace_key: String,
+    workspace_name: String,
+    workspace_label: String,
+    workspace_group: String,
+    workspace_discriminator: String,
     session_path: Option<String>,
     session_resource: Option<String>,
     status: String,
@@ -733,6 +738,15 @@ fn read_copilot_session(
     let status = status_from_activity(updated_ms, scan_time_ms, activity_source, status_hint);
     let title = title.unwrap_or_else(|| fallback_session_title("Copilot", &workspace_info.display_name, &session_id));
     let session_resource = copilot_session_resource(&session_id);
+    let session_path_text = path_to_string(session_path);
+    let workspace_identity = build_workspace_identity(
+        "copilot",
+        &session_id,
+        &workspace_info.display_name,
+        workspace_info.path_text.as_deref(),
+        Some(&session_path_text),
+        Some(&session_resource),
+    );
 
     Some(AgentSession {
         id: format!("copilot:{}", session_id),
@@ -741,7 +755,12 @@ fn read_copilot_session(
         title,
         workspace: workspace_info.display_name.clone(),
         workspace_path: workspace_info.path_text.clone(),
-        session_path: Some(path_to_string(session_path)),
+        workspace_key: workspace_identity.key,
+        workspace_name: workspace_identity.name,
+        workspace_label: workspace_identity.label,
+        workspace_group: workspace_identity.group,
+        workspace_discriminator: workspace_identity.discriminator,
+        session_path: Some(session_path_text),
         session_resource: Some(session_resource),
         status,
         time_label: time_label(updated_ms, scan_time_ms),
@@ -851,6 +870,7 @@ fn read_claude_jsonl_session(
     }
 
     let status = status_from_activity(updated_ms, scan_time_ms, activity_source, status_hint);
+    let workspace_path = workspace_path.filter(|path_text| !path_text.trim().is_empty());
     let workspace = workspace_path
         .as_deref()
         .map(Path::new)
@@ -858,6 +878,16 @@ fn read_claude_jsonl_session(
         .or_else(|| session_path.parent().and_then(display_name_from_path))
         .unwrap_or_else(|| "Claude".to_string());
     let title = title.unwrap_or_else(|| fallback_session_title("Claude", &workspace, &session_id));
+    let session_path_text = path_to_string(session_path);
+    let session_resource = provider_session_resource("claude-code", &session_id);
+    let workspace_identity = build_workspace_identity(
+        "claude",
+        &session_id,
+        &workspace,
+        workspace_path.as_deref(),
+        Some(&session_path_text),
+        Some(&session_resource),
+    );
 
     Some(AgentSession {
         id: format!("claude:{}", session_id),
@@ -865,9 +895,14 @@ fn read_claude_jsonl_session(
         provider_label: "C".to_string(),
         title,
         workspace,
-        workspace_path: workspace_path.filter(|path_text| !path_text.trim().is_empty()),
-        session_path: Some(path_to_string(session_path)),
-        session_resource: Some(provider_session_resource("claude-code", &session_id)),
+        workspace_path,
+        workspace_key: workspace_identity.key,
+        workspace_name: workspace_identity.name,
+        workspace_label: workspace_identity.label,
+        workspace_group: workspace_identity.group,
+        workspace_discriminator: workspace_identity.discriminator,
+        session_path: Some(session_path_text),
+        session_resource: Some(session_resource),
         status,
         time_label: time_label(updated_ms, scan_time_ms),
         updated_ms,
@@ -2141,6 +2176,8 @@ fn read_claude_entry(
     }
 
     let status = status_from_activity(updated_ms, scan_time_ms, ActivitySource::FileModified, None);
+    let workspace_path = workspace_path.filter(|path_text| !path_text.trim().is_empty());
+    let session_path = session_path.filter(|path_text| !path_text.trim().is_empty());
     let workspace = workspace_path
         .as_deref()
         .map(Path::new)
@@ -2161,6 +2198,15 @@ fn read_claude_entry(
         .filter(|branch_text| !branch_text.trim().is_empty())
         .map(|branch_text| clean_label(branch_text, 48));
     let first_prompt_preview = apply_user_preview_budget(first_prompt);
+    let session_resource = provider_session_resource("claude-code", &session_id);
+    let workspace_identity = build_workspace_identity(
+        "claude",
+        &session_id,
+        &workspace,
+        workspace_path.as_deref(),
+        session_path.as_deref(),
+        Some(&session_resource),
+    );
 
     Some(AgentSession {
         id: format!("claude:{}", session_id),
@@ -2168,9 +2214,14 @@ fn read_claude_entry(
         provider_label: "C".to_string(),
         title,
         workspace,
-        workspace_path: workspace_path.filter(|path_text| !path_text.trim().is_empty()),
-        session_path: session_path.filter(|path_text| !path_text.trim().is_empty()),
-        session_resource: Some(provider_session_resource("claude-code", &session_id)),
+        workspace_path,
+        workspace_key: workspace_identity.key,
+        workspace_name: workspace_identity.name,
+        workspace_label: workspace_identity.label,
+        workspace_group: workspace_identity.group,
+        workspace_discriminator: workspace_identity.discriminator,
+        session_path,
+        session_resource: Some(session_resource),
         status,
         time_label: time_label(updated_ms, scan_time_ms),
         updated_ms,
@@ -2183,11 +2234,254 @@ fn read_claude_entry(
         branch,
     })
 }
+#[derive(Debug, Clone)]
+struct WorkspaceIdentity {
+    key: String,
+    name: String,
+    label: String,
+    group: String,
+    discriminator: String,
+}
+
 
 #[derive(Debug, Clone)]
 struct WorkspaceInfo {
     display_name: String,
     path_text: Option<String>,
+}
+
+fn build_workspace_identity(
+    provider: &str,
+    session_id: &str,
+    workspace_name_hint: &str,
+    workspace_path: Option<&str>,
+    session_path: Option<&str>,
+    session_resource: Option<&str>,
+) -> WorkspaceIdentity {
+    let segments = workspace_path.map(workspace_path_segments).unwrap_or_default();
+    let name = workspace_path
+        .and_then(|path_text| path_segments_basename(&workspace_path_segments(path_text)))
+        .filter(|path_name| !path_name.trim().is_empty())
+        .unwrap_or_else(|| clean_workspace_name(workspace_name_hint));
+    let (label, group, discriminator) = workspace_label_parts(&name, &segments);
+    let key = workspace_path
+        .and_then(normalized_workspace_path_key)
+        .unwrap_or_else(|| fallback_workspace_key(provider, session_id, session_path, session_resource, &label));
+
+    WorkspaceIdentity {
+        key,
+        name,
+        label,
+        group,
+        discriminator,
+    }
+}
+
+fn workspace_label_parts(name: &str, segments: &[String]) -> (String, String, String) {
+    if let Some((branch, plugin_name)) = uga_workspace_parts(segments) {
+        let display_name = plugin_name.unwrap_or_else(|| name.to_string());
+        return (
+            label_with_discriminator(&display_name, &branch),
+            "UGA".to_string(),
+            branch,
+        );
+    }
+
+    if let Some(plugin_name) = neon_plugin_name(segments) {
+        let discriminator = "neon/Plugins".to_string();
+        return (
+            label_with_discriminator(&plugin_name, &discriminator),
+            "neon".to_string(),
+            discriminator,
+        );
+    }
+
+    let parent = nearest_meaningful_parent(segments);
+    let discriminator = parent.unwrap_or_else(|| "Unknown".to_string());
+    let label = if discriminator == "Unknown" {
+        name.to_string()
+    } else {
+        label_with_discriminator(name, &discriminator)
+    };
+    let group = semantic_workspace_group(segments).unwrap_or_else(|| discriminator.clone());
+
+    (label, group, discriminator)
+}
+
+fn uga_workspace_parts(segments: &[String]) -> Option<(String, Option<String>)> {
+    for (index, segment) in segments.iter().enumerate() {
+        if !segment.eq_ignore_ascii_case("UGA") {
+            continue;
+        }
+
+        let branch = segments.get(index + 1)?;
+        let plugins_segment = segments.get(index + 2)?;
+        if !plugins_segment.eq_ignore_ascii_case("Plugins") || !looks_like_uga_branch(branch) {
+            continue;
+        }
+
+        let plugin_name = segments
+            .get(index + 3)
+            .filter(|plugin_segment| !plugin_segment.trim().is_empty())
+            .cloned();
+        return Some((branch.clone(), plugin_name));
+    }
+
+    None
+}
+
+fn neon_plugin_name(segments: &[String]) -> Option<String> {
+    for (index, segment) in segments.iter().enumerate() {
+        if !segment.eq_ignore_ascii_case("neon") {
+            continue;
+        }
+
+        let plugins_segment = segments.get(index + 1)?;
+        if !plugins_segment.eq_ignore_ascii_case("Plugins") {
+            continue;
+        }
+
+        return segments
+            .get(index + 2)
+            .filter(|plugin_segment| !plugin_segment.trim().is_empty())
+            .cloned();
+    }
+
+    None
+}
+
+fn looks_like_uga_branch(branch: &str) -> bool {
+    let upper_branch = branch.to_ascii_uppercase();
+    upper_branch == "DEV"
+        || upper_branch
+            .strip_prefix("DEV_")
+            .map(|suffix| suffix.chars().all(|branch_char| branch_char.is_ascii_digit() || branch_char == '_'))
+            .unwrap_or(false)
+}
+
+fn workspace_path_segments(path_text: &str) -> Vec<String> {
+    path_text
+        .trim()
+        .replace('\\', "/")
+        .split('/')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty() && !is_windows_drive_segment(segment))
+        .map(str::to_string)
+        .collect()
+}
+
+fn path_segments_basename(segments: &[String]) -> Option<String> {
+    segments
+        .last()
+        .filter(|segment| !segment.trim().is_empty())
+        .cloned()
+}
+
+fn nearest_meaningful_parent(segments: &[String]) -> Option<String> {
+    if segments.len() < 2 {
+        return None;
+    }
+
+    segments[..segments.len() - 1]
+        .iter()
+        .rev()
+        .find(|segment| !is_generic_workspace_name(segment))
+        .cloned()
+}
+
+fn semantic_workspace_group(segments: &[String]) -> Option<String> {
+    for segment in segments.iter().rev() {
+        if segment.eq_ignore_ascii_case("UGA") {
+            return Some("UGA".to_string());
+        }
+        if segment.eq_ignore_ascii_case("neon") {
+            return Some("neon".to_string());
+        }
+        if segment.eq_ignore_ascii_case("AiProject") {
+            return Some("AiProject".to_string());
+        }
+        if segment.eq_ignore_ascii_case("Research") {
+            return Some("Research".to_string());
+        }
+    }
+
+    None
+}
+
+fn is_generic_workspace_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "plugins" | "source" | "private" | "public" | "content"
+    )
+}
+
+fn is_windows_drive_segment(segment: &str) -> bool {
+    let bytes = segment.as_bytes();
+    bytes.len() == 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic()
+}
+
+fn clean_workspace_name(name: &str) -> String {
+    let cleaned_name = clean_label(name, 80);
+    if cleaned_name.is_empty() {
+        "Unknown".to_string()
+    } else {
+        cleaned_name
+    }
+}
+
+fn label_with_discriminator(name: &str, discriminator: &str) -> String {
+    if discriminator.trim().is_empty() {
+        name.to_string()
+    } else {
+        format!("{} \u{00b7} {}", name, discriminator)
+    }
+}
+
+fn normalized_workspace_path_key(path_text: &str) -> Option<String> {
+    let mut normalized_path = path_text.trim().replace('\\', "/");
+    if normalized_path.is_empty() {
+        return None;
+    }
+
+    if normalized_path.len() > 2
+        && normalized_path.starts_with('/')
+        && normalized_path.as_bytes().get(2).copied() == Some(b':')
+    {
+        normalized_path.remove(0);
+    }
+
+    let mut segments = Vec::new();
+    for segment in normalized_path.split('/') {
+        match segment.trim() {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            clean_segment => segments.push(clean_segment.to_string()),
+        }
+    }
+
+    if segments.is_empty() {
+        return None;
+    }
+
+    Some(format!("path:{}", segments.join("/").to_ascii_lowercase()))
+}
+
+fn fallback_workspace_key(
+    provider: &str,
+    session_id: &str,
+    session_path: Option<&str>,
+    session_resource: Option<&str>,
+    workspace_label: &str,
+) -> String {
+    let source = session_path
+        .or(session_resource)
+        .unwrap_or(workspace_label)
+        .trim()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    format!("fallback:{}:{}:{}", provider, session_id, source)
 }
 
 fn read_workspace_info(workspace_json_path: &Path) -> WorkspaceInfo {
@@ -3786,6 +4080,54 @@ mod tests {
         assert_eq!(latest_activity_ms(Some(100), 200), (200, ActivitySource::FileModified));
         assert_eq!(latest_activity_ms(Some(300), 200), (300, ActivitySource::ContentTimestamp));
         assert_eq!(latest_activity_ms(None, 200), (200, ActivitySource::FileModified));
+    }
+
+    #[test]
+    fn workspace_identity_disambiguates_uga_plugin_branch() {
+        let identity = build_workspace_identity(
+            "copilot",
+            "session-1",
+            "AesWorld",
+            Some(r"F:\ShanghaiP4\neon\UGA\DEV_2\Plugins\AesWorld"),
+            None,
+            None,
+        );
+
+        assert_eq!(identity.key, "path:f:/shanghaip4/neon/uga/dev_2/plugins/aesworld");
+        assert_eq!(identity.name, "AesWorld");
+        assert_eq!(identity.label, "AesWorld · DEV_2");
+        assert_eq!(identity.group, "UGA");
+        assert_eq!(identity.discriminator, "DEV_2");
+    }
+
+    #[test]
+    fn workspace_identity_disambiguates_generic_plugin_root() {
+        let identity = build_workspace_identity(
+            "copilot",
+            "session-2",
+            "Plugins",
+            Some(r"F:\ShanghaiP4\neon\UGA\DEV_2\Plugins"),
+            None,
+            None,
+        );
+
+        assert_eq!(identity.key, "path:f:/shanghaip4/neon/uga/dev_2/plugins");
+        assert_eq!(identity.name, "Plugins");
+        assert_eq!(identity.label, "Plugins · DEV_2");
+        assert_eq!(identity.group, "UGA");
+        assert_eq!(identity.discriminator, "DEV_2");
+    }
+
+    #[test]
+    fn workspace_path_key_normalizes_trailing_and_duplicate_separators() {
+        assert_eq!(
+            normalized_workspace_path_key(r"F:\ShanghaiP4\neon\UGA\DEV_2\Plugins\AesWorld\\"),
+            Some("path:f:/shanghaip4/neon/uga/dev_2/plugins/aesworld".to_string())
+        );
+        assert_eq!(
+            normalized_workspace_path_key("/F:/ShanghaiP4//neon/UGA/./DEV_2/Plugins/AesWorld"),
+            Some("path:f:/shanghaip4/neon/uga/dev_2/plugins/aesworld".to_string())
+        );
     }
 
     #[test]
