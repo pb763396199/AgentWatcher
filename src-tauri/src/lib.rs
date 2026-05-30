@@ -6,11 +6,12 @@ use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
-use tauri::Manager;
+use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use tauri::{Emitter, Manager};
 
 const DEFAULT_MAX_ACTIVE_SESSIONS: usize = 80;
 const DEFAULT_ACTIVE_SESSION_DAYS: u64 = 7;
@@ -19,13 +20,16 @@ const CLAUDE_TITLE_SAMPLE_LINES: usize = 240;
 const JSONL_HEAD_SAMPLE_BYTES: usize = 128 * 1024;
 const JSONL_TAIL_SAMPLE_BYTES: usize = 256 * 1024;
 const COPILOT_PROMPT_SCAN_BYTES: usize = 16 * 1024 * 1024;
+const COPILOT_TRANSCRIPT_SCAN_BYTES: usize = 2 * 1024 * 1024;
 const CLAUDE_PROMPT_SCAN_BYTES: usize = 8 * 1024 * 1024;
 const STATUS_RUNNING_HINT_WINDOW_MS: u64 = 2 * 60 * 60_000;
 const STATUS_RECENT_CONTENT_WINDOW_MS: u64 = 10 * 60_000;
 const STATUS_RECENT_FILE_WINDOW_MS: u64 = 3 * 60_000;
+const COPILOT_UNSTARTED_ASK_WAITING_WINDOW_MS: u64 = 24 * 60 * 60_000;
 const SESSION_PREVIEW_SOURCE_MAX_CHARS: usize = 64 * 1024;
 const USER_PREVIEW_MAX_CHARS: usize = 400;
 const AI_PREVIEW_MAX_CHARS: usize = 800;
+const SESSIONS_CHANGED_EVENT: &str = "agentwatcher-sessions-changed";
 const BRIDGE_EXTENSION_FOLDER_PREFIX: &str = "agentwatcher.agentwatcher-bridge-";
 const BRIDGE_EXTENSION_URI_AUTHORITY: &str = "agentwatcher.agentwatcher-bridge";
 const RUNTIME_ICON_SIZE: u32 = 256;
@@ -135,6 +139,15 @@ struct CopilotSessionSummary {
     archived: bool,
 }
 
+#[derive(Debug, Clone, Default)]
+struct CopilotTranscriptOverlay {
+    status_hint: Option<SessionStatusHint>,
+    latest_timestamp_ms: Option<u64>,
+    unstarted_ask_timestamp_ms: Option<u64>,
+    last_user_message: Option<String>,
+    last_ai_message: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 struct ClaudeSessionSummary {
     title: Option<String>,
@@ -153,8 +166,109 @@ struct ClaudeSessionSummary {
 
 static COPILOT_SESSION_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlSummary<CopilotSessionSummary>>>> =
     OnceLock::new();
+static COPILOT_TRANSCRIPT_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlSummary<CopilotTranscriptOverlay>>>> =
+    OnceLock::new();
 static CLAUDE_SESSION_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlSummary<ClaudeSessionSummary>>>> =
     OnceLock::new();
+
+fn start_session_file_watcher(app_handle: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let watch_roots = session_watch_roots();
+        if watch_roots.is_empty() {
+            return;
+        }
+
+        let (event_sender, event_receiver) = mpsc::channel();
+        let mut watcher = match RecommendedWatcher::new(
+            move |result| {
+                let _ = event_sender.send(result);
+            },
+            Config::default(),
+        ) {
+            Ok(watcher) => watcher,
+            Err(_) => return,
+        };
+
+        for root in watch_roots {
+            let _ = watcher.watch(&root, RecursiveMode::Recursive);
+        }
+
+        let mut pending_emit = false;
+        let mut last_emit_ms = 0;
+        loop {
+            match event_receiver.recv_timeout(Duration::from_millis(250)) {
+                Ok(Ok(event)) if is_session_file_event(&event) => {
+                    let now_ms = current_time_ms();
+                    if now_ms.saturating_sub(last_emit_ms) >= 250 {
+                        emit_sessions_changed(&app_handle, now_ms);
+                        last_emit_ms = now_ms;
+                        pending_emit = false;
+                    } else {
+                        pending_emit = true;
+                    }
+                }
+                Ok(_) => {}
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if pending_emit {
+                        let now_ms = current_time_ms();
+                        emit_sessions_changed(&app_handle, now_ms);
+                        last_emit_ms = now_ms;
+                        pending_emit = false;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+    });
+}
+
+fn session_watch_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(appdata_path) = env::var_os("APPDATA") {
+        let appdata_path = PathBuf::from(appdata_path);
+        for product_folder in ["Code", "Code - Insiders"] {
+            push_existing_path(
+                &mut roots,
+                appdata_path
+                    .join(product_folder)
+                    .join("User")
+                    .join("workspaceStorage"),
+            );
+        }
+    }
+    if let Some(user_profile_path) = env::var_os("USERPROFILE") {
+        push_existing_path(
+            &mut roots,
+            PathBuf::from(user_profile_path).join(".claude").join("projects"),
+        );
+    }
+    roots
+}
+
+fn push_existing_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if path.exists() && !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
+}
+
+fn is_session_file_event(event: &Event) -> bool {
+    if matches!(event.kind, EventKind::Access(_)) {
+        return false;
+    }
+
+    event.paths.iter().any(|path| {
+        has_extension(path, "jsonl")
+            || path
+                .file_name()
+                .and_then(|file_name| file_name.to_str())
+                .map(|file_name| file_name.eq_ignore_ascii_case("sessions-index.json"))
+                .unwrap_or(false)
+    })
+}
+
+fn emit_sessions_changed(app_handle: &tauri::AppHandle, emitted_ms: u64) {
+    let _ = app_handle.emit(SESSIONS_CHANGED_EVENT, emitted_ms);
+}
 
 #[tauri::command]
 fn get_bridge_status() -> BridgeStatus {
@@ -524,29 +638,34 @@ fn scan_copilot_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Ve
         .join("User")
         .join("workspaceStorage");
 
-    read_directory(&storage_root)
-        .into_iter()
-        .filter_map(|storage_entry| {
-            let storage_path = storage_entry.path();
-            if !storage_path.is_dir() {
-                return None;
+    let mut candidates: Vec<(PathBuf, WorkspaceInfo, u64)> = Vec::new();
+    for storage_entry in read_directory(&storage_root) {
+        let storage_path = storage_entry.path();
+        if !storage_path.is_dir() {
+            continue;
+        }
+
+        let workspace_info = read_workspace_info(&storage_path.join("workspace.json"));
+        let chat_sessions_path = storage_path.join("chatSessions");
+        for session_entry in read_directory(&chat_sessions_path) {
+            let session_path = session_entry.path();
+            if !has_extension(&session_path, "jsonl") {
+                continue;
             }
+            let modified_ms = dir_entry_modified_ms(&session_entry);
+            if !is_active_session(fallback_updated_ms_from_modified(modified_ms, scan_time_ms), scan_time_ms, options) {
+                continue;
+            }
+            candidates.push((session_path, workspace_info.clone(), modified_ms));
+        }
+    }
 
-            let workspace_info = read_workspace_info(&storage_path.join("workspace.json"));
-            Some((storage_path, workspace_info))
-        })
-        .flat_map(|(storage_path, workspace_info)| {
-            let chat_sessions_path = storage_path.join("chatSessions");
-            read_directory(&chat_sessions_path)
-                .into_iter()
-                .filter_map(move |session_entry| {
-                    let session_path = session_entry.path();
-                    if !has_extension(&session_path, "jsonl") {
-                        return None;
-                    }
-
-                    read_copilot_session(&session_path, &workspace_info, scan_time_ms, options)
-                })
+    candidates.sort_by(|left, right| right.2.cmp(&left.2));
+    candidates
+        .into_iter()
+        .take(candidate_scan_limit(options))
+        .filter_map(|(session_path, workspace_info, _)| {
+            read_copilot_session(&session_path, &workspace_info, scan_time_ms, options)
         })
         .collect()
 }
@@ -567,23 +686,46 @@ fn read_copilot_session(
     let CopilotSessionSummary {
         session_id,
         title,
-        status_hint,
-        latest_timestamp_ms,
+        mut status_hint,
+        mut latest_timestamp_ms,
         message_count,
-        last_user_message,
-        last_user_message_truncated,
-        last_ai_message,
-        last_ai_message_truncated,
-        last_ai_message_excerpt_kind,
+        mut last_user_message,
+        mut last_user_message_truncated,
+        mut last_ai_message,
+        mut last_ai_message_truncated,
+        mut last_ai_message_excerpt_kind,
         archived,
     } = summary;
     if options.hide_archived && archived {
         return None;
     }
 
-    let (updated_ms, activity_source) = latest_timestamp_ms
-        .map(|timestamp_ms| (timestamp_ms, ActivitySource::ContentTimestamp))
-        .unwrap_or((fallback_updated_ms, ActivitySource::FileModified));
+    if let Some(overlay) = read_copilot_transcript_overlay(session_path) {
+        latest_timestamp_ms = newest_timestamp_ms(latest_timestamp_ms, overlay.latest_timestamp_ms);
+        let overlay_status_hint = if overlay.status_hint == Some(SessionStatusHint::Waiting)
+            || copilot_unstarted_ask_is_recent(&overlay, scan_time_ms)
+        {
+            Some(SessionStatusHint::Waiting)
+        } else {
+            overlay.status_hint
+        };
+        if overlay_status_hint.is_some() {
+            status_hint = overlay_status_hint;
+        }
+        if overlay.last_user_message.is_some() {
+            let (message, truncated) = apply_user_preview_budget(overlay.last_user_message);
+            last_user_message = message;
+            last_user_message_truncated = truncated;
+        }
+        if overlay.last_ai_message.is_some() {
+            let (message, truncated, excerpt_kind) = apply_ai_preview_budget(overlay.last_ai_message);
+            last_ai_message = message;
+            last_ai_message_truncated = truncated;
+            last_ai_message_excerpt_kind = excerpt_kind;
+        }
+    }
+
+    let (updated_ms, activity_source) = latest_activity_ms(latest_timestamp_ms, fallback_updated_ms);
     if !is_active_session(updated_ms, scan_time_ms, options) {
         return None;
     }
@@ -621,48 +763,51 @@ fn scan_claude_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec
 
     let projects_root = PathBuf::from(user_profile_path).join(".claude").join("projects");
 
-    read_directory(&projects_root)
-        .into_iter()
-        .flat_map(|project_entry| read_claude_project(&project_entry.path(), scan_time_ms, options))
-        .collect()
-}
-
-fn read_claude_project(
-    project_path: &Path,
-    scan_time_ms: u64,
-    options: &ResolvedScanOptions,
-) -> Vec<AgentSession> {
-    if !project_path.is_dir() {
-        return Vec::new();
+    let mut project_paths = Vec::new();
+    let mut candidates: Vec<(PathBuf, u64)> = Vec::new();
+    for project_entry in read_directory(&projects_root) {
+        let project_path = project_entry.path();
+        if !project_path.is_dir() {
+            continue;
+        }
+        project_paths.push(project_path.clone());
+        for session_entry in read_directory(&project_path) {
+            let session_path = session_entry.path();
+            if !has_extension(&session_path, "jsonl") {
+                continue;
+            }
+            let modified_ms = dir_entry_modified_ms(&session_entry);
+            if !is_active_session(fallback_updated_ms_from_modified(modified_ms, scan_time_ms), scan_time_ms, options) {
+                continue;
+            }
+            candidates.push((session_path, modified_ms));
+        }
     }
 
-    let mut sessions: Vec<AgentSession> = read_directory(project_path)
+    candidates.sort_by(|left, right| right.1.cmp(&left.1));
+    let mut sessions: Vec<AgentSession> = candidates
         .into_iter()
-        .filter_map(|session_entry| {
-            let session_path = session_entry.path();
-            if has_extension(&session_path, "jsonl") {
-                read_claude_jsonl_session(&session_path, scan_time_ms, options)
-            } else {
-                None
-            }
-        })
+        .take(candidate_scan_limit(options))
+        .filter_map(|(session_path, _)| read_claude_jsonl_session(&session_path, scan_time_ms, options))
         .collect();
 
     let mut known_session_paths: HashSet<String> = sessions
         .iter()
         .filter_map(|session| session.session_path.clone())
         .collect();
-    for indexed_session in read_claude_index(&project_path.join("sessions-index.json"), scan_time_ms, options) {
-        let is_known = indexed_session
-            .session_path
-            .as_ref()
-            .map(|session_path| known_session_paths.contains(session_path))
-            .unwrap_or(false);
-        if !is_known {
-            if let Some(session_path) = indexed_session.session_path.clone() {
-                known_session_paths.insert(session_path);
+    for project_path in project_paths {
+        for indexed_session in read_claude_index(&project_path.join("sessions-index.json"), scan_time_ms, options) {
+            let is_known = indexed_session
+                .session_path
+                .as_ref()
+                .map(|session_path| known_session_paths.contains(session_path))
+                .unwrap_or(false);
+            if !is_known {
+                if let Some(session_path) = indexed_session.session_path.clone() {
+                    known_session_paths.insert(session_path);
+                }
+                sessions.push(indexed_session);
             }
-            sessions.push(indexed_session);
         }
     }
 
@@ -700,9 +845,7 @@ fn read_claude_jsonl_session(
         return None;
     }
 
-    let (updated_ms, activity_source) = latest_timestamp_ms
-        .map(|timestamp_ms| (timestamp_ms, ActivitySource::ContentTimestamp))
-        .unwrap_or((fallback_updated_ms, ActivitySource::FileModified));
+    let (updated_ms, activity_source) = latest_activity_ms(latest_timestamp_ms, fallback_updated_ms);
     if !is_active_session(updated_ms, scan_time_ms, options) {
         return None;
     }
@@ -1007,6 +1150,150 @@ fn read_latest_copilot_ai_message(session_path: &Path, file_len: u64) -> Option<
     None
 }
 
+fn read_copilot_transcript_overlay(session_path: &Path) -> Option<CopilotTranscriptOverlay> {
+    let transcript_path = copilot_transcript_path(session_path)?;
+    let fingerprint = jsonl_fingerprint(&transcript_path)?;
+    let path_key = path_to_string(&transcript_path);
+    if let Some(overlay) = cached_jsonl_summary(&COPILOT_TRANSCRIPT_CACHE, &path_key, &fingerprint) {
+        return Some(overlay);
+    }
+    let text = read_file_suffix_text(&transcript_path, fingerprint.len, COPILOT_TRANSCRIPT_SCAN_BYTES)?;
+    let overlay = copilot_transcript_overlay_from_text(&text)?;
+    store_jsonl_summary(&COPILOT_TRANSCRIPT_CACHE, path_key, &fingerprint, overlay.clone());
+    Some(overlay)
+}
+
+fn copilot_unstarted_ask_is_recent(overlay: &CopilotTranscriptOverlay, scan_time_ms: u64) -> bool {
+    overlay
+        .unstarted_ask_timestamp_ms
+        .map(|timestamp_ms| scan_time_ms.saturating_sub(timestamp_ms) <= COPILOT_UNSTARTED_ASK_WAITING_WINDOW_MS)
+        .unwrap_or(false)
+}
+
+fn copilot_transcript_path(session_path: &Path) -> Option<PathBuf> {
+    let session_id = file_stem(session_path)?;
+    let storage_path = session_path.parent()?.parent()?;
+    Some(
+        storage_path
+            .join("GitHub.copilot-chat")
+            .join("transcripts")
+            .join(format!("{}.jsonl", session_id)),
+    )
+}
+
+fn copilot_transcript_overlay_from_text(text: &str) -> Option<CopilotTranscriptOverlay> {
+    let mut overlay = CopilotTranscriptOverlay::default();
+    let mut started_ask_tool_ids: HashSet<String> = HashSet::new();
+    let mut unstarted_ask_tool_ids: HashSet<String> = HashSet::new();
+    let mut unstarted_ask_timestamp_ms: Option<u64> = None;
+    let mut saw_activity = false;
+
+    for line_text in text.lines() {
+        let Some(json_value) = json_value_from_jsonl_line(line_text) else { continue; };
+        overlay.latest_timestamp_ms = newest_timestamp_ms(overlay.latest_timestamp_ms, timestamp_ms_from_json(&json_value));
+
+        match string_at(&json_value, &["/type"]) {
+            Some("user.message") => {
+                started_ask_tool_ids.clear();
+                unstarted_ask_tool_ids.clear();
+                unstarted_ask_timestamp_ms = None;
+                if let Some(content) = string_at(&json_value, &["/data/content"]).and_then(clean_preview_text) {
+                    overlay.last_user_message = Some(content);
+                    saw_activity = true;
+                }
+            }
+            Some("assistant.message") => {
+                started_ask_tool_ids.clear();
+                unstarted_ask_tool_ids.clear();
+                unstarted_ask_timestamp_ms = None;
+                let mut parts = Vec::new();
+                if let Some(content) = string_at(&json_value, &["/data/content"]).and_then(clean_preview_text) {
+                    parts.push(content);
+                }
+                if collect_copilot_transcript_ask_requests(
+                    json_value.pointer("/data/toolRequests"),
+                    &mut unstarted_ask_tool_ids,
+                    &mut parts,
+                ) {
+                    unstarted_ask_timestamp_ms = timestamp_ms_from_json(&json_value);
+                }
+                if let Some(message) = clean_preview_text(&parts.join("\n")) {
+                    overlay.last_ai_message = Some(message);
+                    saw_activity = true;
+                }
+            }
+            Some("tool.execution_start") => {
+                if copilot_transcript_tool_name(&json_value) == Some("vscode_askQuestions") {
+                    if let Some(tool_call_id) = string_at(&json_value, &["/data/toolCallId"]) {
+                        unstarted_ask_tool_ids.remove(tool_call_id);
+                        started_ask_tool_ids.insert(tool_call_id.to_string());
+                    }
+                    if let Some(message) = question_tool_preview_text(json_value.pointer("/data/arguments").unwrap_or(&json_value)) {
+                        overlay.last_ai_message = Some(message);
+                    }
+                }
+                saw_activity = true;
+            }
+            Some("tool.execution_complete") => {
+                if let Some(tool_call_id) = string_at(&json_value, &["/data/toolCallId"]) {
+                    started_ask_tool_ids.remove(tool_call_id);
+                    unstarted_ask_tool_ids.remove(tool_call_id);
+                }
+                saw_activity = true;
+            }
+            Some("assistant.message_delta") | Some("assistant.turn_end") | Some("assistant.turn_start") => {
+                saw_activity = true;
+            }
+            _ => {}
+        }
+    }
+
+    overlay.status_hint = if started_ask_tool_ids.is_empty() {
+        saw_activity.then_some(SessionStatusHint::Running)
+    } else {
+        Some(SessionStatusHint::Waiting)
+    };
+    if !unstarted_ask_tool_ids.is_empty() {
+        overlay.unstarted_ask_timestamp_ms = unstarted_ask_timestamp_ms;
+    }
+
+    if overlay.latest_timestamp_ms.is_some()
+        || overlay.last_user_message.is_some()
+        || overlay.last_ai_message.is_some()
+        || overlay.status_hint.is_some()
+    {
+        Some(overlay)
+    } else {
+        None
+    }
+}
+
+fn collect_copilot_transcript_ask_requests(
+    tool_requests: Option<&Value>,
+    unstarted_ask_tool_ids: &mut HashSet<String>,
+    parts: &mut Vec<String>,
+) -> bool {
+    let Some(tool_requests) = tool_requests.and_then(Value::as_array) else { return false; };
+    let mut found_ask_request = false;
+    for request in tool_requests {
+        if string_at(request, &["/name"]) != Some("vscode_askQuestions") {
+            continue;
+        }
+        found_ask_request = true;
+        if let Some(tool_call_id) = string_at(request, &["/toolCallId"]) {
+            unstarted_ask_tool_ids.insert(tool_call_id.to_string());
+        }
+        if let Some(message) = question_tool_preview_text(request.pointer("/arguments").unwrap_or(request)) {
+            parts.push(message);
+        }
+    }
+    found_ask_request
+}
+
+fn copilot_transcript_tool_name(json_value: &Value) -> Option<&str> {
+    string_at(json_value, &["/data/toolName"])
+}
+
 fn read_latest_claude_user_message(session_path: &Path, file_len: u64) -> Option<String> {
     let text = read_file_suffix_text(session_path, file_len, CLAUDE_PROMPT_SCAN_BYTES)?;
     let mut last_prompt_fallback: Option<String> = None;
@@ -1098,10 +1385,36 @@ fn jsonl_fingerprint(session_path: &Path) -> Option<JsonlFingerprint> {
 }
 
 fn fallback_updated_ms(fingerprint: &JsonlFingerprint, scan_time_ms: u64) -> u64 {
-    if fingerprint.modified_ms == 0 {
+    fallback_updated_ms_from_modified(fingerprint.modified_ms, scan_time_ms)
+}
+
+fn fallback_updated_ms_from_modified(modified_ms: u64, scan_time_ms: u64) -> u64 {
+    if modified_ms == 0 {
         scan_time_ms
     } else {
-        fingerprint.modified_ms
+        modified_ms
+    }
+}
+
+fn dir_entry_modified_ms(entry: &fs::DirEntry) -> u64 {
+    entry
+        .metadata()
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(system_time_ms)
+        .unwrap_or(0)
+}
+
+fn candidate_scan_limit(options: &ResolvedScanOptions) -> usize {
+    options.max_sessions.saturating_mul(4).max(options.max_sessions + 20).max(120)
+}
+
+fn latest_activity_ms(latest_timestamp_ms: Option<u64>, fallback_updated_ms: u64) -> (u64, ActivitySource) {
+    match latest_timestamp_ms {
+        Some(timestamp_ms) if timestamp_ms >= fallback_updated_ms => {
+            (timestamp_ms, ActivitySource::ContentTimestamp)
+        }
+        _ => (fallback_updated_ms, ActivitySource::FileModified),
     }
 }
 
@@ -3348,6 +3661,100 @@ mod tests {
     }
 
     #[test]
+    fn copilot_transcript_ask_questions_marks_waiting_preview() {
+        let transcript = r#"
+{"type":"user.message","data":{"content":"Please continue."},"timestamp":"2026-05-30T03:51:00.000Z"}
+{"type":"tool.execution_start","data":{"toolCallId":"ask-1","toolName":"vscode_askQuestions","arguments":{"questions":[{"header":"Reminder test","question":"Did the card appear quickly?","options":[{"label":"Yes"},{"label":"No"}]}]}},"timestamp":"2026-05-30T03:51:01.000Z"}
+"#;
+
+        let overlay = copilot_transcript_overlay_from_text(transcript).unwrap();
+
+        assert_eq!(overlay.status_hint, Some(SessionStatusHint::Waiting));
+        assert!(overlay.last_user_message.unwrap().contains("Please continue."));
+        let ai_message = overlay.last_ai_message.unwrap();
+        assert!(ai_message.contains("Reminder test"));
+        assert!(ai_message.contains("Did the card appear quickly?"));
+        assert!(ai_message.contains("Options: Yes; No"));
+    }
+
+    #[test]
+    fn copilot_transcript_completed_ask_questions_is_not_waiting() {
+        let transcript = r#"
+{"type":"assistant.message","data":{"content":"Please choose.","toolRequests":[{"toolCallId":"ask-1","name":"vscode_askQuestions","arguments":{"questions":[{"header":"Reminder test","question":"Did the card appear quickly?","options":[{"label":"Yes"},{"label":"No"}]}]}}]},"timestamp":"2026-05-30T03:51:00.000Z"}
+{"type":"tool.execution_start","data":{"toolCallId":"ask-1","toolName":"vscode_askQuestions","arguments":{"questions":[{"header":"Reminder test","question":"Did the card appear quickly?"}]}},"timestamp":"2026-05-30T03:51:01.000Z"}
+{"type":"tool.execution_complete","data":{"toolCallId":"ask-1","success":true},"timestamp":"2026-05-30T03:51:02.000Z"}
+"#;
+
+        let overlay = copilot_transcript_overlay_from_text(transcript).unwrap();
+
+        assert_eq!(overlay.status_hint, Some(SessionStatusHint::Running));
+        assert!(overlay.last_ai_message.unwrap().contains("Reminder test"));
+    }
+
+    #[test]
+    fn copilot_transcript_assistant_tool_request_without_execution_start_is_not_waiting() {
+        let transcript = r#"
+{"type":"assistant.message","data":{"content":"Please choose.","toolRequests":[{"toolCallId":"ask-1","name":"vscode_askQuestions","arguments":{"questions":[{"header":"New question","question":"This should appear before execution_start."}]}}]},"timestamp":"2026-05-30T03:51:00.000Z"}
+{"type":"assistant.turn_end","data":{"turnId":"175"},"timestamp":"2026-05-30T03:51:00.000Z"}
+{"type":"assistant.turn_start","data":{"turnId":"176"},"timestamp":"2026-05-30T03:51:00.000Z"}
+"#;
+
+        let overlay = copilot_transcript_overlay_from_text(transcript).unwrap();
+
+        assert_eq!(overlay.status_hint, Some(SessionStatusHint::Running));
+        assert_eq!(overlay.unstarted_ask_timestamp_ms, Some(1780113060000));
+        assert!(copilot_unstarted_ask_is_recent(
+            &overlay,
+            1780113060000 + COPILOT_UNSTARTED_ASK_WAITING_WINDOW_MS - 1
+        ));
+        assert!(!copilot_unstarted_ask_is_recent(
+            &overlay,
+            1780113060000 + COPILOT_UNSTARTED_ASK_WAITING_WINDOW_MS + 1
+        ));
+        assert!(overlay.last_ai_message.unwrap().contains("New question"));
+    }
+
+    #[test]
+    fn copilot_transcript_assistant_tool_request_waits_after_execution_start() {
+        let transcript = r#"
+{"type":"assistant.message","data":{"content":"Please choose.","toolRequests":[{"toolCallId":"ask-1","name":"vscode_askQuestions","arguments":{"questions":[{"header":"New question","question":"This should wait after execution_start."}]}}]},"timestamp":"2026-05-30T03:51:00.000Z"}
+{"type":"tool.execution_start","data":{"toolCallId":"ask-1","toolName":"vscode_askQuestions","arguments":{"questions":[{"header":"New question","question":"This should wait after execution_start."}]}}}
+"#;
+
+        let overlay = copilot_transcript_overlay_from_text(transcript).unwrap();
+
+        assert_eq!(overlay.status_hint, Some(SessionStatusHint::Waiting));
+        assert_eq!(overlay.unstarted_ask_timestamp_ms, None);
+        assert!(overlay.last_ai_message.unwrap().contains("New question"));
+    }
+
+    #[test]
+    fn copilot_transcript_later_user_message_clears_stale_question() {
+        let transcript = r#"
+{"type":"assistant.message","data":{"content":"Please choose.","toolRequests":[{"toolCallId":"ask-1","name":"vscode_askQuestions","arguments":{"questions":[{"header":"Old question","question":"This was skipped earlier."}]}}]},"timestamp":"2026-05-30T03:51:00.000Z"}
+{"type":"user.message","data":{"content":"Continue after skipping."},"timestamp":"2026-05-30T03:52:00.000Z"}
+"#;
+
+        let overlay = copilot_transcript_overlay_from_text(transcript).unwrap();
+
+        assert_eq!(overlay.status_hint, Some(SessionStatusHint::Running));
+        assert_eq!(overlay.last_user_message.as_deref(), Some("Continue after skipping."));
+    }
+
+    #[test]
+    fn copilot_transcript_later_assistant_message_clears_stale_question() {
+        let transcript = r#"
+{"type":"assistant.message","data":{"content":"Please choose.","toolRequests":[{"toolCallId":"ask-1","name":"vscode_askQuestions","arguments":{"questions":[{"header":"Old question","question":"This was skipped earlier."}]}}]},"timestamp":"2026-05-30T03:51:00.000Z"}
+{"type":"assistant.message","data":{"content":"Continuing after that choice."},"timestamp":"2026-05-30T03:52:00.000Z"}
+"#;
+
+        let overlay = copilot_transcript_overlay_from_text(transcript).unwrap();
+
+        assert_eq!(overlay.status_hint, Some(SessionStatusHint::Running));
+        assert_eq!(overlay.last_ai_message.as_deref(), Some("Continuing after that choice."));
+    }
+
+    #[test]
     fn claude_ask_user_question_tool_is_part_of_ai_preview() {
         let event = json!({
             "type": "assistant",
@@ -3372,6 +3779,13 @@ mod tests {
         assert!(preview.contains("I need confirmation before continuing."));
         assert!(preview.contains("Should I restart AgentWatcher now?"));
         assert!(preview.contains("Options: Restart; Wait"));
+    }
+
+    #[test]
+    fn latest_activity_uses_file_modified_when_content_timestamp_lags() {
+        assert_eq!(latest_activity_ms(Some(100), 200), (200, ActivitySource::FileModified));
+        assert_eq!(latest_activity_ms(Some(300), 200), (300, ActivitySource::ContentTimestamp));
+        assert_eq!(latest_activity_ms(None, 200), (200, ActivitySource::FileModified));
     }
 
     #[test]
@@ -3423,6 +3837,7 @@ pub fn run() {
             }
 
             auto_install_bridge_on_startup();
+            start_session_file_watcher(app.handle().clone());
 
             Ok(())
         })

@@ -1836,6 +1836,9 @@
     let lastRefreshMs = 0;
     let lastSessionSignature = '';
     let refreshTimer = 0;
+    let eventRefreshTimer = 0;
+    let refreshInFlight = false;
+    let refreshQueued = false;
     const defaultSettings = {
       language: document.body.dataset.lang || 'en',
       theme: document.body.dataset.theme || 'dark',
@@ -1879,6 +1882,7 @@
     let waitingAlertBaselineReady = false;
     const waitingAlertItems = new Map();
     let browserMockWaitingAlertQueued = false;
+    let waitingAlertSyncFrame = 0;
 
     function t(key) {
       return i18n[currentLang][key];
@@ -1896,6 +1900,17 @@
 
     function normalizedSessionStatus(session) {
       return ['waiting', 'running', 'idle'].includes(session?.status) ? session.status : 'idle';
+    }
+
+    function waitingAlertSignature(session) {
+      const status = normalizedSessionStatus(session);
+      if (status !== 'waiting') return status;
+      return [
+        status,
+        session?.lastAiMessage || session?.title || '',
+        session?.workspace || '',
+        session?.provider || ''
+      ].join('|');
     }
 
     function waitingAlertPreset() {
@@ -1961,8 +1976,18 @@
       return stack.count ? stack.span + WAITING_ALERT_GAP : 0;
     }
 
-    function syncRailOnlySizeForWaitingAlerts() {
-      if (document.body.classList.contains('is-rail-only')) syncNativeWindowSize(true);
+    function syncNativeSizeForWaitingAlerts() {
+      return syncNativeWindowSize(document.body.classList.contains('is-rail-only'));
+    }
+
+    function scheduleWaitingAlertSync() {
+      if (waitingAlertSyncFrame) return;
+      waitingAlertSyncFrame = window.requestAnimationFrame(() => {
+        waitingAlertSyncFrame = 0;
+        syncNativeSizeForWaitingAlerts().finally(() => {
+          window.requestAnimationFrame(syncWaitingAlertLayout);
+        });
+      });
     }
 
     function sessionFromCard(card, fallbackId) {
@@ -1983,7 +2008,7 @@
       const nextSnapshot = new Map();
       collectSessionCards().forEach((card, index) => {
         if (!card.dataset.sessionId) card.dataset.sessionId = 'mock-card-' + index;
-        nextSnapshot.set(card.dataset.sessionId, cardStatus(card));
+        nextSnapshot.set(card.dataset.sessionId, waitingAlertSignature(sessionFromCard(card, card.dataset.sessionId)));
       });
       waitingSessionStatusSnapshot = nextSnapshot;
       waitingAlertBaselineReady = true;
@@ -1997,10 +2022,11 @@
         if (!session || !session.id) return;
         const sessionId = String(session.id);
         const nextStatus = normalizedSessionStatus(session);
-        const previousStatus = waitingSessionStatusSnapshot.get(sessionId);
-        nextSnapshot.set(sessionId, nextStatus);
+        const nextSignature = waitingAlertSignature({ ...session, id: sessionId, status: nextStatus });
+        const previousSignature = waitingSessionStatusSnapshot.get(sessionId);
+        nextSnapshot.set(sessionId, nextSignature);
 
-        if (waitingAlertBaselineReady && nextStatus === 'waiting' && previousStatus !== 'waiting') {
+        if (waitingAlertBaselineReady && nextStatus === 'waiting' && previousSignature !== nextSignature) {
           alerts.push({ ...session, id: sessionId, status: 'waiting' });
         }
       });
@@ -2020,16 +2046,14 @@
 
       if (immediate) {
         item.card.remove();
-        syncWaitingAlertLayout();
-        syncRailOnlySizeForWaitingAlerts();
+        scheduleWaitingAlertSync();
         return;
       }
 
       item.card.classList.add('is-dismissing');
       window.setTimeout(() => {
         item.card.remove();
-        syncWaitingAlertLayout();
-        syncRailOnlySizeForWaitingAlerts();
+        scheduleWaitingAlertSync();
       }, 150);
     }
 
@@ -2049,8 +2073,7 @@
 
       const timer = window.setTimeout(() => dismissWaitingAlert(alertId), waitingAlertDurationMs());
       waitingAlertItems.set(alertId, { card, timer, session });
-      syncWaitingAlertLayout();
-      syncRailOnlySizeForWaitingAlerts();
+      scheduleWaitingAlertSync();
     }
 
     function queueBrowserMockWaitingAlert() {
@@ -2171,7 +2194,7 @@
       setIconsPerRow(sizeRange.value, false);
       requestAnimationFrame(syncCompactRail);
       requestAnimationFrame(syncWaitingAlertLayout);
-      if (document.body.classList.contains('is-rail-only')) syncNativeWindowSize(true);
+      syncNativeSizeForWaitingAlerts();
       if (options.reschedule) scheduleSessionRefresh();
       if (options.refresh !== false) refreshSessions(true);
       if (options.announce) showToast(t('settingsSaved'));
@@ -2298,21 +2321,23 @@
         : { width: 68 + WAITING_ALERT_GAP + stack.span, height: Math.max(200, 16 + stack.size) };
     }
 
-    function desiredNativeWaitingAlertOffset(compact) {
-      if (!compact) return { x: 0, y: 0 };
+    function desiredNativeWaitingAlertOffset() {
       const offset = waitingAlertOuterOffset();
       return isHorizontalLayout() ? { x: 0, y: offset } : { x: offset, y: 0 };
     }
 
     function captureExpandedSize() {
       if (document.body.classList.contains('is-rail-only')) return;
-      expandedSize = { width: window.innerWidth, height: window.innerHeight };
+      expandedSize = {
+        width: Math.max(EXPANDED_MIN_WIDTH, window.innerWidth - nativeWaitingAlertOffset.x),
+        height: Math.max(EXPANDED_MIN_HEIGHT, window.innerHeight - nativeWaitingAlertOffset.y)
+      };
     }
 
     async function syncNativeWindowSize(compact) {
       if (!tauriWindow || !LogicalSizeClass) return;
       try {
-        const desiredOffset = desiredNativeWaitingAlertOffset(compact);
+        const desiredOffset = desiredNativeWaitingAlertOffset();
         const deltaX = desiredOffset.x - nativeWaitingAlertOffset.x;
         const deltaY = desiredOffset.y - nativeWaitingAlertOffset.y;
         if ((deltaX || deltaY) && tauriWindow.outerPosition && tauriWindow.setPosition && PhysicalPositionClass) {
@@ -2338,11 +2363,11 @@
           }
           await tauriWindow.setSize(new LogicalSizeClass(width, height));
         } else if (expandedSize) {
-          const width = Math.max(expandedSize.width, EXPANDED_MIN_WIDTH);
-          const height = Math.max(expandedSize.height, EXPANDED_MIN_HEIGHT);
+          const width = Math.max(expandedSize.width, EXPANDED_MIN_WIDTH) + desiredOffset.x;
+          const height = Math.max(expandedSize.height, EXPANDED_MIN_HEIGHT) + desiredOffset.y;
           await tauriWindow.setSize(new LogicalSizeClass(width, height));
           if (tauriWindow.setMinSize) {
-            await tauriWindow.setMinSize(new LogicalSizeClass(EXPANDED_MIN_WIDTH, EXPANDED_MIN_HEIGHT));
+            await tauriWindow.setMinSize(new LogicalSizeClass(EXPANDED_MIN_WIDTH + desiredOffset.x, EXPANDED_MIN_HEIGHT + desiredOffset.y));
           }
         }
       } catch (e) {
@@ -2357,7 +2382,7 @@
       compactRail.setAttribute('aria-expanded', enabled ? 'false' : 'true');
       railLogo.setAttribute('aria-expanded', enabled ? 'false' : 'true');
       railLogo.setAttribute('aria-pressed', enabled ? 'true' : 'false');
-      if (enabled) nativeWaitingAlertOffset = desiredNativeWaitingAlertOffset(true);
+      if (enabled) nativeWaitingAlertOffset = desiredNativeWaitingAlertOffset();
       requestAnimationFrame(syncCompactRail);
       await syncNativeWindowSize(enabled);
     }
@@ -3131,12 +3156,18 @@
 
     function buildSessionSignature(sessions) {
       return (Array.isArray(sessions) ? sessions : [])
-        .map(session => [session.id, session.status, session.updatedMs, session.timeLabel, session.title, session.lastUserMessage, session.lastAiMessage].join(':'))
+        .map(session => [session.id, session.status, session.updatedMs, session.title, session.lastUserMessage, session.lastAiMessage].join(':'))
         .join('|');
     }
 
     async function refreshSessions(silent) {
       if (!tauriInvoke) return;
+      if (refreshInFlight) {
+        refreshQueued = true;
+        return;
+      }
+
+      refreshInFlight = true;
 
       try {
         const sessions = await tauriInvoke('scan_sessions', { options: scanOptions() });
@@ -3152,6 +3183,12 @@
         waitingAlerts.forEach(showWaitingAlert);
       } catch (error) {
         if (!silent) showToast(String(error));
+      } finally {
+        refreshInFlight = false;
+        if (refreshQueued) {
+          refreshQueued = false;
+          refreshSessions(true);
+        }
       }
     }
 
@@ -3162,6 +3199,14 @@
 
       const refreshIntervalMs = clampNumber(settings.refreshIntervalSeconds, 1, 3600, defaultSettings.refreshIntervalSeconds) * 1000;
       refreshTimer = window.setInterval(() => refreshSessions(true), refreshIntervalMs);
+    }
+
+    function scheduleEventRefresh() {
+      if (!tauriInvoke || eventRefreshTimer) return;
+      eventRefreshTimer = window.setTimeout(() => {
+        eventRefreshTimer = 0;
+        refreshSessions(true);
+      }, 120);
     }
 
     if (isPreviewWindow) {
@@ -3185,6 +3230,7 @@
     } else {
       tauriListen?.('agentwatcher-preview-hover', cancelSessionPreviewHide).catch(() => {});
       tauriListen?.('agentwatcher-preview-close', () => { sessionPreviewDesiredVisible = false; }).catch(() => {});
+      tauriListen?.('agentwatcher-sessions-changed', scheduleEventRefresh).catch(() => {});
       tauriListen?.('agentwatcher-preview-ready', async () => {
         const existing = nativePreviewWindow || await WebviewWindowClass?.getByLabel('session-preview');
         if (existing) {
