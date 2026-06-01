@@ -1,6 +1,9 @@
 const vscode = require('vscode');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
-const BRIDGE_LOG_VERSION = '0.1.8-session-bridge';
+const BRIDGE_LOG_VERSION = '0.1.9-session-bridge';
 const DEFAULT_TARGET = 'editor';
 const COMMANDS_BY_TARGET = {
   editor: 'workbench.action.chat.openSessionInEditorGroup',
@@ -36,6 +39,23 @@ const COPILOT_HANDOFF_TARGETS = new Map([
 function activate(context) {
   const output = vscode.window.createOutputChannel('AgentWatcher Session Bridge');
   output.appendLine(`AgentWatcher Bridge ${BRIDGE_LOG_VERSION} activated`);
+
+  function writeHandoffAck(params, ok, message) {
+    const ackPath = params?.get('ackPath');
+    const token = params?.get('ackToken');
+    if (!ackPath || !token) return;
+
+    const root = path.resolve(os.tmpdir(), 'AgentWatcher') + path.sep;
+    const resolved = path.resolve(ackPath);
+    if (!resolved.startsWith(root)) {
+      output.appendLine(`Skipped handoff acknowledgement outside AgentWatcher temp root: ${resolved}`);
+      return;
+    }
+
+    fs.mkdirSync(path.dirname(resolved), { recursive: true });
+    fs.writeFileSync(resolved, JSON.stringify({ ok, token, message, at: new Date().toISOString() }), 'utf8');
+    output.appendLine(`Wrote handoff acknowledgement ok=${ok}`);
+  }
 
   async function openSession(resourceText, target = DEFAULT_TARGET) {
     if (!resourceText || typeof resourceText !== 'string') {
@@ -119,11 +139,13 @@ function activate(context) {
   context.subscriptions.push(
     vscode.window.registerUriHandler({
       async handleUri(uri) {
+        let params;
         try {
-          const params = new URLSearchParams(uri.query);
+          params = new URLSearchParams(uri.query);
           const route = (uri.path || '').replace(/^\/+/, '') || 'open';
           if (route === 'handoff') {
             await runHandoffCommand(params.get('command'), params.get('insertPrompt') !== '0');
+            writeHandoffAck(params, true, 'Handoff prompt inserted.');
             return;
           }
 
@@ -138,6 +160,12 @@ function activate(context) {
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           output.appendLine(`Failed: ${message}`);
+          try {
+            writeHandoffAck(params, false, message);
+          } catch (ackError) {
+            const ackMessage = ackError instanceof Error ? ackError.message : String(ackError);
+            output.appendLine(`Failed to write handoff acknowledgement: ${ackMessage}`);
+          }
           void vscode.window.showErrorMessage(`AgentWatcher failed to open session: ${message}`);
         }
       }
@@ -145,13 +173,13 @@ function activate(context) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('agentwatcherSessionBridgeSafe3.openSession', async (resourceText, target) => {
+    vscode.commands.registerCommand('agentwatcherSessionBridgeSafe4.openSession', async (resourceText, target) => {
       await openSession(resourceText, target || DEFAULT_TARGET);
     }),
-    vscode.commands.registerCommand('agentwatcherSessionBridgeSafe3.runCommand', async (command) => {
+    vscode.commands.registerCommand('agentwatcherSessionBridgeSafe4.runCommand', async (command) => {
       await runAllowedCommand(command);
     }),
-    vscode.commands.registerCommand('agentwatcherSessionBridgeSafe3.runHandoffCommand', async (command, insertPrompt) => {
+    vscode.commands.registerCommand('agentwatcherSessionBridgeSafe4.runHandoffCommand', async (command, insertPrompt) => {
       await runHandoffCommand(command, Boolean(insertPrompt));
     })
   );

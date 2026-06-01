@@ -7,7 +7,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::{mpsc, Mutex, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -30,8 +30,8 @@ const SESSION_PREVIEW_SOURCE_MAX_CHARS: usize = 64 * 1024;
 const USER_PREVIEW_MAX_CHARS: usize = 400;
 const AI_PREVIEW_MAX_CHARS: usize = 800;
 const SESSIONS_CHANGED_EVENT: &str = "agentwatcher-sessions-changed";
-const BRIDGE_EXTENSION_FOLDER_PREFIX: &str = "agentwatcher.agentwatcher-vscode-session-bridge-safe3-";
-const BRIDGE_EXTENSION_URI_AUTHORITY: &str = "agentwatcher.agentwatcher-vscode-session-bridge-safe3";
+const BRIDGE_EXTENSION_FOLDER_PREFIX: &str = "agentwatcher.agentwatcher-vscode-session-bridge-safe4-";
+const BRIDGE_EXTENSION_URI_AUTHORITY: &str = "agentwatcher.agentwatcher-vscode-session-bridge-safe4";
 const RUNTIME_ICON_SIZE: u32 = 256;
 const RUNTIME_ICON_RGBA: &[u8] = include_bytes!("../icons/icon-runtime-256.rgba");
 #[cfg(target_os = "windows")]
@@ -79,6 +79,14 @@ struct OpenSessionRequest {
 struct HandoffLaunchRequest {
     mode: String,
     workspace_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HandoffAck {
+    ok: bool,
+    token: Option<String>,
+    message: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -419,7 +427,13 @@ fn open_session(session: OpenSessionRequest) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn launch_handoff(request: HandoffLaunchRequest) -> Result<(), String> {
+async fn launch_handoff(request: HandoffLaunchRequest) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || launch_handoff_blocking(request))
+        .await
+        .map_err(|error| format!("Failed to wait for handoff launch task: {}", error))?
+}
+
+fn launch_handoff_blocking(request: HandoffLaunchRequest) -> Result<(), String> {
     let mode = clean_option(Some(request.mode.as_str()))
         .ok_or_else(|| "Missing handoff launch mode".to_string())?;
     let workspace_path = clean_option(request.workspace_path.as_deref())
@@ -496,19 +510,72 @@ fn open_vscode_command_in_workspace(
     insert_prompt: bool,
 ) -> Result<(), String> {
     ensure_bridge_command_route_available()?;
+    let ack_target = if insert_prompt {
+        Some(create_handoff_ack_target()?)
+    } else {
+        None
+    };
     open_workspace_in_new_window(workspace_path)?;
 
     let command_link = if insert_prompt {
-        bridge_handoff_link(command)
+        let (ack_path, ack_token) = ack_target
+            .as_ref()
+            .ok_or_else(|| "Missing handoff acknowledgement target".to_string())?;
+        bridge_handoff_link(command, Some(ack_path.as_path()), Some(ack_token.as_str()))
     } else {
         bridge_command_link(command)
     };
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(1600));
-        let _ = open_vscode_deep_link(&command_link);
-    });
+
+    std::thread::sleep(Duration::from_millis(1600));
+    open_vscode_deep_link(&command_link)?;
+
+    if let Some((ack_path, ack_token)) = ack_target {
+        wait_for_handoff_ack(&ack_path, &ack_token)?;
+    }
 
     Ok(())
+}
+
+fn create_handoff_ack_target() -> Result<(PathBuf, String), String> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("System clock error: {}", error))?
+        .as_millis();
+    let token = format!("{}-{}", std::process::id(), now);
+    let dir = env::temp_dir().join("AgentWatcher").join("handoff-acks");
+    fs::create_dir_all(&dir).map_err(|error| format!("Failed to prepare handoff ack directory: {}", error))?;
+    Ok((dir.join(format!("{}.json", token)), token))
+}
+
+fn wait_for_handoff_ack(ack_path: &Path, token: &str) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(20);
+
+    while Instant::now() < deadline {
+        if ack_path.exists() {
+            let text = fs::read_to_string(ack_path)
+                .map_err(|error| format!("Failed to read handoff acknowledgement: {}", error))?;
+            let ack: HandoffAck = serde_json::from_str(&text)
+                .map_err(|error| format!("Invalid handoff acknowledgement: {}", error))?;
+
+            if ack.token.as_deref() != Some(token) {
+                return Err("Handoff acknowledgement token mismatch".to_string());
+            }
+
+            let _ = fs::remove_file(ack_path);
+            if ack.ok {
+                return Ok(());
+            }
+
+            return Err(ack
+                .message
+                .filter(|message| !message.trim().is_empty())
+                .unwrap_or_else(|| "VS Code Bridge reported handoff failure".to_string()));
+        }
+
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    Err("VS Code Bridge did not confirm handoff prompt insertion before timeout".to_string())
 }
 
 fn ensure_bridge_command_route_available() -> Result<(), String> {
@@ -582,12 +649,24 @@ fn bridge_command_link(command: &str) -> String {
     )
 }
 
-fn bridge_handoff_link(command: &str) -> String {
-    format!(
+fn bridge_handoff_link(command: &str, ack_path: Option<&Path>, ack_token: Option<&str>) -> String {
+    let mut link = format!(
         "vscode://{}/handoff?command={}&insertPrompt=1",
         BRIDGE_EXTENSION_URI_AUTHORITY,
         percent_encode_query_component(command)
-    )
+    );
+
+    if let Some(ack_path) = ack_path {
+        link.push_str("&ackPath=");
+        link.push_str(&percent_encode_query_component(&path_to_cli_string(ack_path)));
+    }
+
+    if let Some(ack_token) = ack_token {
+        link.push_str("&ackToken=");
+        link.push_str(&percent_encode_query_component(ack_token));
+    }
+
+    link
 }
 
 fn request_session_resource(session: &OpenSessionRequest) -> Option<String> {

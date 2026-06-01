@@ -3557,6 +3557,7 @@
         return;
       }
 
+      handoffLaunch.disabled = true;
       try {
         await tauriInvoke('launch_handoff', {
           request: {
@@ -3566,8 +3567,11 @@
           }
         });
         showToast(t('handoffLaunched'));
+        await closeHandoffPanel();
       } catch (error) {
         showToast(String(error));
+      } finally {
+        handoffLaunch.disabled = false;
       }
     }
 
