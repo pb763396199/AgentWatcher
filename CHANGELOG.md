@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.1.2 - 2026-06-01
+
+- 新增 full-path workspace grouping：同名 workspace 使用完整路径区分，减少跨目录 session 混淆。
+- 新增卡片右键接续能力，可从当前 session 发起跨 provider handoff。
+- Bridge authority / extension ID 固定为 `agentwatcher.agentwatcher-vscode-session-bridge-safe4`，并通过 ack 文件确认 handoff 成功或失败。
+- 新增 Copilot、Copilot CLI、Claude 目标路由，handoff 可按目标 provider 打开新会话并插入 prompt。
+- `launch_handoff` 改为后台执行，等待 Bridge ack 时不阻塞主 UI。
+- 修正子窗口设置同步：language/theme/layout/always-on-top 会同步到 `session-preview` 和 `handoff-panel`。
+- 发布打包脚本会清理旧 release zip / 解压目录，清理 Bridge 输出目录旧 VSIX，并生成当前版本 Windows zip。
+- 明确 clipboard bridge 真实口径：当前 prompt 插入仍依赖 clipboard，非剪贴板通道列入 Future。
+
+发布包：`AgentWatcher-v0.1.2-windows-x64.zip`
+
+SHA256：`34A8698ADA2922E965CC3C1D4FD9B035C76C916F46E328167BE4E8BB9F56B0FE`
+
+验证：`git diff --check`、`node --check scripts/package-exe.mjs`、`node --check vscode-agentwatcher-bridge/extension.js`、`npm run build:ui`、`cargo check --manifest-path src-tauri/Cargo.toml`、`npm run package:exe`、zip 内容检查。
+
 ## v0.1.1 - 2026-05-29
 
 - 新增设置面板 always-on-top 开关，并统一以 [ui/index.html](ui/index.html) 作为唯一 UI 源。

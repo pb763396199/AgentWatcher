@@ -19,9 +19,10 @@
 - [x] 实现无边框 / 透明 / always-on-top 窗口配置。
 - [x] 用 Tauri window API 接管真实窗口拖动和 resize。
 - [ ] 实现窗口位置记忆。
+- [ ] 实现主窗口大小记忆。
 - [ ] 实现系统托盘图标和显示 / 隐藏入口。
 - [ ] 实现全局快捷键显隐窗口。
-- [x] 实现启动时恢复上次窗口大小、位置、主题、语言。
+- [x] 实现启动时恢复主题、语言、布局和扫描设置。
 
 ## Phase 2 - UI 组件落地
 
@@ -108,9 +109,32 @@
 
 ## 当前优先级
 
-1. 验证长时间运行时的扫描和 UI 刷新稳定性。
-2. 补充窗口位置记忆、托盘入口和全局快捷键。
-3. 继续收敛 Session Preview 的真实 Tauri 交互体验。
+1. 完成 v0.1.2 发布前验证清单，优先确认 Bridge 安装/重装、session 跳转、handoff ack、i18n/theme 子窗口同步和 zip/SHA256 更新。
+2. 验证长时间运行时的扫描和 UI 刷新稳定性。
+3. 补充窗口位置记忆、托盘入口和全局快捷键。
+4. 继续收敛 Session Preview 和 Handoff Panel 的真实 Tauri 交互体验。
+
+## v0.1.2 发布验证清单
+
+- [ ] 从发布目录启动 `AgentWatcher.exe`，确认不依赖源码目录。
+- [ ] 未安装 Bridge 时自动安装成功；旧版本 Bridge 时可更新；失败时 UI 有可操作提示。
+- [ ] 手动重装 `agentwatcher.agentwatcher-vscode-session-bridge-safe4` 后，session 跳转仍可用。
+- [ ] 点击 Copilot / Claude session 卡片可打开目标 workspace/session；失败时显示错误。
+- [ ] 右键 session 卡片可 handoff 到 Copilot、Copilot CLI 和 Claude，并收到 Bridge ack 成功确认。
+- [ ] 中英切换、dark/light 切换同步到主窗口、Session Preview 和 Handoff Panel。
+- [ ] Session Preview 正文只通过运行时事件传递，不写入 localStorage 或项目目录临时文件。
+- [x] `npm run package:exe` 会清理旧 release zip / 解压目录，并重新生成 `AgentWatcher-v0.1.2-windows-x64.zip`。
+- [x] CHANGELOG 已更新 v0.1.2 发布包和 SHA256：`34A8698ADA2922E965CC3C1D4FD9B035C76C916F46E328167BE4E8BB9F56B0FE`。
+- [x] 发布包包含 `AgentWatcher.exe`、`vscode-agentwatcher-bridge/`、`agentwatcher-bridge-<version>.vsix`。
+- [ ] docs 是否进入 git 由用户在发布前确认，不作为当前实现默认假设。
+
+## Future / Post-v0.1.x
+
+- [ ] 设计 prompt 非剪贴板通道；本次 v0.1.2 不实现，也不作为发布阻断。
+- [ ] 评估 VS Code command arg、AgentWatcher runtime temp file + token、localhost bridge、named pipe 等方案。
+- [ ] 如果未来使用临时文件，禁止写入项目目录；只能写入 AgentWatcher 自身运行时临时目录或系统临时目录，例如 `%TEMP%\AgentWatcher\...`。
+- [ ] 为 prompt 临时文件方案补 token 防复用、TTL 过期删除、成功读取后删除、启动时清理陈旧文件。
+- [ ] 扩展发布验证到 VS Code Stable/Insiders、100%/125%/150% DPI、8 小时长时间运行。
 
 ## Phase 1b - Tauri 2 主应用壳
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execSync } from 'child_process';
-import { existsSync, mkdirSync, copyFileSync, readFileSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, copyFileSync, readFileSync, readdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -9,7 +9,38 @@ import { rcedit } from 'rcedit';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const rootDir = join(__dirname, '..');
+const artifactsDir = join(rootDir, 'artifacts');
 const requiredIconSizes = [16, 20, 24, 30, 32, 36, 40, 48, 60, 64, 72, 80, 96, 128, 256];
+
+function psSingleQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function cleanOldReleaseArtifacts() {
+  if (!existsSync(artifactsDir)) {
+    return;
+  }
+
+  const removedArtifacts = [];
+  const releaseZipPattern = /^AgentWatcher-v.+-windows-x64\.zip$/;
+  const releaseDirPattern = /^AgentWatcher-v.+-windows-x64$/;
+
+  for (const entry of readdirSync(artifactsDir, { withFileTypes: true })) {
+    const entryPath = join(artifactsDir, entry.name);
+    const isOldReleaseZip = entry.isFile() && releaseZipPattern.test(entry.name);
+    const isOldReleaseDir = entry.isDirectory() && releaseDirPattern.test(entry.name);
+
+    if (!isOldReleaseZip && !isOldReleaseDir) {
+      continue;
+    }
+
+    rmSync(entryPath, { recursive: isOldReleaseDir, force: true });
+    removedArtifacts.push(entry.name);
+  }
+
+  const summary = removedArtifacts.length > 0 ? removedArtifacts.join(', ') : 'none found';
+  console.log(`Cleaned old release artifacts: ${summary}`);
+}
 
 function readPeIconResources(exePath) {
   const buffer = readFileSync(exePath);
@@ -171,7 +202,7 @@ try {
   }
 
   // Create output directory
-  const outputDir = join(rootDir, 'artifacts', 'AgentWatcher');
+  const outputDir = join(artifactsDir, 'AgentWatcher');
   if (!existsSync(outputDir)) {
     mkdirSync(outputDir, { recursive: true });
   }
@@ -194,9 +225,8 @@ try {
   const bridgeOutputDir = join(outputDir, 'vscode-agentwatcher-bridge');
 
   if (existsSync(bridgeSourceDir)) {
-    if (!existsSync(bridgeOutputDir)) {
-      mkdirSync(bridgeOutputDir, { recursive: true });
-    }
+    rmSync(bridgeOutputDir, { recursive: true, force: true });
+    mkdirSync(bridgeOutputDir, { recursive: true });
 
     // Copy essential bridge files
     const bridgeFiles = ['extension.js', 'package.json', 'README.md'];
@@ -219,8 +249,21 @@ try {
     console.log(`Copied bridge extension to ${bridgeOutputDir}`);
   }
 
+  cleanOldReleaseArtifacts();
+
+  const rootPackage = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf8'));
+  const appVersion = String(rootPackage.version || '0.0.0').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const releaseZip = join(artifactsDir, `AgentWatcher-v${appVersion}-windows-x64.zip`);
+  rmSync(releaseZip, { force: true });
+  execSync(
+    `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path ${psSingleQuote(join(outputDir, '*'))} -DestinationPath ${psSingleQuote(releaseZip)} -Force"`,
+    { cwd: rootDir, stdio: 'inherit' }
+  );
+  console.log(`Wrote release zip to ${releaseZip}`);
+
   console.log('\nPackaging complete.');
   console.log(`Output: ${outputDir}`);
+  console.log(`Zip: ${releaseZip}`);
   console.log(`   - AgentWatcher.exe`);
   console.log(`   - vscode-agentwatcher-bridge/`);
   console.log(`   - vscode-agentwatcher-bridge/*.vsix`);

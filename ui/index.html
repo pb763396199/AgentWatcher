@@ -2528,9 +2528,7 @@
     const HANDOFF_WINDOW_MIN_HEIGHT = 360;
     const HANDOFF_WINDOW_DEFAULT_SIZE = { width: 760, height: 620 };
     let sessionPreviewSize = loadSessionPreviewSize();
-    document.body.dataset.lang = settings.language;
-    document.body.dataset.theme = settings.theme;
-    document.body.dataset.layout = settings.layout;
+    applyDocumentSettings();
     let toastTimer = 0;
     let waitingSessionStatusSnapshot = new Map();
     let waitingAlertBaselineReady = false;
@@ -2542,6 +2540,12 @@
 
     function t(key) {
       return i18n[currentLang][key];
+    }
+
+    function fallbackText(text, key) {
+      const value = String(text || '');
+      const fallbackValues = Object.values(i18n).map(dictionary => dictionary[key]);
+      return !value || fallbackValues.includes(value) ? t(key) : value;
     }
 
     function clampNumber(value, min, max, fallback) {
@@ -2933,6 +2937,51 @@
       localStorage.setItem('agentwatcher.settings', JSON.stringify(settings));
     }
 
+    function htmlLang(language) {
+      return language === 'zh' ? 'zh-CN' : 'en';
+    }
+
+    function applyDocumentSettings() {
+      root.lang = htmlLang(settings.language);
+      document.body.dataset.lang = settings.language;
+      document.body.dataset.theme = settings.theme;
+      document.body.dataset.layout = settings.layout;
+    }
+
+    function runtimeSettingsPayload() {
+      return {
+        version: 1,
+        updatedAt: Date.now(),
+        language: settings.language,
+        theme: settings.theme,
+        layout: settings.layout,
+        alwaysOnTop: !!settings.alwaysOnTop
+      };
+    }
+
+    function emitRuntimeSettings(targetLabel) {
+      const payload = runtimeSettingsPayload();
+      const targets = targetLabel ? [targetLabel] : ['session-preview', 'handoff-panel'];
+      targets.forEach(label => tauriEmitTo?.(label, 'agentwatcher-settings-data', payload).catch(() => {}));
+      return payload;
+    }
+
+    function applyRuntimeSettings(payload) {
+      if (!payload) return;
+      settings = {
+        ...settings,
+        language: ['en', 'zh'].includes(payload.language) ? payload.language : settings.language,
+        theme: ['dark', 'light'].includes(payload.theme) ? payload.theme : settings.theme,
+        layout: ['horizontal', 'vertical'].includes(payload.layout) ? payload.layout : settings.layout,
+        alwaysOnTop: typeof payload.alwaysOnTop === 'boolean' ? payload.alwaysOnTop : settings.alwaysOnTop
+      };
+      applySettingsControls();
+      applyAlwaysOnTopSetting();
+      applyLanguage();
+      if (isPreviewWindow && latestSessionPreviewData) updatePreviewWindowContent(latestSessionPreviewData);
+      if (isHandoffWindow) updateHandoffPrompt();
+    }
+
     function loadSessionPreviewSize() {
       try {
         const savedSize = JSON.parse(localStorage.getItem(SESSION_PREVIEW_SIZE_KEY) || '{}');
@@ -2993,9 +3042,7 @@
 
     function applySettingsControls() {
       currentLang = settings.language;
-      document.body.dataset.lang = settings.language;
-      document.body.dataset.theme = settings.theme;
-      document.body.dataset.layout = settings.layout;
+      applyDocumentSettings();
       settingLangButtons.forEach(button => button.classList.toggle('is-active', button.dataset.settingLang === settings.language));
       settingThemeButtons.forEach(button => button.classList.toggle('is-active', button.dataset.settingTheme === settings.theme));
       settingLayoutButtons.forEach(button => button.classList.toggle('is-active', button.dataset.settingLayout === settings.layout));
@@ -3024,6 +3071,7 @@
       saveSettings();
       applySettingsControls();
       applyLanguage();
+      emitRuntimeSettings();
       setIconsPerRow(sizeRange.value, false);
       requestAnimationFrame(syncCompactRail);
       requestAnimationFrame(syncWaitingAlertLayout);
@@ -3428,6 +3476,7 @@
           nativeHandoffWindow = existing;
           await existing.setSize(new LogicalSizeClass(HANDOFF_WINDOW_DEFAULT_SIZE.width, HANDOFF_WINDOW_DEFAULT_SIZE.height)).catch(() => {});
           await existing.setPosition(new LogicalPositionClass(position.x, position.y)).catch(() => {});
+          emitRuntimeSettings('handoff-panel');
           await tauriEmitTo?.('handoff-panel', 'agentwatcher-handoff-data', payload).catch(() => {});
           await existing.show().catch(() => {});
           await existing.setFocus().catch(() => {});
@@ -3690,6 +3739,7 @@
     }
 
     function applyLanguage() {
+      root.lang = htmlLang(currentLang);
       document.body.dataset.lang = currentLang;
       urgentChip.textContent = waitingChipText();
       workspaceLabel.textContent = t('workspace');
@@ -4560,6 +4610,7 @@
           nativePreviewWindow = existing;
           await existing.setSize(new LogicalSizeClass(sessionPreviewSize.width, sessionPreviewSize.height)).catch(() => {});
           await existing.setPosition(new LogicalPositionClass(position.x, position.y)).catch(() => {});
+          emitRuntimeSettings('session-preview');
           if (latestSessionPreviewData) {
             await tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', latestSessionPreviewData).catch(() => {});
           }
@@ -4621,7 +4672,16 @@
 
     function updatePreviewWindowContent(data) {
       if (!data) return;
-      renderSessionPreview(data);
+      const statusClass = data.statusClass || 'idle';
+      const localizedData = {
+        ...data,
+        statusClass,
+        statusText: statusText(statusClass),
+        lastUser: fallbackText(data.lastUser, 'noUserMessage'),
+        lastAi: fallbackText(data.lastAi, 'noAiMessage')
+      };
+      latestSessionPreviewData = localizedData;
+      renderSessionPreview(localizedData);
       sessionPreview.hidden = false;
       sessionPreview.style.left = '0px';
       sessionPreview.style.top = '0px';
@@ -4642,6 +4702,7 @@
         lastAiExcerptKind: null
       });
 
+      tauriListen?.('agentwatcher-settings-data', event => applyRuntimeSettings(event.payload)).catch(() => {});
       tauriListen?.('agentwatcher-preview-data', event => updatePreviewWindowContent(event.payload)).catch(() => {});
       tauriEmitTo?.('main', 'agentwatcher-preview-ready', {}).catch(() => {});
     }
@@ -4662,6 +4723,7 @@
         launchMode: 'agents',
         handoffId: makeHandoffId()
       });
+      tauriListen?.('agentwatcher-settings-data', event => applyRuntimeSettings(event.payload)).catch(() => {});
       tauriListen?.('agentwatcher-handoff-data', event => applyHandoffPayload(event.payload)).catch(() => {});
       tauriEmitTo?.('main', 'agentwatcher-handoff-ready', {}).catch(() => {});
       requestAnimationFrame(() => handoffTask.focus());
@@ -4968,6 +5030,7 @@
         const existing = nativePreviewWindow || await WebviewWindowClass?.getByLabel('session-preview');
         if (existing) {
           nativePreviewWindow = existing;
+          emitRuntimeSettings('session-preview');
           if (latestSessionPreviewData) {
             await tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', latestSessionPreviewData).catch(() => {});
           }
@@ -4982,6 +5045,7 @@
         const existing = nativeHandoffWindow || await WebviewWindowClass?.getByLabel('handoff-panel');
         if (existing) {
           nativeHandoffWindow = existing;
+          emitRuntimeSettings('handoff-panel');
           if (latestHandoffPayload) {
             await tauriEmitTo?.('handoff-panel', 'agentwatcher-handoff-data', latestHandoffPayload).catch(() => {});
           }
