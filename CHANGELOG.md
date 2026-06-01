@@ -4,7 +4,12 @@
 
 - 新增 full-path workspace grouping：同名 workspace 使用完整路径区分，减少跨目录 session 混淆。
 - 新增卡片右键接续能力，可从当前 session 发起跨 provider handoff。
-- Bridge authority / extension ID 固定为 `agentwatcher.agentwatcher-vscode-session-bridge-safe4`，并通过 ack 文件确认 handoff 成功或失败。
+- 热修替换现有 v0.1.2 release asset，不新增 app/release 版本号，避免用户看到新增版本。
+- 修复 Bridge 唯一扩展身份：唯一支持 ID 固定为 `agentwatcher.agentwatcher-vscode-session-bridge`。
+- Bridge VSIX package name 稳定为 `agentwatcher-vscode-session-bridge`，Bridge 自身版本保持 `0.1.10`。
+- Bridge command namespace 稳定为 `agentwatcherSessionBridge.*`。
+- Bridge install/update 会在安装稳定 VSIX 前 best-effort 清理历史 `safe1` / `safe2` / `safe3` / `safe4` 扩展。
+- Bridge 安装后会校验稳定 ID 已安装且 legacy 临时 ID 不再残留，避免重复生成新的临时扩展身份。
 - 新增 Copilot、Copilot CLI、Claude 目标路由，handoff 可按目标 provider 打开新会话并插入 prompt。
 - `launch_handoff` 改为后台执行，等待 Bridge ack 时不阻塞主 UI。
 - 修正子窗口设置同步：language/theme/layout/always-on-top 会同步到 `session-preview` 和 `handoff-panel`。
@@ -13,9 +18,9 @@
 
 发布包：`AgentWatcher-v0.1.2-windows-x64.zip`
 
-SHA256：`34A8698ADA2922E965CC3C1D4FD9B035C76C916F46E328167BE4E8BB9F56B0FE`
+SHA256：`866522276A933B1C57E173AAF5B6CAB6727463AC98CB1A34ABE1297A25DAB1BB`
 
-验证：`git diff --check`、`node --check scripts/package-exe.mjs`、`node --check vscode-agentwatcher-bridge/extension.js`、`npm run build:ui`、`cargo check --manifest-path src-tauri/Cargo.toml`、`npm run package:exe`、zip 内容检查。
+验证：`cargo test --manifest-path src-tauri\Cargo.toml`、`node --check vscode-agentwatcher-bridge\extension.js`、`node .tmp\bridge-handoff-routing-test.cjs`、`git diff --check`、`npm run package:exe`、zip/manifest/SHA256 检查、重复安装最终 VSIX 后只保留稳定 Bridge ID。
 
 ## v0.1.1 - 2026-05-29
 

@@ -103,7 +103,7 @@ npm run dev:ui
 
 AgentWatcher 使用自带的 VS Code bridge extension 实现精确 session 跳转。
 
-当前 Bridge 扩展 ID：`agentwatcher.agentwatcher-vscode-session-bridge-safe4`。旧的 `safe1` / `safe2` / `safe3` 包名只属于历史测试版本，不再作为当前发布路径使用。
+当前 Bridge 扩展 ID：`agentwatcher.agentwatcher-vscode-session-bridge`。这是唯一支持的稳定 ID；`safe1` / `safe2` / `safe3` / `safe4` 只属于历史临时测试 ID，install/update 必须清理这些 legacy 残留。
 
 Bridge 同时负责 session 跳转和 handoff 路由。handoff 目标覆盖 Copilot、Copilot CLI 和 Claude；执行完成后，Bridge 会写入 AgentWatcher 临时目录下的 ack 文件，让主应用确认成功或显示失败原因。
 
@@ -113,10 +113,13 @@ Bridge 同时负责 session 跳转和 handoff 路由。handoff 目标覆盖 Copi
 - **自动安装条件**：
   - Bridge extension 未安装
   - 或本地版本比已安装版本更新
+  - 或检测到历史 `safe1` / `safe2` / `safe3` / `safe4` Bridge 残留，需要清理
 - **安装过程**：
+  - 安装稳定 VSIX 前，先通过 VS Code CLI best-effort 卸载历史临时扩展 ID
   - 优先安装随 `artifacts/AgentWatcher/` 一起发布的 `agentwatcher-bridge-<version>.vsix`
   - 开发目录中没有 VSIX 时，才回退到 `npx @vscode/vsce` 现场打包
   - 自动安装：调用 VS Code CLI `code --install-extension <vsix> --force`
+  - 安装后校验稳定 ID 已安装，且历史临时 ID 不再残留；如果仍有残留，会返回明确错误，避免假成功
   - 不阻塞 UI：安装在后台线程进行，不影响主界面使用
 - **VS Code CLI 查找顺序**：
   1. PATH 环境变量中的 `code` / `code.cmd` / `code.exe`
@@ -139,9 +142,10 @@ Bridge 同时负责 session 跳转和 handoff 路由。handoff 目标覆盖 Copi
 ### Bridge 版本管理
 
 - **本地版本**：读取 `vscode-agentwatcher-bridge/package.json` 中的 `version` 字段
-- **已安装版本**：从 VS Code extensions 目录读取：
-  - `%USERPROFILE%\.vscode\extensions\agentwatcher.agentwatcher-vscode-session-bridge-safe4-*\package.json`
-  - `%USERPROFILE%\.vscode-insiders\extensions\agentwatcher.agentwatcher-vscode-session-bridge-safe4-*\package.json`
+- **已安装版本**：优先通过 `code --list-extensions --show-versions` 检查稳定 ID；CLI 不可用时，从 VS Code extensions 目录读取：
+  - `%USERPROFILE%\.vscode\extensions\agentwatcher.agentwatcher-vscode-session-bridge-*\package.json`
+  - `%USERPROFILE%\.vscode-insiders\extensions\agentwatcher.agentwatcher-vscode-session-bridge-*\package.json`
+- **历史版本清理**：legacy `safe1` / `safe2` / `safe3` / `safe4` 只用于检测清理需求，不会让 AgentWatcher 判断 Bridge 路由可用。
 
 ### 手动安装或重装
 
@@ -160,11 +164,11 @@ code --install-extension .\artifacts\AgentWatcher\vscode-agentwatcher-bridge\age
 需要强制重装时，先卸载当前 Bridge，再重新安装随包 VSIX：
 
 ```powershell
-code --uninstall-extension agentwatcher.agentwatcher-vscode-session-bridge-safe4
+code --uninstall-extension agentwatcher.agentwatcher-vscode-session-bridge
 code --install-extension .\vscode-agentwatcher-bridge\agentwatcher-bridge-*.vsix --force
 ```
 
-如果机器上曾安装过历史测试扩展，VS Code 扩展面板里可能还能看到 `safe1` / `safe2` / `safe3`。这些旧扩展不影响 `safe4` 的当前 URI 路由，但建议在发布验证机上卸载，避免排障时混淆。
+如果机器上曾安装过历史测试扩展，VS Code 扩展面板里可能还能看到 `safe1` / `safe2` / `safe3` / `safe4`。AgentWatcher 的 install/update 会自动尝试卸载这些旧扩展；如果校验仍发现残留，会提示清理失败，避免排障时混淆。
 
 ### 故障排查
 
@@ -190,11 +194,11 @@ code --install-extension .\vscode-agentwatcher-bridge\agentwatcher-bridge-*.vsix
   code --install-extension artifacts/AgentWatcher/vscode-agentwatcher-bridge/agentwatcher-bridge-*.vsix --force
    ```
 
-5. **确认当前 Bridge ID**：
+5. **确认当前 Bridge ID 唯一**：
   ```powershell
   code --list-extensions | findstr agentwatcher
   ```
-  预期至少看到 `agentwatcher.agentwatcher-vscode-session-bridge-safe4`。
+  预期只看到 `agentwatcher.agentwatcher-vscode-session-bridge`，不应再出现 `safe1` / `safe2` / `safe3` / `safe4`。
 
 **Session 跳转失败**：
 
@@ -204,9 +208,9 @@ code --install-extension .\vscode-agentwatcher-bridge\agentwatcher-bridge-*.vsix
 
 ## Known Issues
 
-- Prompt handoff 的提示词插入目前整体仍依赖 clipboard bridge：Copilot、Copilot CLI 和 Claude 都由 Bridge 读取 clipboard 后，再通过各自的目标命令填入。非剪贴板 prompt 通道列入 Future，不作为本次 v0.1.2 发布阻断。
+- Prompt handoff 的提示词插入目前整体仍依赖 clipboard bridge：Copilot、Copilot CLI 和 Claude 都由 Bridge 读取 clipboard 后，再通过各自的目标命令填入。非剪贴板 prompt 通道列入 Future，不作为本次 v0.1.2 热修发布阻断。
 - 未来如果引入 prompt 临时文件，禁止写入项目目录，只允许写入 AgentWatcher 自身运行时临时目录或系统临时目录，例如 `%TEMP%\AgentWatcher\...`，并需要 token、TTL 和读取后清理。
-- 历史 `safe1` / `safe2` / `safe3` Bridge 扩展可能残留在开发机上；当前发布只以 `safe4` 为准。
+- 历史 `safe1` / `safe2` / `safe3` / `safe4` Bridge 扩展可能残留在开发机上；当前发布只以稳定 ID 为准，install/update 会尝试清理旧 ID。
 - docs 是否进入 git 仍由发布前人工决定，当前文档仅记录准备状态，不默认改变仓库策略。
 
 ## Post-v0.1.x Roadmap
@@ -294,7 +298,7 @@ code --install-extension .\vscode-agentwatcher-bridge\agentwatcher-bridge-*.vsix
 
 ### VS Code Bridge Extension (vscode-agentwatcher-bridge/)
 
-- 监听 `vscode://agentwatcher.agentwatcher-vscode-session-bridge-safe4/open` URI
+- 监听 `vscode://agentwatcher.agentwatcher-vscode-session-bridge/open` URI
 - 解析 session resource 并打开对应的 chat session
 - 支持 Copilot、Copilot CLI 和 Claude Code handoff 目标
 - 通过 AgentWatcher 临时目录 ack 文件回传 handoff 成功或失败

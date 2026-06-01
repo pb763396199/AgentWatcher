@@ -3,7 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const BRIDGE_LOG_VERSION = '0.1.9-session-bridge';
+const BRIDGE_LOG_VERSION = '0.1.10-session-bridge';
 const DEFAULT_TARGET = 'editor';
 const COMMANDS_BY_TARGET = {
   editor: 'workbench.action.chat.openSessionInEditorGroup',
@@ -173,13 +173,13 @@ function activate(context) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('agentwatcherSessionBridgeSafe4.openSession', async (resourceText, target) => {
+    vscode.commands.registerCommand('agentwatcherSessionBridge.openSession', async (resourceText, target) => {
       await openSession(resourceText, target || DEFAULT_TARGET);
     }),
-    vscode.commands.registerCommand('agentwatcherSessionBridgeSafe4.runCommand', async (command) => {
+    vscode.commands.registerCommand('agentwatcherSessionBridge.runCommand', async (command) => {
       await runAllowedCommand(command);
     }),
-    vscode.commands.registerCommand('agentwatcherSessionBridgeSafe4.runHandoffCommand', async (command, insertPrompt) => {
+    vscode.commands.registerCommand('agentwatcherSessionBridge.runHandoffCommand', async (command, insertPrompt) => {
       await runHandoffCommand(command, Boolean(insertPrompt));
     })
   );

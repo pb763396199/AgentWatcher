@@ -30,8 +30,16 @@ const SESSION_PREVIEW_SOURCE_MAX_CHARS: usize = 64 * 1024;
 const USER_PREVIEW_MAX_CHARS: usize = 400;
 const AI_PREVIEW_MAX_CHARS: usize = 800;
 const SESSIONS_CHANGED_EVENT: &str = "agentwatcher-sessions-changed";
-const BRIDGE_EXTENSION_FOLDER_PREFIX: &str = "agentwatcher.agentwatcher-vscode-session-bridge-safe4-";
-const BRIDGE_EXTENSION_URI_AUTHORITY: &str = "agentwatcher.agentwatcher-vscode-session-bridge-safe4";
+const BRIDGE_EXTENSION_ID: &str = "agentwatcher.agentwatcher-vscode-session-bridge";
+const BRIDGE_EXTENSION_FOLDER_PREFIX: &str = "agentwatcher.agentwatcher-vscode-session-bridge-";
+const BRIDGE_EXTENSION_URI_AUTHORITY: &str = BRIDGE_EXTENSION_ID;
+const LEGACY_BRIDGE_EXTENSION_IDS: &[&str] = &[
+    "agentwatcher.agentwatcher-vscode-session-bridge-safe",
+    "agentwatcher.agentwatcher-vscode-session-bridge-safe1",
+    "agentwatcher.agentwatcher-vscode-session-bridge-safe2",
+    "agentwatcher.agentwatcher-vscode-session-bridge-safe3",
+    "agentwatcher.agentwatcher-vscode-session-bridge-safe4",
+];
 const RUNTIME_ICON_SIZE: u32 = 256;
 const RUNTIME_ICON_RGBA: &[u8] = include_bytes!("../icons/icon-runtime-256.rgba");
 #[cfg(target_os = "windows")]
@@ -103,6 +111,43 @@ struct BridgeStatus {
     installed_version: Option<String>,
     code_path: Option<String>,
     message: String,
+}
+
+#[derive(Debug, Clone, Default)]
+struct BridgeExtensionInventory {
+    stable_version: Option<String>,
+    legacy_ids: Vec<String>,
+}
+
+impl BridgeExtensionInventory {
+    fn add_stable_version(&mut self, version: String) {
+        self.stable_version = match self.stable_version.take() {
+            Some(existing_version) if parse_version(&existing_version) >= parse_version(&version) => {
+                Some(existing_version)
+            }
+            _ => Some(version),
+        };
+    }
+
+    fn add_legacy_id(&mut self, extension_id: &str) {
+        if !self
+            .legacy_ids
+            .iter()
+            .any(|existing_id| existing_id.eq_ignore_ascii_case(extension_id))
+        {
+            self.legacy_ids.push(extension_id.to_string());
+        }
+    }
+
+    fn merge(&mut self, other: BridgeExtensionInventory) {
+        if let Some(version) = other.stable_version {
+            self.add_stable_version(version);
+        }
+
+        for legacy_id in other.legacy_ids {
+            self.add_legacy_id(&legacy_id);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -298,19 +343,31 @@ fn emit_sessions_changed(app_handle: &tauri::AppHandle, emitted_ms: u64) {
 #[tauri::command]
 fn get_bridge_status() -> BridgeStatus {
     let local_version = get_local_bridge_version();
-    let installed_version = get_installed_bridge_version();
     let code_path = find_code_cli_path();
+    let inventory = get_bridge_extension_inventory(code_path.as_deref());
+    let installed_version = inventory.stable_version.clone();
 
-    let installed = bridge_extension_installed();
-    let needs_update = if let (Some(local), Some(installed)) = (parse_version(&local_version), parse_version(&installed_version.clone().unwrap_or_default())) {
-        local > installed
-    } else {
-        false
-    };
+    let installed = installed_version.is_some();
+    let needs_cleanup = !inventory.legacy_ids.is_empty();
+    let needs_version_update = installed_version
+        .as_deref()
+        .map(|version| bridge_version_needs_update(&local_version, version))
+        .unwrap_or(false);
+    let needs_update = needs_cleanup || needs_version_update;
 
-    let message = if !installed {
+    let message = if needs_cleanup && installed {
+        format!(
+            "Bridge cleanup needed: legacy extensions remain ({})",
+            inventory.legacy_ids.join(", ")
+        )
+    } else if needs_cleanup {
+        format!(
+            "Bridge stable extension not installed; legacy extensions need cleanup ({})",
+            inventory.legacy_ids.join(", ")
+        )
+    } else if !installed {
         "Bridge extension not installed".to_string()
-    } else if needs_update {
+    } else if needs_version_update {
         "Update available".to_string()
     } else {
         "Bridge installed and up to date".to_string()
@@ -336,6 +393,7 @@ fn install_bridge() -> Result<String, String> {
         .unwrap_or_else(|| package_bridge_vsix(&vscode_bridge_dir, &local_version))?;
 
     let code_path = find_code_cli_path().ok_or("VS Code CLI not found")?;
+    let cleanup_warnings = uninstall_legacy_bridge_extensions(&code_path);
     let mut install_cmd = Command::new(&code_path);
     install_cmd
         .args(["--install-extension"])
@@ -352,7 +410,29 @@ fn install_bridge() -> Result<String, String> {
         ));
     }
 
-    Ok("Bridge extension installed successfully".to_string())
+    let inventory = get_bridge_extension_inventory(Some(code_path.as_str()));
+    if inventory.stable_version.is_none() {
+        return Err(format!(
+            "Bridge installation verification failed: stable extension {} was not found after install",
+            BRIDGE_EXTENSION_ID
+        ));
+    }
+
+    if !inventory.legacy_ids.is_empty() {
+        return Err(format!(
+            "Bridge installation cleanup incomplete: legacy extension IDs still installed: {}",
+            inventory.legacy_ids.join(", ")
+        ));
+    }
+
+    if cleanup_warnings.is_empty() {
+        Ok("Bridge extension installed successfully".to_string())
+    } else {
+        Ok(format!(
+            "Bridge extension installed successfully; cleanup warnings: {}",
+            cleanup_warnings.join("; ")
+        ))
+    }
 }
 
 #[tauri::command]
@@ -593,18 +673,18 @@ fn ensure_bridge_command_route_available() -> Result<(), String> {
 }
 
 fn bridge_command_route_available() -> bool {
-    if !bridge_extension_installed() {
+    let code_path = find_code_cli_path();
+    let inventory = get_bridge_extension_inventory(code_path.as_deref());
+
+    if !inventory.legacy_ids.is_empty() {
         return false;
     }
 
-    let Some(installed_version) = get_installed_bridge_version().and_then(|version| parse_version(&version)) else {
-        return false;
-    };
-    let Some(required_version) = parse_version(&get_local_bridge_version()) else {
+    let Some(installed_version) = inventory.stable_version.as_deref() else {
         return false;
     };
 
-    installed_version >= required_version
+    !bridge_version_needs_update(&get_local_bridge_version(), installed_version)
 }
 
 fn open_agents_page(workspace_path: Option<&str>) -> Result<(), String> {
@@ -700,22 +780,10 @@ fn open_workspace_in_new_window(workspace_path: &str) -> Result<(), String> {
 }
 
 fn bridge_extension_installed() -> bool {
-    let Some(user_profile_path) = env::var_os("USERPROFILE") else {
-        return false;
-    };
-
-    let user_profile_path = PathBuf::from(user_profile_path);
-    bridge_extension_exists_in(&user_profile_path.join(".vscode").join("extensions"))
-        || bridge_extension_exists_in(&user_profile_path.join(".vscode-insiders").join("extensions"))
-}
-
-fn bridge_extension_exists_in(extensions_path: &Path) -> bool {
-    read_directory(extensions_path).into_iter().any(|entry| {
-        entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with(BRIDGE_EXTENSION_FOLDER_PREFIX)
-    })
+    let code_path = find_code_cli_path();
+    get_bridge_extension_inventory(code_path.as_deref())
+        .stable_version
+        .is_some()
 }
 
 fn open_vscode_deep_link(deep_link: &str) -> Result<(), String> {
@@ -3747,10 +3815,72 @@ fn get_local_bridge_version() -> String {
     "0.0.1".to_string()
 }
 
-fn get_installed_bridge_version() -> Option<String> {
-    let user_profile_path = env::var_os("USERPROFILE")?;
+fn bridge_version_needs_update(local_version: &str, installed_version: &str) -> bool {
+    match (parse_version(local_version), parse_version(installed_version)) {
+        (Some(local), Some(installed)) => local > installed,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
+fn get_bridge_extension_inventory(code_path: Option<&str>) -> BridgeExtensionInventory {
+    let mut inventory = bridge_extension_inventory_from_extension_folders();
+
+    if let Some(code_path) = code_path {
+        if let Ok(cli_inventory) = bridge_extension_inventory_from_cli(code_path) {
+            inventory.merge(cli_inventory);
+        }
+    }
+
+    inventory
+}
+
+fn bridge_extension_inventory_from_cli(code_path: &str) -> Result<BridgeExtensionInventory, String> {
+    let mut list_cmd = Command::new(code_path);
+    list_cmd.args(["--list-extensions", "--show-versions"]);
+    let output = spawn_hidden_with_output(list_cmd)
+        .map_err(|error| format!("Failed to list VS Code extensions: {}", error))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "VS Code extension list failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(bridge_extension_inventory_from_cli_output(&String::from_utf8_lossy(&output.stdout)))
+}
+
+fn bridge_extension_inventory_from_cli_output(output: &str) -> BridgeExtensionInventory {
+    let mut inventory = BridgeExtensionInventory::default();
+    for raw_line in output.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let (extension_id, version) = line
+            .split_once('@')
+            .map(|(id, version)| (id.trim(), version.trim()))
+            .unwrap_or((line, "unknown"));
+
+        if extension_id.eq_ignore_ascii_case(BRIDGE_EXTENSION_ID) {
+            inventory.add_stable_version(version.to_string());
+        } else if let Some(legacy_id) = legacy_bridge_extension_id(extension_id) {
+            inventory.add_legacy_id(legacy_id);
+        }
+    }
+
+    inventory
+}
+
+fn bridge_extension_inventory_from_extension_folders() -> BridgeExtensionInventory {
+    let Some(user_profile_path) = env::var_os("USERPROFILE") else {
+        return BridgeExtensionInventory::default();
+    };
+
     let user_profile_path = PathBuf::from(user_profile_path);
-    let mut newest_version: Option<String> = None;
+    let mut inventory = BridgeExtensionInventory::default();
 
     for extensions_dir in [
         user_profile_path.join(".vscode").join("extensions"),
@@ -3758,29 +3888,112 @@ fn get_installed_bridge_version() -> Option<String> {
     ] {
         for entry in read_directory(&extensions_dir) {
             let folder_name = entry.file_name().to_string_lossy().to_string();
-            if folder_name.starts_with(BRIDGE_EXTENSION_FOLDER_PREFIX) {
-                let package_json_path = entry.path().join("package.json");
-                if let Some(json_value) = read_json_file(&package_json_path) {
-                    if let Some(version) = string_at(&json_value, &["/version"]) {
-                        newest_version = match newest_version {
-                            Some(existing_version)
-                                if parse_version(&existing_version) >= parse_version(version) =>
-                            {
-                                Some(existing_version)
-                            }
-                            _ => Some(version.to_string()),
-                        };
-                        continue;
-                    }
-                }
-                if newest_version.is_none() {
-                    newest_version = Some("unknown".to_string());
-                }
+            let package_json_path = entry.path().join("package.json");
+            let package_json = read_json_file(&package_json_path);
+            let package_extension_id = package_json.as_ref().and_then(package_extension_id);
+
+            if package_extension_id
+                .as_deref()
+                .map(|extension_id| extension_id.eq_ignore_ascii_case(BRIDGE_EXTENSION_ID))
+                .unwrap_or(false)
+                || extension_folder_version_suffix(&folder_name, BRIDGE_EXTENSION_ID).is_some()
+            {
+                inventory.add_stable_version(extension_version_from_folder(
+                    package_json.as_ref(),
+                    &folder_name,
+                    BRIDGE_EXTENSION_ID,
+                ));
+                continue;
+            }
+
+            if let Some(legacy_id) = package_extension_id
+                .as_deref()
+                .and_then(legacy_bridge_extension_id)
+                .or_else(|| legacy_bridge_extension_id_from_folder(&folder_name))
+            {
+                inventory.add_legacy_id(legacy_id);
             }
         }
     }
 
-    newest_version
+    inventory
+}
+
+fn package_extension_id(package_json: &Value) -> Option<String> {
+    let publisher = string_at(package_json, &["/publisher"])?;
+    let name = string_at(package_json, &["/name"])?;
+    Some(format!("{}.{}", publisher, name))
+}
+
+fn extension_version_from_folder(
+    package_json: Option<&Value>,
+    folder_name: &str,
+    extension_id: &str,
+) -> String {
+    package_json
+        .and_then(|json_value| string_at(json_value, &["/version"]).map(str::to_string))
+        .or_else(|| extension_folder_version_suffix(folder_name, extension_id).map(str::to_string))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn extension_folder_version_suffix<'a>(folder_name: &'a str, extension_id: &str) -> Option<&'a str> {
+    let suffix = if extension_id.eq_ignore_ascii_case(BRIDGE_EXTENSION_ID) {
+        folder_name.strip_prefix(BRIDGE_EXTENSION_FOLDER_PREFIX)?
+    } else {
+        folder_name.strip_prefix(extension_id)?.strip_prefix('-')?
+    };
+    suffix
+        .chars()
+        .next()
+        .filter(|character| character.is_ascii_digit())?;
+    Some(suffix)
+}
+
+fn legacy_bridge_extension_id(extension_id: &str) -> Option<&'static str> {
+    LEGACY_BRIDGE_EXTENSION_IDS
+        .iter()
+        .copied()
+        .find(|legacy_id| extension_id.eq_ignore_ascii_case(legacy_id))
+}
+
+fn legacy_bridge_extension_id_from_folder(folder_name: &str) -> Option<&'static str> {
+    LEGACY_BRIDGE_EXTENSION_IDS
+        .iter()
+        .copied()
+        .find(|legacy_id| extension_folder_version_suffix(folder_name, legacy_id).is_some())
+}
+
+fn uninstall_legacy_bridge_extensions(code_path: &str) -> Vec<String> {
+    let mut warnings = Vec::new();
+
+    for &extension_id in LEGACY_BRIDGE_EXTENSION_IDS {
+        let mut uninstall_cmd = Command::new(code_path);
+        uninstall_cmd.args(["--uninstall-extension", extension_id]);
+
+        match spawn_hidden_with_output(uninstall_cmd) {
+            Ok(output) if output.status.success() || bridge_uninstall_output_is_not_installed(&output) => {}
+            Ok(output) => warnings.push(format!(
+                "{}: {} {}",
+                extension_id,
+                String::from_utf8_lossy(&output.stderr).trim(),
+                String::from_utf8_lossy(&output.stdout).trim()
+            )),
+            Err(error) => warnings.push(format!("{}: {}", extension_id, error)),
+        }
+    }
+
+    warnings
+}
+
+fn bridge_uninstall_output_is_not_installed(output: &std::process::Output) -> bool {
+    let combined_output = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+    .to_ascii_lowercase();
+
+    combined_output.contains("not installed") || combined_output.contains("not found")
 }
 
 fn find_bridge_source_dir() -> Option<PathBuf> {
@@ -4121,6 +4334,30 @@ fn apply_native_always_on_top<R: tauri::Runtime>(window: &tauri::WebviewWindow<R
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn bridge_cli_inventory_separates_stable_and_legacy_ids() {
+        let inventory = bridge_extension_inventory_from_cli_output(
+            "agentwatcher.agentwatcher-vscode-session-bridge@0.1.10\nagentwatcher.agentwatcher-vscode-session-bridge-safe4@0.1.9\n",
+        );
+
+        assert_eq!(inventory.stable_version.as_deref(), Some("0.1.10"));
+        assert_eq!(
+            inventory.legacy_ids,
+            vec!["agentwatcher.agentwatcher-vscode-session-bridge-safe4".to_string()]
+        );
+    }
+
+    #[test]
+    fn bridge_folder_suffix_does_not_treat_legacy_safe_as_stable() {
+        let legacy_folder = "agentwatcher.agentwatcher-vscode-session-bridge-safe4-0.1.9";
+
+        assert_eq!(extension_folder_version_suffix(legacy_folder, BRIDGE_EXTENSION_ID), None);
+        assert_eq!(
+            legacy_bridge_extension_id_from_folder(legacy_folder),
+            Some("agentwatcher.agentwatcher-vscode-session-bridge-safe4")
+        );
+    }
 
     #[test]
     fn copilot_unanswered_question_carousel_is_waiting() {
