@@ -30,8 +30,8 @@ const SESSION_PREVIEW_SOURCE_MAX_CHARS: usize = 64 * 1024;
 const USER_PREVIEW_MAX_CHARS: usize = 400;
 const AI_PREVIEW_MAX_CHARS: usize = 800;
 const SESSIONS_CHANGED_EVENT: &str = "agentwatcher-sessions-changed";
-const BRIDGE_EXTENSION_FOLDER_PREFIX: &str = "agentwatcher.agentwatcher-bridge-";
-const BRIDGE_EXTENSION_URI_AUTHORITY: &str = "agentwatcher.agentwatcher-bridge";
+const BRIDGE_EXTENSION_FOLDER_PREFIX: &str = "agentwatcher.agentwatcher-vscode-session-bridge-safe3-";
+const BRIDGE_EXTENSION_URI_AUTHORITY: &str = "agentwatcher.agentwatcher-vscode-session-bridge-safe3";
 const RUNTIME_ICON_SIZE: u32 = 256;
 const RUNTIME_ICON_RGBA: &[u8] = include_bytes!("../icons/icon-runtime-256.rgba");
 #[cfg(target_os = "windows")]
@@ -72,6 +72,18 @@ struct OpenSessionRequest {
     provider: Option<String>,
     workspace_path: Option<String>,
     session_resource: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HandoffLaunchRequest {
+    mode: String,
+    workspace_path: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct WorkspaceLaunchTarget {
+    argument_path: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -406,6 +418,128 @@ fn open_session(session: OpenSessionRequest) -> Result<(), String> {
     open_agents_page(session.workspace_path.as_deref())
 }
 
+#[tauri::command]
+fn launch_handoff(request: HandoffLaunchRequest) -> Result<(), String> {
+    let mode = clean_option(Some(request.mode.as_str()))
+        .ok_or_else(|| "Missing handoff launch mode".to_string())?;
+    let workspace_path = clean_option(request.workspace_path.as_deref())
+        .ok_or_else(|| "Missing target workspace path".to_string())?;
+    let target = resolve_workspace_launch_target(workspace_path)?;
+
+    match mode {
+        "agents" => open_vscode_command_in_workspace(
+            &target.argument_path,
+            "workbench.action.chat.openNewSessionEditor.local",
+            true,
+        ),
+        "code-chat" => open_vscode_command_in_workspace(
+            &target.argument_path,
+            "workbench.action.chat.openNewSessionEditor.copilotcli",
+            true,
+        ),
+        "claude-panel" => open_vscode_command_in_workspace(
+            &target.argument_path,
+            "claude-vscode.editor.open",
+            true,
+        ),
+        other => Err(format!("Unsupported handoff launch mode: {}", other)),
+    }
+}
+
+fn resolve_workspace_launch_target(workspace_path: &str) -> Result<WorkspaceLaunchTarget, String> {
+    let raw_path = PathBuf::from(workspace_path);
+    if !raw_path.is_absolute() {
+        return Err("Target workspace path must be absolute".to_string());
+    }
+
+    let canonical_path = fs::canonicalize(&raw_path)
+        .map_err(|error| format!("Target workspace path is not accessible: {}", error))?;
+
+    if canonical_path.is_dir() {
+        return Ok(WorkspaceLaunchTarget {
+            argument_path: path_to_cli_string(&canonical_path),
+        });
+    }
+
+    let is_code_workspace = canonical_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.eq_ignore_ascii_case("code-workspace"))
+        .unwrap_or(false);
+
+    if canonical_path.is_file() && is_code_workspace {
+        return Ok(WorkspaceLaunchTarget {
+            argument_path: path_to_cli_string(&canonical_path),
+        });
+    }
+
+    Err("Target workspace path must be a folder or .code-workspace file".to_string())
+}
+
+fn path_to_cli_string(path: &Path) -> String {
+    let path_text = path.to_string_lossy().into_owned();
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(stripped) = path_text.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{}", stripped);
+        }
+        if let Some(stripped) = path_text.strip_prefix(r"\\?\") {
+            return stripped.to_string();
+        }
+    }
+    path_text
+}
+
+fn open_vscode_command_in_workspace(
+    workspace_path: &str,
+    command: &str,
+    insert_prompt: bool,
+) -> Result<(), String> {
+    ensure_bridge_command_route_available()?;
+    open_workspace_in_new_window(workspace_path)?;
+
+    let command_link = if insert_prompt {
+        bridge_handoff_link(command)
+    } else {
+        bridge_command_link(command)
+    };
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(1600));
+        let _ = open_vscode_deep_link(&command_link);
+    });
+
+    Ok(())
+}
+
+fn ensure_bridge_command_route_available() -> Result<(), String> {
+    if bridge_command_route_available() {
+        return Ok(());
+    }
+
+    install_bridge()?;
+
+    if bridge_command_route_available() {
+        Ok(())
+    } else {
+        Err("VS Code Bridge is not available after installation".to_string())
+    }
+}
+
+fn bridge_command_route_available() -> bool {
+    if !bridge_extension_installed() {
+        return false;
+    }
+
+    let Some(installed_version) = get_installed_bridge_version().and_then(|version| parse_version(&version)) else {
+        return false;
+    };
+    let Some(required_version) = parse_version(&get_local_bridge_version()) else {
+        return false;
+    };
+
+    installed_version >= required_version
+}
+
 fn open_agents_page(workspace_path: Option<&str>) -> Result<(), String> {
     let workspace_path = clean_option(workspace_path);
     let mut arguments = Vec::new();
@@ -440,6 +574,22 @@ fn session_bridge_link(session: &OpenSessionRequest) -> Option<String> {
     ))
 }
 
+fn bridge_command_link(command: &str) -> String {
+    format!(
+        "vscode://{}/command?command={}",
+        BRIDGE_EXTENSION_URI_AUTHORITY,
+        percent_encode_query_component(command)
+    )
+}
+
+fn bridge_handoff_link(command: &str) -> String {
+    format!(
+        "vscode://{}/handoff?command={}&insertPrompt=1",
+        BRIDGE_EXTENSION_URI_AUTHORITY,
+        percent_encode_query_component(command)
+    )
+}
+
 fn request_session_resource(session: &OpenSessionRequest) -> Option<String> {
     clean_option(session.session_resource.as_deref())
         .map(str::to_string)
@@ -462,6 +612,11 @@ fn open_session_with_bridge(workspace_path: Option<&str>, bridge_link: &str) -> 
 
 fn open_workspace(workspace_path: &str) -> Result<(), String> {
     let arguments = vec![workspace_path.to_string()];
+    spawn_code_cli(&arguments)
+}
+
+fn open_workspace_in_new_window(workspace_path: &str) -> Result<(), String> {
+    let arguments = vec!["--new-window".to_string(), workspace_path.to_string()];
     spawn_code_cli(&arguments)
 }
 
@@ -3442,6 +3597,10 @@ fn path_to_string(path: &Path) -> String {
 }
 
 fn spawn_code_cli(arguments: &[String]) -> Result<(), String> {
+    spawn_code_cli_in(None, arguments)
+}
+
+fn spawn_code_cli_in(current_dir: Option<&str>, arguments: &[String]) -> Result<(), String> {
     let mut candidates = vec!["code".to_string(), "code.cmd".to_string(), "code.exe".to_string()];
 
     if let Some(local_appdata_path) = env::var_os("LOCALAPPDATA") {
@@ -3466,6 +3625,9 @@ fn spawn_code_cli(arguments: &[String]) -> Result<(), String> {
     for candidate in candidates {
         let mut code_command = Command::new(&candidate);
         code_command.args(arguments);
+        if let Some(current_dir) = clean_option(current_dir) {
+            code_command.current_dir(current_dir);
+        }
 
         match spawn_hidden(code_command) {
             Ok(_) => return Ok(()),
@@ -3509,6 +3671,7 @@ fn get_local_bridge_version() -> String {
 fn get_installed_bridge_version() -> Option<String> {
     let user_profile_path = env::var_os("USERPROFILE")?;
     let user_profile_path = PathBuf::from(user_profile_path);
+    let mut newest_version: Option<String> = None;
 
     for extensions_dir in [
         user_profile_path.join(".vscode").join("extensions"),
@@ -3520,15 +3683,25 @@ fn get_installed_bridge_version() -> Option<String> {
                 let package_json_path = entry.path().join("package.json");
                 if let Some(json_value) = read_json_file(&package_json_path) {
                     if let Some(version) = string_at(&json_value, &["/version"]) {
-                        return Some(version.to_string());
+                        newest_version = match newest_version {
+                            Some(existing_version)
+                                if parse_version(&existing_version) >= parse_version(version) =>
+                            {
+                                Some(existing_version)
+                            }
+                            _ => Some(version.to_string()),
+                        };
+                        continue;
                     }
                 }
-                return Some("unknown".to_string());
+                if newest_version.is_none() {
+                    newest_version = Some("unknown".to_string());
+                }
             }
         }
     }
 
-    None
+    newest_version
 }
 
 fn find_bridge_source_dir() -> Option<PathBuf> {
@@ -4154,6 +4327,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scan_sessions,
             open_session,
+            launch_handoff,
             get_bridge_status,
             install_bridge,
             set_window_always_on_top

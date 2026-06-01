@@ -1,8 +1,8 @@
 {
-  "name": "agentwatcher-bridge",
-  "displayName": "AgentWatcher Bridge",
-  "description": "Opens VS Code chat sessions from AgentWatcher.",
-  "version": "0.0.1",
+  "name": "agentwatcher-vscode-session-bridge-safe3",
+  "displayName": "AgentWatcher Session Bridge",
+  "description": "Opens VS Code chat sessions and handoff helpers from AgentWatcher.",
+  "version": "0.1.8",
   "publisher": "agentwatcher",
   "license": "UNLICENSED",
   "repository": {
@@ -22,14 +22,24 @@
   ],
   "activationEvents": [
     "onUri",
-    "onCommand:agentwatcher.openSession"
+    "onCommand:agentwatcherSessionBridgeSafe3.openSession",
+    "onCommand:agentwatcherSessionBridgeSafe3.runCommand",
+    "onCommand:agentwatcherSessionBridgeSafe3.runHandoffCommand"
   ],
   "main": "./extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "agentwatcher.openSession",
+        "command": "agentwatcherSessionBridgeSafe3.openSession",
         "title": "AgentWatcher: Open Session"
+      },
+      {
+        "command": "agentwatcherSessionBridgeSafe3.runCommand",
+        "title": "AgentWatcher: Run Handoff Helper Command"
+      },
+      {
+        "command": "agentwatcherSessionBridgeSafe3.runHandoffCommand",
+        "title": "AgentWatcher: Run Handoff Command"
       }
     ]
   }

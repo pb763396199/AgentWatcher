@@ -18,3 +18,5 @@ ui-dist/
 src-tauri/target/
 src-tauri/gen/
 vscode-agentwatcher-bridge/*.vsix
+.agentwatcher/
+.tmp/
