@@ -4591,10 +4591,50 @@
         tauriWindow.outerPosition(),
         tauriWindow.scaleFactor()
       ]);
+      const monitor = await tauriCurrentMonitor?.().catch(() => null);
+      const scale = monitor?.scaleFactor || scaleFactor || window.devicePixelRatio || 1;
+      const windowScale = scaleFactor || scale;
+      const screenLeft = (monitor?.position?.x ?? Math.round((window.screen.availLeft || 0) * scale)) / scale;
+      const screenTop = (monitor?.position?.y ?? Math.round((window.screen.availTop || 0) * scale)) / scale;
+      const screenWidth = (monitor?.size?.width ?? Math.round((window.screen.availWidth || window.innerWidth || sessionPreviewSize.width) * scale)) / scale;
+      const screenHeight = (monitor?.size?.height ?? Math.round((window.screen.availHeight || window.innerHeight || sessionPreviewSize.height) * scale)) / scale;
+      const margin = 8;
+      const gap = 6;
+      const previewWidth = sessionPreviewSize.width;
+      const previewHeight = sessionPreviewSize.height;
+      const mainLeft = windowPosition.x / windowScale;
+      const mainTop = windowPosition.y / windowScale;
+      const minX = screenLeft + margin;
+      const minY = screenTop + margin;
+      const maxX = Math.max(minX, screenLeft + screenWidth - previewWidth - margin);
+      const maxY = Math.max(minY, screenTop + screenHeight - previewHeight - margin);
+      const belowY = mainTop + anchorRect.bottom + gap;
+      const aboveY = mainTop + anchorRect.top - previewHeight - gap;
+      let y = belowY;
+      if (belowY > maxY && aboveY >= minY) y = aboveY;
+
       return {
-        x: Math.round(windowPosition.x / scaleFactor + anchorRect.left),
-        y: Math.round(windowPosition.y / scaleFactor + anchorRect.bottom + 6)
+        x: Math.round(Math.max(minX, Math.min(mainLeft + anchorRect.left, maxX))),
+        y: Math.round(Math.max(minY, Math.min(y, maxY)))
       };
+    }
+
+    async function placeNativeSessionPreview(windowRef) {
+      if (!windowRef) return false;
+      const position = await nativeSessionPreviewPosition();
+      if (!position) return false;
+      await windowRef.setSize(new LogicalSizeClass(sessionPreviewSize.width, sessionPreviewSize.height)).catch(() => {});
+      await windowRef.setPosition(new LogicalPositionClass(position.x, position.y)).catch(() => {});
+      return true;
+    }
+
+    function scheduleNativeSessionPreviewSettle(requestId) {
+      [80, 220].forEach(delay => {
+        window.setTimeout(async () => {
+          if (!sessionPreviewDesiredVisible || requestId !== sessionPreviewRequestId || !nativePreviewWindow) return;
+          await placeNativeSessionPreview(nativePreviewWindow).catch(() => {});
+        }, delay);
+      });
     }
 
     async function showNativeSessionPreview(requestId) {
@@ -4608,8 +4648,7 @@
         const existing = nativePreviewWindow || await WebviewWindowClass.getByLabel('session-preview');
         if (existing) {
           nativePreviewWindow = existing;
-          await existing.setSize(new LogicalSizeClass(sessionPreviewSize.width, sessionPreviewSize.height)).catch(() => {});
-          await existing.setPosition(new LogicalPositionClass(position.x, position.y)).catch(() => {});
+          await placeNativeSessionPreview(existing);
           emitRuntimeSettings('session-preview');
           if (latestSessionPreviewData) {
             await tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', latestSessionPreviewData).catch(() => {});
@@ -4620,6 +4659,7 @@
           }
           await existing.show().catch(() => {});
           await existing.setFocus().catch(() => {});
+          scheduleNativeSessionPreviewSettle(requestId);
           return true;
         }
 
@@ -4640,10 +4680,13 @@
           shadow: false,
           focus: false,
           visible: false,
-          preventOverflow: false
+          preventOverflow: true
         });
         nativePreviewWindow.once('tauri://destroyed', () => { nativePreviewWindow = null; });
         nativePreviewWindow.once('tauri://error', () => { nativePreviewWindow = null; });
+        nativePreviewWindow.once('tauri://created', () => {
+          nativePreviewWindow?.setPosition(new LogicalPositionClass(position.x, position.y)).catch(() => {});
+        });
         return true;
       } catch (error) {
         showToast(String(error));
@@ -5030,12 +5073,15 @@
         const existing = nativePreviewWindow || await WebviewWindowClass?.getByLabel('session-preview');
         if (existing) {
           nativePreviewWindow = existing;
+          const requestId = sessionPreviewRequestId;
+          await placeNativeSessionPreview(existing).catch(() => {});
           emitRuntimeSettings('session-preview');
           if (latestSessionPreviewData) {
             await tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', latestSessionPreviewData).catch(() => {});
           }
-          if (sessionPreviewDesiredVisible) {
+          if (sessionPreviewDesiredVisible && requestId === sessionPreviewRequestId) {
             await existing.show().catch(() => {});
+            scheduleNativeSessionPreviewSettle(requestId);
           } else {
             await existing.hide().catch(() => {});
           }

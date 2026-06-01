@@ -2,7 +2,7 @@
   "name": "agentwatcher-vscode-session-bridge",
   "displayName": "AgentWatcher Session Bridge",
   "description": "Opens VS Code chat sessions and handoff helpers from AgentWatcher.",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "publisher": "agentwatcher",
   "license": "UNLICENSED",
   "repository": {

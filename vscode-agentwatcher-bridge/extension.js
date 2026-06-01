@@ -3,8 +3,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const BRIDGE_LOG_VERSION = '0.1.10-session-bridge';
+const BRIDGE_LOG_VERSION = '0.1.11-session-bridge';
 const DEFAULT_TARGET = 'editor';
+const CLAUDE_CODE_SCHEME = 'claude-code';
+const CLAUDE_EDITOR_OPEN_COMMAND = 'claude-vscode.editor.open';
 const COMMANDS_BY_TARGET = {
   editor: 'workbench.action.chat.openSessionInEditorGroup',
   side: 'workbench.action.chat.openSessionInNewEditorGroup',
@@ -23,7 +25,7 @@ const ALLOWED_COMMANDS = new Set([
   'github.copilot.cli.openInCopilotCLI',
   'claude-vscode.newConversation',
   'claude-vscode.primaryEditor.open',
-  'claude-vscode.editor.open',
+  CLAUDE_EDITOR_OPEN_COMMAND,
   'claude-vscode.editor.openLast',
   'claude-vscode.sidebar.open',
   'claude-vscode.focus'
@@ -35,6 +37,16 @@ const COPILOT_HANDOFF_TARGETS = new Map([
   ['github.copilot.cli.newSession', { label: 'Copilot editor', command: 'workbench.action.chat.openNewSessionEditor.local' }],
   ['github.copilot.cli.newSessionToSide', { label: 'Copilot CLI editor', command: 'workbench.action.chat.openNewSessionEditor.copilotcli' }]
 ]);
+
+function claudeSessionIdFromResource(resource) {
+  const rawPath = typeof resource?.path === 'string' ? resource.path.replace(/^\/+/, '') : '';
+  if (!rawPath) return undefined;
+  try {
+    return decodeURIComponent(rawPath);
+  } catch {
+    return rawPath;
+  }
+}
 
 function activate(context) {
   const output = vscode.window.createOutputChannel('AgentWatcher Session Bridge');
@@ -63,6 +75,14 @@ function activate(context) {
     }
 
     const resource = vscode.Uri.parse(resourceText, true);
+    if (resource.scheme === CLAUDE_CODE_SCHEME) {
+      const sessionId = claudeSessionIdFromResource(resource);
+      output.appendLine(`Opening ${resource.toString()} with ${CLAUDE_EDITOR_OPEN_COMMAND}`);
+      await vscode.commands.executeCommand(CLAUDE_EDITOR_OPEN_COMMAND, sessionId);
+      output.appendLine(`Opened ${resource.toString()}`);
+      return;
+    }
+
     const command = COMMANDS_BY_TARGET[target] || COMMANDS_BY_TARGET[DEFAULT_TARGET];
     output.appendLine(`Opening ${resource.toString()} with ${command}`);
     await vscode.commands.executeCommand(command, { resource });
@@ -109,7 +129,7 @@ function activate(context) {
   async function runHandoffCommand(command, insertPrompt) {
     output.appendLine(`Handoff route command=${command || '(missing)'} insertPrompt=${insertPrompt}`);
 
-    if (insertPrompt && command === 'claude-vscode.editor.open') {
+    if (insertPrompt && command === CLAUDE_EDITOR_OPEN_COMMAND) {
       const text = await vscode.env.clipboard.readText();
       output.appendLine(`Running ${command} with initial prompt (${text ? text.length : 0} chars)`);
       await vscode.commands.executeCommand(command, undefined, text || undefined);

@@ -121,13 +121,13 @@
 - [ ] 手动重装 `agentwatcher.agentwatcher-vscode-session-bridge` 后，session 跳转仍可用。
 - [x] `code --list-extensions | findstr agentwatcher` 只显示 `agentwatcher.agentwatcher-vscode-session-bridge`，不显示 `safe1` / `safe2` / `safe3` / `safe4`。
 - [x] 发布 artifact manifest 检查：`artifacts/AgentWatcher/vscode-agentwatcher-bridge/package.json` 的 `name` 必须是 `agentwatcher-vscode-session-bridge`。
-- [x] 发布 artifact manifest 检查：VSIX 文件名应是 `agentwatcher-bridge-0.1.10.vsix`。
+- [x] 发布 artifact manifest 检查：VSIX 文件名应是 `agentwatcher-bridge-0.1.11.vsix`。
 - [ ] 点击 Copilot / Claude session 卡片可打开目标 workspace/session；失败时显示错误。
 - [ ] 右键 session 卡片可 handoff 到 Copilot、Copilot CLI 和 Claude，并收到 Bridge ack 成功确认。
 - [ ] 中英切换、dark/light 切换同步到主窗口、Session Preview 和 Handoff Panel。
 - [ ] Session Preview 正文只通过运行时事件传递，不写入 localStorage 或项目目录临时文件。
 - [x] `npm run package:exe` 会清理旧 release zip / 解压目录，并重新生成 `AgentWatcher-v0.1.2-windows-x64.zip`。
-- [x] CHANGELOG 已更新 v0.1.2 热修发布包和 SHA256：`866522276A933B1C57E173AAF5B6CAB6727463AC98CB1A34ABE1297A25DAB1BB`。
+- [x] CHANGELOG 已更新 v0.1.2 热修发布包和 SHA256：`53874E575906A6701A9F609C258D9062744840581AAB7EE5BC88E18F4411F792`。
 - [x] 发布包包含 `AgentWatcher.exe`、`vscode-agentwatcher-bridge/`、`agentwatcher-bridge-<version>.vsix`。
 - [ ] docs 是否进入 git 由用户在发布前确认，不作为当前实现默认假设。
 

@@ -14,7 +14,7 @@ AgentWatcher 是一个 Windows 桌面小工具，用 Tauri 2 写的。它盯着 
 - `npm run build:ui` —— 用 Vite 把 `ui/` 打到 `ui-dist/` 目录（这个目录是 git 忽略的）。
 - `npm run build` —— `tauri build`，跑 Rust + 打包。生成的 exe 在 `src-tauri/target/release/agentwatcher.exe`。
 - `npm run generate:icons` —— 重新生成 `src-tauri/icons/icon.ico` 和 `icon-runtime-256.rgba`。**只能在 Windows 上跑**，里面调了 `pwsh` 用 .NET 的 `System.Drawing` 画 Segoe UI 字体。其他系统会报错。
-- `npm run package:exe` —— 完整发布流水线：编译、用 `rcedit` 把图标塞进 exe、复制 `vscode-agentwatcher-bridge/`、用 `npx @vscode/vsce` 打 VSIX、最后输出 `artifacts/AgentWatcher/AgentWatcher.exe` + `vscode-agentwatcher-bridge/agentwatcher-bridge-0.1.10.vsix`，再压成 `artifacts/AgentWatcher-v<版本>-windows-x64.zip`。跑这个前会先把老的 `artifacts/AgentWatcher-v*-windows-x64{,.zip}` 清掉。
+- `npm run package:exe` —— 完整发布流水线：编译、用 `rcedit` 把图标塞进 exe、复制 `vscode-agentwatcher-bridge/`、用 `npx @vscode/vsce` 打 VSIX、最后输出 `artifacts/AgentWatcher/AgentWatcher.exe` + `vscode-agentwatcher-bridge/agentwatcher-bridge-0.1.11.vsix`，再压成 `artifacts/AgentWatcher-v<版本>-windows-x64.zip`。跑这个前会先把老的 `artifacts/AgentWatcher-v*-windows-x64{,.zip}` 清掉。
 - Rust 单元测试：`cargo test --manifest-path src-tauri/Cargo.toml`（测试代码就在 `src-tauri/src/lib.rs` 文件最末尾）。
 - Bridge 语法检查：`node --check vscode-agentwatcher-bridge\extension.js`。
 - Bridge 路由测试：`node .tmp\bridge-handoff-routing-test.cjs`。
@@ -25,7 +25,7 @@ AgentWatcher 是一个 Windows 桌面小工具，用 Tauri 2 写的。它盯着 
 - `src-tauri/src/main.rs` —— 5 行，就一句 `agentwatcher_lib::run()`。
 - `src-tauri/capabilities/{default,session-preview,handoff-panel}.json` —— Tauri 2 的权限文件，对应三个 webview 窗口：`main`（主窗口）、`session-preview`（悬浮预览）、`handoff-panel`（接续对话框）。
 - `ui/index.html` —— 整个前端就这一个文件，5280 行左右，纯 HTML+CSS+JS，没有任何框架。Tauri 接口是动态 import 的，只有检测到 `window.__TAURI_INTERNALS__` 才加载。
-- `vscode-agentwatcher-bridge/` —— VS Code 扩展本体。`extension.js` 是 CommonJS 模块，用 `require('vscode')`，没有 TypeScript。Bridge 自己有个版本号（`0.1.10`），跟 App 版本号没关系，最后会打成 VSIX 跟 `AgentWatcher.exe` 放一起发布。
+- `vscode-agentwatcher-bridge/` —— VS Code 扩展本体。`extension.js` 是 CommonJS 模块，用 `require('vscode')`，没有 TypeScript。Bridge 自己有个版本号（`0.1.11`），跟 App 版本号没关系，最后会打成 VSIX 跟 `AgentWatcher.exe` 放一起发布。
 - `scripts/{package-exe,generate-icons}.mjs` —— 发布相关的脚本。
 - `ui-dist/`、`src-tauri/target/`、`src-tauri/gen/`、`artifacts/`、`.tmp/`、`.history/`、`vscode-agentwatcher-bridge/*.vsix` —— 都是 git 忽略的构建产物。
 - `docs/{plans,retrospectives,insights}/` —— 没被 git 跟踪的规划笔记，要不要进 git 要先问用户。
@@ -49,7 +49,7 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 
 - Bridge 扩展 ID：`agentwatcher.agentwatcher-vscode-session-bridge`（唯一支持的 ID）。
 - Bridge 包名：`agentwatcher-vscode-session-bridge`。
-- Bridge 版本：`0.1.10`（跨多个 App 版本一直保持不变，别跟着 App 版本一起升）。
+- Bridge 版本：`0.1.11`（跨多个 App 版本一直保持不变，别跟着 App 版本一起升）。
 - Bridge 命令命名空间：`agentwatcherSessionBridge.openSession` / `.runCommand` / `.runHandoffCommand`。
 - Bridge URI 授权段：`agentwatcher.agentwatcher-vscode-session-bridge`（用在 `vscode://…/open|command|handoff` 里）。
 - 历史 ID `safe1`/`safe2`/`safe3`/`safe4`（完整字符串在 `LEGACY_BRIDGE_EXTENSION_IDS`）必须继续被检测和卸载，**不要新增任何 "safe" ID**。
@@ -88,7 +88,7 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 
 - Rust 单元测试在 `lib.rs:4333-4636`，覆盖了 Bridge 版本管理、状态转换、transcript 覆盖、工作区身份（UGA 分支、通用插件根、路径归一化）和预览文本提取。跑：`cargo test --manifest-path src-tauri/Cargo.toml`。
 - `.tmp/bridge-handoff-routing-test.cjs` 是 Node 写的测试，伪造 `vscode` 模块，验证 Bridge 命令路由（`agents` / `code-chat` / `claude-panel` 三种），包括 `claude-vscode.editor.open` 走剪贴板那条路径和 `safe1` 风格的兜底。它还顺带测了 `AGENTWATCHER_TARGET_BOUND_SENTINEL` 这个 Copilot 目标的正常路径。
-- 人工验收清单在 `docs/retrospectives/`：VSIX 必须叫 `agentwatcher-bridge-0.1.10.vsix`；`code --list-extensions | findstr agentwatcher` 应该只显示稳定 ID，不准出现 `safe1..4`；每次发版的 SHA256 要写进 `CHANGELOG.md`。
+- 人工验收清单在 `docs/retrospectives/`：VSIX 必须叫 `agentwatcher-bridge-0.1.11.vsix`；`code --list-extensions | findstr agentwatcher` 应该只显示稳定 ID，不准出现 `safe1..4`；每次发版的 SHA256 要写进 `CHANGELOG.md`。
 
 ## 打包时容易踩的坑
 
@@ -142,8 +142,8 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 
 7. 只认最终 artifact，不只认源码。
 	- 检查 `artifacts/AgentWatcher/AgentWatcher.exe`、最终 zip、zip 里的 `vscode-agentwatcher-bridge/package.json`、VSIX 文件名和 SHA256。
-	- VSIX 要重复安装两次：`code --install-extension artifacts\AgentWatcher\vscode-agentwatcher-bridge\agentwatcher-bridge-0.1.10.vsix --force`。
-	- 装完 `code --list-extensions --show-versions | findstr agentwatcher` 只能看到 `agentwatcher.agentwatcher-vscode-session-bridge@0.1.10`，不能有任何 `safe*`。
+	- VSIX 要重复安装两次：`code --install-extension artifacts\AgentWatcher\vscode-agentwatcher-bridge\agentwatcher-bridge-0.1.11.vsix --force`。
+	- 装完 `code --list-extensions --show-versions | findstr agentwatcher` 只能看到 `agentwatcher.agentwatcher-vscode-session-bridge@0.1.11`，不能有任何 `safe*`。
 	- 从 `artifacts/AgentWatcher/AgentWatcher.exe` 启动，确认不依赖源码目录。
 
 8. 发布和 Release Note。
