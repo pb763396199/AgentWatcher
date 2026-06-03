@@ -658,6 +658,70 @@ fn wait_for_handoff_ack(ack_path: &Path, token: &str) -> Result<(), String> {
     Err("VS Code Bridge did not confirm handoff prompt insertion before timeout".to_string())
 }
 
+#[tauri::command]
+fn get_todo_state() -> Result<Value, String> {
+    let path = todo_state_path()?;
+    read_todo_state_from_path(&path)
+}
+
+#[tauri::command]
+fn save_todo_state(state: Value) -> Result<(), String> {
+    let path = todo_state_path()?;
+    write_todo_state_to_path(&path, &state)
+}
+
+fn todo_state_path() -> Result<PathBuf, String> {
+    let appdata = env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .ok_or_else(|| "APPDATA is not available; cannot locate AgentWatcher todo storage".to_string())?;
+    Ok(todo_state_path_from_appdata(&appdata))
+}
+
+fn todo_state_path_from_appdata(appdata: &Path) -> PathBuf {
+    appdata.join("AgentWatcher").join("todos.v1.json")
+}
+
+fn default_todo_state() -> Value {
+    serde_json::json!({
+        "version": 1,
+        "workspaces": {}
+    })
+}
+
+fn read_todo_state_from_path(path: &Path) -> Result<Value, String> {
+    if !path.exists() {
+        return Ok(default_todo_state());
+    }
+
+    let text = fs::read_to_string(path)
+        .map_err(|error| format!("Failed to read todo state: {}", error))?;
+    if text.trim().is_empty() {
+        return Ok(default_todo_state());
+    }
+
+    serde_json::from_str(&text).map_err(|error| format!("Invalid todo state JSON: {}", error))
+}
+
+fn write_todo_state_to_path(path: &Path, state: &Value) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Todo state path has no parent directory".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Failed to prepare todo storage directory: {}", error))?;
+
+    let text = serde_json::to_string_pretty(state)
+        .map_err(|error| format!("Failed to encode todo state: {}", error))?;
+    let temp_path = path.with_extension("json.tmp");
+    fs::write(&temp_path, text)
+        .map_err(|error| format!("Failed to write todo state: {}", error))?;
+    if path.exists() {
+        fs::remove_file(path)
+            .map_err(|error| format!("Failed to replace previous todo state: {}", error))?;
+    }
+    fs::rename(&temp_path, path)
+        .map_err(|error| format!("Failed to replace todo state: {}", error))
+}
+
 fn ensure_bridge_command_route_available() -> Result<(), String> {
     if bridge_command_route_available() {
         return Ok(());
@@ -4360,6 +4424,63 @@ mod tests {
     }
 
     #[test]
+    fn todo_state_path_lives_under_agentwatcher_appdata() {
+        let path = todo_state_path_from_appdata(Path::new(r"C:\Users\me\AppData\Roaming"));
+
+        assert_eq!(
+            path,
+            PathBuf::from(r"C:\Users\me\AppData\Roaming\AgentWatcher\todos.v1.json")
+        );
+    }
+
+    #[test]
+    fn missing_todo_state_returns_empty_state() {
+        let path = env::temp_dir().join(format!(
+            "agentwatcher-missing-todo-state-{}.json",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        let state = read_todo_state_from_path(&path).unwrap();
+
+        assert_eq!(state["version"], 1);
+        assert!(state["workspaces"].as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn todo_state_round_trips_json() {
+        let dir = env::temp_dir().join(format!(
+            "agentwatcher-todo-state-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let path = dir.join("todos.v1.json");
+        let state = json!({
+            "version": 1,
+            "workspaces": {
+                "path:f:/aiproject/agentwatcher": {
+                    "label": "AgentWatcher",
+                    "path": r"F:\AiProject\AgentWatcher",
+                    "tasks": [
+                        { "id": "todo-1", "title": "Build task input" }
+                    ]
+                }
+            }
+        });
+
+        write_todo_state_to_path(&path, &state).unwrap();
+        let saved = read_todo_state_from_path(&path).unwrap();
+
+        assert_eq!(saved, state);
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn copilot_unanswered_question_carousel_is_waiting() {
         let event = json!({
             "k": ["requests", 0, "response"],
@@ -4644,6 +4765,8 @@ pub fn run() {
             scan_sessions,
             open_session,
             launch_handoff,
+            get_todo_state,
+            save_todo_state,
             get_bridge_status,
             install_bridge,
             set_window_always_on_top
