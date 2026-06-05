@@ -71,6 +71,7 @@ struct AgentSession {
     last_ai_message_truncated: bool,
     last_ai_message_excerpt_kind: Option<String>,
     branch: Option<String>,
+    todo_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -207,6 +208,7 @@ struct CopilotSessionSummary {
     last_ai_message_truncated: bool,
     last_ai_message_excerpt_kind: Option<String>,
     archived: bool,
+    todo_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -216,6 +218,7 @@ struct CopilotTranscriptOverlay {
     unstarted_ask_timestamp_ms: Option<u64>,
     last_user_message: Option<String>,
     last_ai_message: Option<String>,
+    todo_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -232,6 +235,7 @@ struct ClaudeSessionSummary {
     last_ai_message_truncated: bool,
     last_ai_message_excerpt_kind: Option<String>,
     archived: bool,
+    todo_ids: Vec<String>,
 }
 
 static COPILOT_SESSION_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlSummary<CopilotSessionSummary>>>> =
@@ -1066,6 +1070,7 @@ fn read_copilot_session(
         mut last_ai_message_truncated,
         mut last_ai_message_excerpt_kind,
         archived,
+        mut todo_ids,
     } = summary;
     if options.hide_archived && archived {
         return None;
@@ -1087,6 +1092,9 @@ fn read_copilot_session(
             let (message, truncated) = apply_user_preview_budget(overlay.last_user_message);
             last_user_message = message;
             last_user_message_truncated = truncated;
+        }
+        for todo_id in overlay.todo_ids {
+            push_unique_todo_id(&mut todo_ids, todo_id);
         }
         if overlay.last_ai_message.is_some() {
             let (message, truncated, excerpt_kind) = apply_ai_preview_budget(overlay.last_ai_message);
@@ -1138,6 +1146,7 @@ fn read_copilot_session(
         last_ai_message_truncated,
         last_ai_message_excerpt_kind,
         branch: None,
+        todo_ids,
     })
 }
 
@@ -1225,6 +1234,7 @@ fn read_claude_jsonl_session(
         last_ai_message_truncated,
         last_ai_message_excerpt_kind,
         archived,
+        todo_ids,
     } = summary;
     if options.hide_archived && archived {
         return None;
@@ -1279,6 +1289,7 @@ fn read_claude_jsonl_session(
         last_ai_message_truncated,
         last_ai_message_excerpt_kind,
         branch,
+        todo_ids,
     })
 }
 
@@ -1308,10 +1319,12 @@ fn read_copilot_session_summary(
     let mut latest_timestamp_ms = None;
     let mut last_user_message = None;
     let mut last_ai_message = None;
+    let mut todo_ids = Vec::new();
     let mut head_message_count = 0u32;
     let mut tail_message_count = 0u32;
 
     visit_jsonl_head_values(session_path, fingerprint.len, COPILOT_TITLE_SAMPLE_LINES, |_, json_value| {
+        collect_todo_ids_from_copilot_requests(json_value, &mut todo_ids);
         if is_archived_json(json_value) {
             archived = true;
         }
@@ -1331,6 +1344,7 @@ fn read_copilot_session_summary(
 
     let tail_covers_file = tail_sample_covers_file(fingerprint.len);
     let _ = visit_jsonl_tail_values(session_path, fingerprint.len, |json_value| {
+        collect_todo_ids_from_copilot_requests(json_value, &mut todo_ids);
         if is_archived_json(json_value) {
             archived = true;
         }
@@ -1377,6 +1391,7 @@ fn read_copilot_session_summary(
         last_ai_message_truncated,
         last_ai_message_excerpt_kind,
         archived,
+        todo_ids,
     })
 }
 
@@ -1407,6 +1422,7 @@ fn read_claude_session_summary(
     let mut first_user_message = None;
     let mut last_user_message = None;
     let mut last_ai_message = None;
+    let mut todo_ids = Vec::new();
     let mut pending_ask_user_question_ids = HashSet::new();
     let mut archived = false;
     let mut latest_timestamp_ms = None;
@@ -1437,6 +1453,7 @@ fn read_claude_session_summary(
         }
         if event_type == Some("user") {
             if let Some(clean_text) = claude_clean_user_text(json_value) {
+                collect_todo_ids_from_text(&clean_text, &mut todo_ids);
                 if prompt_title.is_none() {
                     prompt_title = title_candidate_from_text(&clean_text);
                 }
@@ -1467,6 +1484,7 @@ fn read_claude_session_summary(
                 let next = claude_interactive_user_text(json_value)
                     .or_else(|| claude_clean_user_text(json_value));
                 if let Some(next_user_message) = next {
+                    collect_todo_ids_from_text(&next_user_message, &mut todo_ids);
                     if !is_user_system_error_text(&next_user_message) {
                         last_user_message = Some(next_user_message);
                     }
@@ -1514,6 +1532,7 @@ fn read_claude_session_summary(
         last_ai_message_truncated,
         last_ai_message_excerpt_kind,
         archived,
+        todo_ids,
     })
 }
 
@@ -1549,6 +1568,73 @@ fn read_latest_copilot_ai_message(session_path: &Path, file_len: u64) -> Option<
         }
     }
     None
+}
+
+fn push_unique_todo_id(todo_ids: &mut Vec<String>, todo_id: String) {
+    if !todo_ids.iter().any(|existing| existing == &todo_id) {
+        todo_ids.push(todo_id);
+    }
+}
+
+fn collect_todo_ids_from_text(text: &str, todo_ids: &mut Vec<String>) {
+    let lower_text = text.to_ascii_lowercase();
+    let bytes = lower_text.as_bytes();
+    let mut index = 0usize;
+
+    while index + 5 <= bytes.len() {
+        let Some(offset) = lower_text[index..].find("todo-") else {
+            break;
+        };
+        let start = index + offset;
+        if start > 0 && bytes[start - 1].is_ascii_alphanumeric() {
+            index = start + 5;
+            continue;
+        }
+
+        let mut cursor = start + 5;
+        let first_start = cursor;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_alphanumeric() {
+            cursor += 1;
+        }
+        if cursor == first_start || cursor >= bytes.len() || bytes[cursor] != b'-' {
+            index = start + 5;
+            continue;
+        }
+
+        cursor += 1;
+        let second_start = cursor;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_alphanumeric() {
+            cursor += 1;
+        }
+        if cursor == second_start {
+            index = start + 5;
+            continue;
+        }
+        if cursor < bytes.len() && (bytes[cursor].is_ascii_alphanumeric() || bytes[cursor] == b'-') {
+            index = cursor;
+            continue;
+        }
+
+        push_unique_todo_id(todo_ids, lower_text[start..cursor].to_string());
+        index = cursor;
+    }
+}
+
+fn collect_todo_ids_from_copilot_requests(json_value: &Value, todo_ids: &mut Vec<String>) {
+    if let Some(input_text) = input_text_from_copilot_event(json_value) {
+        collect_todo_ids_from_text(input_text, todo_ids);
+    }
+
+    if let Some(requests) = copilot_event_requests(json_value) {
+        for request in requests {
+            if is_copilot_system_request(request) {
+                continue;
+            }
+            if let Some(text) = copilot_request_message_text(request) {
+                collect_todo_ids_from_text(text, todo_ids);
+            }
+        }
+    }
 }
 
 fn read_copilot_transcript_overlay(session_path: &Path) -> Option<CopilotTranscriptOverlay> {
@@ -1598,6 +1684,9 @@ fn copilot_transcript_overlay_from_text(text: &str) -> Option<CopilotTranscriptO
                 started_ask_tool_ids.clear();
                 unstarted_ask_tool_ids.clear();
                 unstarted_ask_timestamp_ms = None;
+                if let Some(raw_content) = string_at(&json_value, &["/data/content"]) {
+                    collect_todo_ids_from_text(raw_content, &mut overlay.todo_ids);
+                }
                 if let Some(content) = string_at(&json_value, &["/data/content"]).and_then(clean_preview_text) {
                     overlay.last_user_message = Some(content);
                     saw_activity = true;
@@ -1661,6 +1750,7 @@ fn copilot_transcript_overlay_from_text(text: &str) -> Option<CopilotTranscriptO
     if overlay.latest_timestamp_ms.is_some()
         || overlay.last_user_message.is_some()
         || overlay.last_ai_message.is_some()
+        || !overlay.todo_ids.is_empty()
         || overlay.status_hint.is_some()
     {
         Some(overlay)
@@ -2563,6 +2653,10 @@ fn read_claude_entry(
     let branch = string_at(entry_json, &["/gitBranch", "/branch"])
         .filter(|branch_text| !branch_text.trim().is_empty())
         .map(|branch_text| clean_label(branch_text, 48));
+    let mut todo_ids = Vec::new();
+    if let Some(first_prompt_text) = first_prompt.as_deref() {
+        collect_todo_ids_from_text(first_prompt_text, &mut todo_ids);
+    }
     let first_prompt_preview = apply_user_preview_budget(first_prompt);
     let session_resource = provider_session_resource("claude-code", &session_id);
     let workspace_identity = build_workspace_identity(
@@ -2598,6 +2692,7 @@ fn read_claude_entry(
         last_ai_message_truncated: false,
         last_ai_message_excerpt_kind: None,
         branch,
+        todo_ids,
     })
 }
 #[derive(Debug, Clone)]
@@ -3367,7 +3462,27 @@ fn bool_at(json_value: &Value, pointers: &[&str]) -> Option<bool> {
 
 fn decode_file_uri(uri_text: &str) -> Option<PathBuf> {
     let encoded_path = uri_text.strip_prefix("file://")?;
-    let decoded_path = percent_decode(encoded_path);
+    let mut decoded_path = percent_decode(encoded_path).replace('\\', "/");
+
+    if let Some(rest) = decoded_path.strip_prefix("?/") {
+        let lower_rest = rest.to_ascii_lowercase();
+        if lower_rest.starts_with("unc/") {
+            decoded_path = format!("//{}", &rest[4..]);
+        } else {
+            decoded_path = rest.to_string();
+        }
+    } else if let Some(rest) = decoded_path.strip_prefix("//?/") {
+        let lower_rest = rest.to_ascii_lowercase();
+        if lower_rest.starts_with("unc/") {
+            decoded_path = format!("//{}", &rest[4..]);
+        } else {
+            decoded_path = rest.to_string();
+        }
+    }
+
+    let is_drive_path = decoded_path.len() > 2
+        && decoded_path.as_bytes().get(1).copied() == Some(b':')
+        && decoded_path.as_bytes()[0].is_ascii_alphabetic();
     let mut path_text = decoded_path.replace('/', "\\");
 
     if path_text.starts_with('\\')
@@ -3375,7 +3490,7 @@ fn decode_file_uri(uri_text: &str) -> Option<PathBuf> {
         && path_text.as_bytes().get(2).copied() == Some(b':')
     {
         path_text.remove(0);
-    } else if !decoded_path.starts_with('/') && decoded_path.contains('/') {
+    } else if !is_drive_path && !decoded_path.starts_with('/') && decoded_path.contains('/') {
         path_text = format!("\\\\{}", path_text);
     }
 
@@ -4481,6 +4596,32 @@ mod tests {
     }
 
     #[test]
+    fn todo_id_extraction_survives_long_prompt_preview_truncation() {
+        let mut todo_ids = Vec::new();
+        let long_prompt = format!(
+            "AgentWatcher 待办 ID: todo-mpz70wv9-afo8hl\n{}",
+            "补充说明。".repeat(200)
+        );
+
+        collect_todo_ids_from_text(&long_prompt, &mut todo_ids);
+
+        assert_eq!(todo_ids, vec!["todo-mpz70wv9-afo8hl".to_string()]);
+        assert!(!apply_user_preview_budget(Some(long_prompt))
+            .0
+            .unwrap()
+            .contains("todo-mpz70wv9-afo8hl"));
+    }
+
+    #[test]
+    fn copilot_transcript_overlay_collects_todo_ids_from_raw_user_messages() {
+        let text = r#"{"type":"user.message","data":{"content":"AgentWatcher 待办 ID: todo-mpz70wv9-afo8hl\n任务正文很长也不影响匹配"}}"#;
+
+        let overlay = copilot_transcript_overlay_from_text(text).unwrap();
+
+        assert_eq!(overlay.todo_ids, vec!["todo-mpz70wv9-afo8hl".to_string()]);
+    }
+
+    #[test]
     fn copilot_unanswered_question_carousel_is_waiting() {
         let event = json!({
             "k": ["requests", 0, "response"],
@@ -4737,6 +4878,29 @@ mod tests {
         assert_eq!(
             normalized_workspace_path_key("/F:/ShanghaiP4//neon/UGA/./DEV_2/Plugins/AesWorld"),
             Some("path:f:/shanghaip4/neon/uga/dev_2/plugins/aesworld".to_string())
+        );
+    }
+
+    #[test]
+    fn decode_file_uri_normalizes_vscode_drive_paths() {
+        assert_eq!(
+            decode_file_uri("file:///f%3A/AiProject/AgentWatcher")
+                .map(|path| path_to_string(&path)),
+            Some(r"f:\AiProject\AgentWatcher".to_string())
+        );
+        assert_eq!(
+            decode_file_uri("file://%3F/f%3A/AiProject/AgentWatcher")
+                .map(|path| path_to_string(&path)),
+            Some(r"f:\AiProject\AgentWatcher".to_string())
+        );
+    }
+
+    #[test]
+    fn decode_file_uri_normalizes_vscode_unc_paths() {
+        assert_eq!(
+            decode_file_uri("file://%3F/UNC/server/share/AgentWatcher")
+                .map(|path| path_to_string(&path)),
+            Some(r"\\server\share\AgentWatcher".to_string())
         );
     }
 

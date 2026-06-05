@@ -78,6 +78,10 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 
 `ui/index.html` 是单文件 SPA。`window.__TAURI_INTERNALS__` 不存在时走 mock 模式，存在就动态 `import('@tauri-apps/api/...')`。运行时它会通过 `WebviewWindow` 新建两个 Tauri webview 窗口（label 是 `session-preview` 和 `handoff-panel`），给它们发事件（`agentwatcher-preview-data`、`agentwatcher-handoff-data`、`agentwatcher-runtime-settings`）。URL 上加 `?preview=1` 或 `?handoff=1` 会让同一个 HTML 文件直接以预览或接续模式启动（body 加 `is-preview-window` / `is-handoff-window` class）。
 
+## AgentTask / Watcher UI 约束
+
+- 改 AgentTask 或 Watcher 的按钮、状态卡片、详情面板时，必须同时检查中文/英文、dark/light；按钮配色按功能角色和当前状态主题色统一分配，不能只给当前截图里的一种语言或主题打补丁。
+
 ## 隐私和契约约束（代码里强制）
 
 - Session Preview 的正文**只能**通过 Tauri 事件传，绝不能写 `localStorage`（localStorage 里只准存尺寸，对应 key 是 `agentwatcher.sessionPreviewSize`）。
