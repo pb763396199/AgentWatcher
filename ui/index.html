@@ -4153,6 +4153,10 @@
             <label for="maxCardsPerRow" data-i18n="maxCardsPerRow">Max cards per row</label>
             <input class="setting-number" id="maxCardsPerRow" type="number" min="1" max="20" step="1" inputmode="numeric" value="10" />
           </div>
+          <div class="setting-row">
+            <label for="zoomLevel" data-i18n="pageZoom">Page zoom (%)</label>
+            <input class="setting-number" id="zoomLevel" type="number" min="25" max="500" step="5" inputmode="numeric" value="100" />
+          </div>
         </div>
         <div class="settings-group">
           <div class="settings-group-title" data-i18n="windowBehavior">Window</div>
@@ -4391,6 +4395,10 @@
             </section>
           </div>
         </div>
+        <button class="resize-handle nw" data-resize="nw" type="button" data-i18n-aria="todoResizeTopLeft"></button>
+        <button class="resize-handle ne" data-resize="ne" type="button" data-i18n-aria="todoResizeTopRight"></button>
+        <button class="resize-handle sw" data-resize="sw" type="button" data-i18n-aria="todoResizeBottomLeft"></button>
+        <button class="resize-handle se" data-resize="se" type="button" data-i18n-aria="todoResizeBottomRight"></button>
       </section>
       <div class="handoff-context-menu" id="handoffContextMenu">
         <button class="handoff-menu-item" id="handoffOpen" type="button" data-i18n="handoffCreate">Create handoff session...</button>
@@ -4510,6 +4518,7 @@
 
   <script type="module">
     let tauriWindow = null;
+    let tauriWebview = null;
     let PhysicalPositionClass = null;
     let LogicalPositionClass = null;
     let LogicalSizeClass = null;
@@ -4519,6 +4528,7 @@
     let tauriListen = null;
     let tauriEmitTo = null;
     let expandedSize = null;
+    let zoomTransition = false;
     let nativeWaitingAlertOffset = { x: 0, y: 0 };
     let nativePreviewWindow = null;
     let nativeHandoffWindow = null;
@@ -4546,11 +4556,12 @@
     };
 
     if (window.__TAURI_INTERNALS__) {
-      const [dpiApi, windowApi, coreApi, webviewWindowApi, eventApi] = await Promise.all([
+      const [dpiApi, windowApi, coreApi, webviewWindowApi, webviewApi, eventApi] = await Promise.all([
         import('@tauri-apps/api/dpi'),
         import('@tauri-apps/api/window'),
         import('@tauri-apps/api/core'),
         import('@tauri-apps/api/webviewWindow'),
+        import('@tauri-apps/api/webview'),
         import('@tauri-apps/api/event')
       ]);
       PhysicalPositionClass = dpiApi.PhysicalPosition;
@@ -4558,6 +4569,7 @@
       LogicalSizeClass = dpiApi.LogicalSize;
       WebviewWindowClass = webviewWindowApi.WebviewWindow;
       tauriWindow = windowApi.getCurrentWindow();
+      try { tauriWebview = webviewApi.getCurrentWebview(); } catch (webviewError) { tauriWebview = null; }
       tauriCurrentMonitor = windowApi.currentMonitor;
       tauriInvoke = coreApi.invoke;
       tauriListen = eventApi.listen;
@@ -4602,6 +4614,7 @@
     const maxCardsPerRow = document.getElementById('maxCardsPerRow');
     const agentTaskFlipMs = document.getElementById('agentTaskFlipMs');
     const agentTaskTitleSize = document.getElementById('agentTaskTitleSize');
+    const zoomLevel = document.getElementById('zoomLevel');
     const waitingAlertDurationSeconds = document.getElementById('waitingAlertDurationSeconds');
     const bridgeStatus = document.getElementById('bridgeStatus');
     const bridgeAction = document.getElementById('bridgeAction');
@@ -4768,6 +4781,10 @@
     const AGENT_TASK_TITLE_MAX_PX = 18;
     const AGENT_TASK_TITLE_DEFAULT_PX = 13;
     const AGENT_TASK_DRAG_THRESHOLD_PX = 6;
+    const PAGE_ZOOM_MIN = 25;
+    const PAGE_ZOOM_MAX = 500;
+    const PAGE_ZOOM_DEFAULT = 100;
+    const PAGE_ZOOM_LEVELS = [25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500];
     const TEXT_INPUT_QUIET_MS = 1400;
     const TEXT_COMPOSITION_QUIET_MS = 2200;
     const defaultSettings = {
@@ -4784,6 +4801,7 @@
       maxCardsPerRow: 10,
       agentTaskFlipMs: AGENT_TASK_FLIP_DEFAULT_MS,
       agentTaskTitleSize: AGENT_TASK_TITLE_DEFAULT_PX,
+      pageZoom: PAGE_ZOOM_DEFAULT,
       waitingAlertSize: 'medium',
       waitingAlertDurationSeconds: 15
     };
@@ -4917,6 +4935,7 @@
         todoReply: 'Reply',
         todoInspect: 'Open',
         agentTaskTitleSize: 'Task title size',
+        pageZoom: 'Page zoom (%)',
         agentTaskNotesLabel: 'Notes',
         agentTaskAcceptanceLabel: 'Acceptance',
         agentTaskTargetLabel: 'Target',
@@ -4992,6 +5011,7 @@
         todoReply: '回复',
         todoInspect: '查看',
         agentTaskTitleSize: '任务名字号',
+        pageZoom: '页面缩放（%）',
         agentTaskNotesLabel: '任务说明',
         agentTaskAcceptanceLabel: '完成标准',
         agentTaskTargetLabel: '执行目标',
@@ -8050,6 +8070,7 @@
           maxCardsPerRow: clampNumber(savedSettings.maxCardsPerRow, 1, 20, defaultSettings.maxCardsPerRow),
           agentTaskFlipMs: clampNumber(savedSettings.agentTaskFlipMs, AGENT_TASK_FLIP_MIN_MS, AGENT_TASK_FLIP_MAX_MS, defaultSettings.agentTaskFlipMs),
           agentTaskTitleSize: clampNumber(savedSettings.agentTaskTitleSize, AGENT_TASK_TITLE_MIN_PX, AGENT_TASK_TITLE_MAX_PX, defaultSettings.agentTaskTitleSize),
+          pageZoom: clampNumber(savedSettings.pageZoom, PAGE_ZOOM_MIN, PAGE_ZOOM_MAX, defaultSettings.pageZoom),
           waitingAlertSize: savedAlertSize,
           waitingAlertDurationSeconds: clampNumber(savedSettings.waitingAlertDurationSeconds, 1, 300, defaultSettings.waitingAlertDurationSeconds)
         };
@@ -8073,6 +8094,110 @@
       document.body.dataset.layout = settings.layout;
       root.style.setProperty('--agent-task-flip-duration', agentTaskFlipDurationMs() + 'ms');
       root.style.setProperty('--agent-task-title-size', clampNumber(settings.agentTaskTitleSize, AGENT_TASK_TITLE_MIN_PX, AGENT_TASK_TITLE_MAX_PX, defaultSettings.agentTaskTitleSize) + 'px');
+      applyPageZoom();
+    }
+
+    function currentPageZoom() {
+      return clampNumber(settings.pageZoom, PAGE_ZOOM_MIN, PAGE_ZOOM_MAX, defaultSettings.pageZoom);
+    }
+
+    function isChildWindow() {
+      return isPreviewWindow || isHandoffWindow || isTodoWindow;
+    }
+
+    function pageZoomFactor() {
+      // Page zoom only drives the main window; child popups stay at 1.
+      return isChildWindow() ? 1 : currentPageZoom() / 100;
+    }
+
+    function applyPageZoom() {
+      // Child popups never zoom (they keep their own native size).
+      if (isChildWindow()) return;
+      const factor = currentPageZoom() / 100;
+      if (tauriWebview && typeof tauriWebview.setZoom === 'function') {
+        // Native WebView2 zoom adjusts the layout viewport (innerWidth = clientWidth / zoom),
+        // so fluid content fills the frame and is re-rasterized crisply at any level (no clipping).
+        tauriWebview.setZoom(factor).catch(err => console.warn('[AW] setZoom failed', err));
+      } else {
+        // Browser-mock fallback: CSS zoom is visual-only (used just for the dev preview).
+        root.style.zoom = String(factor);
+      }
+    }
+
+    async function setPageZoom(nextZoom, options = {}) {
+      const clamped = clampNumber(nextZoom, PAGE_ZOOM_MIN, PAGE_ZOOM_MAX, defaultSettings.pageZoom);
+      settings = { ...settings, pageZoom: clamped };
+      saveSettings();
+      if (zoomLevel) zoomLevel.value = String(clamped);
+      // Apply the native zoom and resize the frame together. zoomTransition keeps
+      // captureExpandedSize from latching a half-applied (polluted) base size.
+      zoomTransition = true;
+      try {
+        applyPageZoom();
+        await syncNativeWindowSize(document.body.classList.contains('is-rail-only'));
+      } finally {
+        requestAnimationFrame(() => { zoomTransition = false; });
+      }
+      if (options.announce) showToast(clamped + '%');
+      return clamped;
+    }
+
+    function stepPageZoom(direction) {
+      const current = currentPageZoom();
+      let next = current;
+      if (direction > 0) {
+        next = PAGE_ZOOM_LEVELS.find(level => level > current);
+        if (next === undefined) next = PAGE_ZOOM_MAX;
+      } else if (direction < 0) {
+        const lower = PAGE_ZOOM_LEVELS.filter(level => level < current);
+        next = lower.length ? lower[lower.length - 1] : PAGE_ZOOM_MIN;
+      }
+      setPageZoom(next, { announce: true });
+    }
+
+    function resetPageZoom() {
+      setPageZoom(PAGE_ZOOM_DEFAULT, { announce: true });
+    }
+
+    function handlePageZoomKeydown(event) {
+      if (!event.ctrlKey && !event.metaKey) return;
+      if (event.altKey) return;
+      switch (event.key) {
+        case '+':
+        case '=':
+        case 'Add':
+          event.preventDefault();
+          stepPageZoom(1);
+          break;
+        case '-':
+        case '_':
+        case 'Subtract':
+          event.preventDefault();
+          stepPageZoom(-1);
+          break;
+        case '0':
+        case ')':
+          event.preventDefault();
+          resetPageZoom();
+          break;
+        default:
+          break;
+      }
+    }
+
+    function handlePageZoomWheel(event) {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      if (event.deltaY < 0) stepPageZoom(1);
+      else if (event.deltaY > 0) stepPageZoom(-1);
+    }
+
+    let pageZoomShortcutsBound = false;
+    function bindGlobalZoomShortcuts() {
+      if (pageZoomShortcutsBound) return;
+      pageZoomShortcutsBound = true;
+      document.addEventListener('keydown', handlePageZoomKeydown, { passive: false });
+      document.addEventListener('wheel', handlePageZoomWheel, { passive: false });
     }
 
     function runtimeSettingsPayload() {
@@ -8188,6 +8313,7 @@
       maxCardsPerRow.value = String(settings.maxCardsPerRow);
       agentTaskFlipMs.value = String(settings.agentTaskFlipMs);
       agentTaskTitleSize.value = String(settings.agentTaskTitleSize);
+      zoomLevel.value = String(currentPageZoom());
       waitingAlertDurationSeconds.value = String(settings.waitingAlertDurationSeconds);
       sizeRange.max = String(settings.maxCardsPerRow);
       settingsToggle.classList.toggle('is-active', !settingsPanel.hidden);
@@ -9329,6 +9455,11 @@
 
     function captureExpandedSize() {
       if (document.body.classList.contains('is-rail-only')) return;
+      // Skip while a zoom transition is in flight: native zoom + setSize briefly
+      // report an intermediate viewport that would corrupt the base size.
+      if (zoomTransition) return;
+      // Under native WebView2 zoom innerWidth already equals the zoom=1 base
+      // (innerWidth = clientWidth / zoom), so store it directly.
       expandedSize = {
         width: Math.max(EXPANDED_MIN_WIDTH, window.innerWidth - nativeWaitingAlertOffset.x),
         height: Math.max(EXPANDED_MIN_HEIGHT, window.innerHeight - nativeWaitingAlertOffset.y)
@@ -9357,18 +9488,24 @@
           }
         }
 
+        // Multiply the base logical size by the page zoom so the native window
+        // exactly fits the zoomed content (no clipping when enlarged, and the
+        // window genuinely shrinks when zoomed out).
+        const zoom = pageZoomFactor();
         if (compact) {
-          const { width, height } = railLogicalSize();
+          const rail = railLogicalSize();
+          const width = rail.width * zoom;
+          const height = rail.height * zoom;
           if (tauriWindow.setMinSize) {
             await tauriWindow.setMinSize(new LogicalSizeClass(width, height));
           }
           await tauriWindow.setSize(new LogicalSizeClass(width, height));
         } else if (expandedSize) {
-          const width = Math.max(expandedSize.width, EXPANDED_MIN_WIDTH) + desiredOffset.x;
-          const height = Math.max(expandedSize.height, EXPANDED_MIN_HEIGHT) + desiredOffset.y;
+          const width = Math.max(expandedSize.width, EXPANDED_MIN_WIDTH) * zoom + desiredOffset.x;
+          const height = Math.max(expandedSize.height, EXPANDED_MIN_HEIGHT) * zoom + desiredOffset.y;
           await tauriWindow.setSize(new LogicalSizeClass(width, height));
           if (tauriWindow.setMinSize) {
-            await tauriWindow.setMinSize(new LogicalSizeClass(EXPANDED_MIN_WIDTH + desiredOffset.x, EXPANDED_MIN_HEIGHT + desiredOffset.y));
+            await tauriWindow.setMinSize(new LogicalSizeClass(EXPANDED_MIN_WIDTH * zoom + desiredOffset.x, EXPANDED_MIN_HEIGHT * zoom + desiredOffset.y));
           }
         }
       } catch (e) {
@@ -11042,6 +11179,7 @@
       maxCardsPerRow.addEventListener('change', () => updateSetting('maxCardsPerRow', clampNumber(maxCardsPerRow.value, 1, 20, defaultSettings.maxCardsPerRow), { announce: true, refresh: false }));
       agentTaskFlipMs.addEventListener('change', () => updateSetting('agentTaskFlipMs', clampNumber(agentTaskFlipMs.value, AGENT_TASK_FLIP_MIN_MS, AGENT_TASK_FLIP_MAX_MS, defaultSettings.agentTaskFlipMs), { announce: true, refresh: false }));
       agentTaskTitleSize.addEventListener('change', () => updateSetting('agentTaskTitleSize', clampNumber(agentTaskTitleSize.value, AGENT_TASK_TITLE_MIN_PX, AGENT_TASK_TITLE_MAX_PX, defaultSettings.agentTaskTitleSize), { announce: true, refresh: false }));
+      zoomLevel.addEventListener('change', () => setPageZoom(zoomLevel.value, { announce: true }));
       waitingAlertDurationSeconds.addEventListener('change', () => updateSetting('waitingAlertDurationSeconds', clampNumber(waitingAlertDurationSeconds.value, 1, 300, defaultSettings.waitingAlertDurationSeconds), { announce: true, refresh: false }));
       bridgeAction.addEventListener('click', installBridge);
       [appHeader, compactRail].forEach(source => source?.addEventListener('pointerdown', startWindowDrag));
@@ -11068,6 +11206,9 @@
         requestAnimationFrame(syncWaitingAlertLayout);
       });
       captureExpandedSize();
+      // Freeze the base size while the persisted zoom is applied so the native
+      // zoom/resize transition cannot latch a half-applied viewport as the base.
+      zoomTransition = true;
       applySettingsControls();
       applyLanguage();
       applyAlwaysOnTopSetting();
@@ -11075,13 +11216,18 @@
       applyFilters();
       syncCompactRail();
       syncWaitingAlertLayout();
+      bindGlobalZoomShortcuts();
       if (tauriInvoke) {
         loadTodoState();
         refreshSessions(false);
         checkBridgeStatus();
         scheduleSessionRefresh();
+        // Settle the persisted zoom (native webview zoom + matching window size);
+        // setPageZoom clears zoomTransition in its finally block.
+        setPageZoom(settings.pageZoom);
         window.setTimeout(prewarmNativeHandoffWindow, 900);
       } else {
+        zoomTransition = false;
         renderTodoEverywhere();
         queueBrowserMockWaitingAlert();
       }
