@@ -1,11 +1,13 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(target_os = "windows")]
@@ -22,6 +24,11 @@ const JSONL_TAIL_SAMPLE_BYTES: usize = 256 * 1024;
 const COPILOT_PROMPT_SCAN_BYTES: usize = 16 * 1024 * 1024;
 const COPILOT_TRANSCRIPT_SCAN_BYTES: usize = 2 * 1024 * 1024;
 const CLAUDE_PROMPT_SCAN_BYTES: usize = 8 * 1024 * 1024;
+const CODEX_APP_SERVER_READY_TIMEOUT_MS: u64 = 8_000;
+const CODEX_APP_SERVER_RPC_TIMEOUT_MS: u64 = 20_000;
+const CODEX_APP_SERVER_START_ATTEMPTS: usize = 4;
+const CODEX_TURN_FETCH_LIMIT: usize = 8;
+const CODEX_SCAN_TURN_FETCH_BUDGET: usize = 3;
 const STATUS_RUNNING_HINT_WINDOW_MS: u64 = 2 * 60 * 60_000;
 const STATUS_RECENT_CONTENT_WINDOW_MS: u64 = 10 * 60_000;
 const STATUS_RECENT_FILE_WINDOW_MS: u64 = 3 * 60_000;
@@ -88,6 +95,7 @@ struct OpenSessionRequest {
 struct HandoffLaunchRequest {
     mode: String,
     workspace_path: Option<String>,
+    prompt: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -159,6 +167,7 @@ struct ScanOptions {
     hide_archived: Option<bool>,
     include_copilot: Option<bool>,
     include_claude: Option<bool>,
+    include_codex: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -168,7 +177,80 @@ struct ResolvedScanOptions {
     hide_archived: bool,
     include_copilot: bool,
     include_claude: bool,
+    include_codex: bool,
 }
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PerformanceProviderCounts {
+    copilot: usize,
+    claude: usize,
+    codex: usize,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PerformanceScanSnapshot {
+    updated_ms: u64,
+    duration_ms: u64,
+    total_sessions: usize,
+    provider_counts: PerformanceProviderCounts,
+    codex_turn_requests: u64,
+    codex_turns_returned: u64,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PerformanceSnapshotOptions {
+    include_agent_clients: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PerformanceProcessTotals {
+    cpu_percent: f64,
+    working_set_mb: f64,
+    private_mb: f64,
+    process_count: usize,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PerformanceProcessSnapshot {
+    pid: u32,
+    parent_pid: u32,
+    name: String,
+    role: String,
+    root_pid: u32,
+    root_name: String,
+    cpu_percent: f64,
+    working_set_mb: f64,
+    private_mb: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PerformanceSnapshot {
+    captured_ms: u64,
+    include_agent_clients: bool,
+    process: PerformanceProcessTotals,
+    processes: Vec<PerformanceProcessSnapshot>,
+    scan: PerformanceScanSnapshot,
+    gpu: Option<Value>,
+    gpu_note: String,
+}
+
+#[derive(Debug, Clone)]
+struct ProcessCpuSample {
+    sampled_ms: u64,
+    cpu_time_100ns: u64,
+}
+
+static PERFORMANCE_LAST_SCAN: OnceLock<Mutex<PerformanceScanSnapshot>> = OnceLock::new();
+static PERFORMANCE_PROCESS_SAMPLES: OnceLock<Mutex<HashMap<u32, ProcessCpuSample>>> =
+    OnceLock::new();
+static PERFORMANCE_CODEX_TURN_REQUESTS: AtomicU64 = AtomicU64::new(0);
+static PERFORMANCE_CODEX_TURNS_RETURNED: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ActivitySource {
@@ -238,12 +320,31 @@ struct ClaudeSessionSummary {
     todo_ids: Vec<String>,
 }
 
+#[derive(Debug)]
+struct CodexAppServerProcess {
+    port: u16,
+    child: Child,
+}
+
+#[derive(Debug, Clone, Default)]
+struct CodexTurnSummary {
+    thread_updated_ms: u64,
+    fetched_ms: u64,
+    last_user_message: Option<String>,
+    last_ai_message: Option<String>,
+    message_count: u32,
+    latest_turn_status: Option<String>,
+}
+
 static COPILOT_SESSION_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlSummary<CopilotSessionSummary>>>> =
     OnceLock::new();
 static COPILOT_TRANSCRIPT_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlSummary<CopilotTranscriptOverlay>>>> =
     OnceLock::new();
 static CLAUDE_SESSION_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlSummary<ClaudeSessionSummary>>>> =
     OnceLock::new();
+static CODEX_TURN_SUMMARY_CACHE: OnceLock<Mutex<HashMap<String, CodexTurnSummary>>> =
+    OnceLock::new();
+static CODEX_APP_SERVER: OnceLock<Mutex<Option<CodexAppServerProcess>>> = OnceLock::new();
 
 fn start_session_file_watcher(app_handle: tauri::AppHandle) {
     std::thread::spawn(move || {
@@ -311,10 +412,20 @@ fn session_watch_roots() -> Vec<PathBuf> {
         }
     }
     if let Some(user_profile_path) = env::var_os("USERPROFILE") {
+        let codex_home = PathBuf::from(&user_profile_path).join(".codex");
         push_existing_path(
             &mut roots,
             PathBuf::from(user_profile_path).join(".claude").join("projects"),
         );
+        for codex_path in [
+            codex_home.join("sessions"),
+            codex_home.join("archived_sessions"),
+            codex_home.join("session_index.jsonl"),
+            codex_home.join("state_5.sqlite"),
+            codex_home.join("state_5.sqlite-wal"),
+        ] {
+            push_existing_path(&mut roots, codex_path);
+        }
     }
     roots
 }
@@ -332,6 +443,12 @@ fn is_session_file_event(event: &Event) -> bool {
 
     event.paths.iter().any(|path| {
         has_extension(path, "jsonl")
+            || has_extension(path, "sqlite")
+            || path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .map(|extension| extension.eq_ignore_ascii_case("sqlite-wal"))
+                .unwrap_or(false)
             || path
                 .file_name()
                 .and_then(|file_name| file_name.to_str())
@@ -453,8 +570,11 @@ fn set_window_always_on_top(window: tauri::WebviewWindow, always_on_top: bool) -
 
 #[tauri::command]
 fn scan_sessions(options: Option<ScanOptions>) -> Vec<AgentSession> {
+    let scan_started = Instant::now();
     let scan_time_ms = current_time_ms();
     let options = resolve_scan_options(options);
+    PERFORMANCE_CODEX_TURN_REQUESTS.store(0, Ordering::Relaxed);
+    PERFORMANCE_CODEX_TURNS_RETURNED.store(0, Ordering::Relaxed);
     let mut sessions = Vec::new();
 
     if options.include_copilot {
@@ -463,6 +583,9 @@ fn scan_sessions(options: Option<ScanOptions>) -> Vec<AgentSession> {
     if options.include_claude {
         sessions.extend(scan_claude_sessions(scan_time_ms, &options));
     }
+    if options.include_codex {
+        sessions.extend(scan_codex_sessions(scan_time_ms, &options));
+    }
 
     sessions.sort_by(|left_session, right_session| {
         status_rank(&left_session.status)
@@ -470,11 +593,453 @@ fn scan_sessions(options: Option<ScanOptions>) -> Vec<AgentSession> {
             .then_with(|| right_session.updated_ms.cmp(&left_session.updated_ms))
     });
     sessions.truncate(options.max_sessions);
+    update_performance_scan_snapshot(&sessions, scan_started.elapsed());
     sessions
 }
 
 #[tauri::command]
+fn get_performance_snapshot(options: Option<PerformanceSnapshotOptions>) -> PerformanceSnapshot {
+    let captured_ms = current_time_ms();
+    let include_agent_clients = options
+        .as_ref()
+        .and_then(|options| options.include_agent_clients)
+        .unwrap_or(false);
+    let mut processes = collect_performance_processes(captured_ms, include_agent_clients);
+    processes.sort_by(|left, right| {
+        right
+            .cpu_percent
+            .partial_cmp(&left.cpu_percent)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                right
+                    .working_set_mb
+                    .partial_cmp(&left.working_set_mb)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
+
+    let process = PerformanceProcessTotals {
+        cpu_percent: round_metric(processes.iter().map(|process| process.cpu_percent).sum()),
+        working_set_mb: round_metric(processes.iter().map(|process| process.working_set_mb).sum()),
+        private_mb: round_metric(processes.iter().map(|process| process.private_mb).sum()),
+        process_count: processes.len(),
+    };
+    let scan = performance_scan_snapshot();
+
+    PerformanceSnapshot {
+        captured_ms,
+        include_agent_clients,
+        process,
+        processes,
+        scan,
+        gpu: None,
+        gpu_note: if include_agent_clients {
+            "Advanced mode samples compatible agent client process trees; GPU remains disabled to keep diagnostics lightweight."
+        } else {
+            "Per-process GPU sampling is disabled in lightweight diagnostics mode"
+        }
+        .to_string(),
+    }
+}
+
+fn performance_scan_snapshot() -> PerformanceScanSnapshot {
+    PERFORMANCE_LAST_SCAN
+        .get_or_init(|| Mutex::new(PerformanceScanSnapshot::default()))
+        .lock()
+        .map(|snapshot| snapshot.clone())
+        .unwrap_or_default()
+}
+
+fn update_performance_scan_snapshot(sessions: &[AgentSession], duration: Duration) {
+    let mut provider_counts = PerformanceProviderCounts::default();
+    for session in sessions {
+        match session.provider.as_str() {
+            "copilot" => provider_counts.copilot += 1,
+            "claude" => provider_counts.claude += 1,
+            "codex" => provider_counts.codex += 1,
+            _ => {}
+        }
+    }
+
+    let snapshot = PerformanceScanSnapshot {
+        updated_ms: current_time_ms(),
+        duration_ms: duration.as_millis().min(u128::from(u64::MAX)) as u64,
+        total_sessions: sessions.len(),
+        provider_counts,
+        codex_turn_requests: PERFORMANCE_CODEX_TURN_REQUESTS.load(Ordering::Relaxed),
+        codex_turns_returned: PERFORMANCE_CODEX_TURNS_RETURNED.load(Ordering::Relaxed),
+    };
+
+    if let Ok(mut last_scan) = PERFORMANCE_LAST_SCAN
+        .get_or_init(|| Mutex::new(PerformanceScanSnapshot::default()))
+        .lock()
+    {
+        *last_scan = snapshot;
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn collect_performance_processes(
+    captured_ms: u64,
+    include_agent_clients: bool,
+) -> Vec<PerformanceProcessSnapshot> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::ProcessStatus::{
+        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcessId, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
+    };
+
+    #[derive(Debug, Clone)]
+    struct ProcessEntry {
+        pid: u32,
+        parent_pid: u32,
+        name: String,
+        image_path: String,
+    }
+
+    #[derive(Debug, Clone)]
+    struct ProcessRole {
+        role: String,
+        root_pid: u32,
+        root_name: String,
+    }
+
+    fn display_process_name(entry: &ProcessEntry) -> String {
+        if entry.name.is_empty() {
+            format!("pid-{}", entry.pid)
+        } else {
+            entry.name.clone()
+        }
+    }
+
+    let snapshot_handle = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot_handle == INVALID_HANDLE_VALUE {
+        return Vec::new();
+    }
+
+    let mut entries = Vec::new();
+    let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+
+    if unsafe { Process32FirstW(snapshot_handle, &mut entry) } != 0 {
+        loop {
+            entries.push(ProcessEntry {
+                pid: entry.th32ProcessID,
+                parent_pid: entry.th32ParentProcessID,
+                name: wide_null_string(&entry.szExeFile),
+                image_path: String::new(),
+            });
+
+            entry = unsafe { std::mem::zeroed() };
+            entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+            if unsafe { Process32NextW(snapshot_handle, &mut entry) } == 0 {
+                break;
+            }
+        }
+    }
+    unsafe {
+        CloseHandle(snapshot_handle);
+    }
+
+    if include_agent_clients {
+        for entry in &mut entries {
+            entry.image_path = performance_process_image_path(entry.pid).unwrap_or_default();
+        }
+    }
+
+    let current_pid = unsafe { GetCurrentProcessId() };
+    let mut included_processes: HashMap<u32, ProcessRole> = HashMap::new();
+    let current_entry = entries
+        .iter()
+        .find(|entry| entry.pid == current_pid)
+        .cloned()
+        .unwrap_or(ProcessEntry {
+            pid: current_pid,
+            parent_pid: 0,
+            name: "agentwatcher.exe".to_string(),
+            image_path: String::new(),
+        });
+
+    let seed_process_tree =
+        |root: &ProcessEntry, role: &str, included: &mut HashMap<u32, ProcessRole>| {
+            let root_name = display_process_name(root);
+            let root_pid = root.pid;
+            included.entry(root_pid).or_insert_with(|| ProcessRole {
+                role: role.to_string(),
+                root_pid,
+                root_name: root_name.clone(),
+            });
+
+            let mut changed = true;
+            while changed {
+                changed = false;
+                for entry in &entries {
+                    let Some(parent_role) = included.get(&entry.parent_pid) else {
+                        continue;
+                    };
+                    if parent_role.root_pid != root_pid || included.contains_key(&entry.pid) {
+                        continue;
+                    }
+                    included.insert(
+                        entry.pid,
+                        ProcessRole {
+                            role: role.to_string(),
+                            root_pid,
+                            root_name: root_name.clone(),
+                        },
+                    );
+                    changed = true;
+                }
+            }
+        };
+
+    seed_process_tree(&current_entry, "AgentWatcher", &mut included_processes);
+
+    if include_agent_clients {
+        for entry in &entries {
+            if included_processes.contains_key(&entry.pid) {
+                continue;
+            }
+            if let Some(role) = performance_agent_process_role(&entry.name, &entry.image_path) {
+                seed_process_tree(entry, role, &mut included_processes);
+            }
+        }
+    }
+
+    let cpu_count = std::thread::available_parallelism()
+        .map(|count| count.get() as f64)
+        .unwrap_or(1.0)
+        .max(1.0);
+    let mut snapshots = Vec::new();
+    let mut seen_pids = HashSet::new();
+    let mut cpu_samples = match PERFORMANCE_PROCESS_SAMPLES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        Ok(samples) => samples,
+        Err(_) => return Vec::new(),
+    };
+
+    for entry in entries
+        .into_iter()
+        .filter(|entry| included_processes.contains_key(&entry.pid))
+    {
+        let handle = unsafe {
+            OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ,
+                0,
+                entry.pid,
+            )
+        };
+        if handle.is_null() {
+            continue;
+        }
+        let process_role = included_processes
+            .get(&entry.pid)
+            .cloned()
+            .unwrap_or(ProcessRole {
+                role: "Agent".to_string(),
+                root_pid: entry.pid,
+                root_name: display_process_name(&entry),
+            });
+
+        let mut memory_counters: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
+        memory_counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+        let memory_ok = unsafe {
+            GetProcessMemoryInfo(
+                handle,
+                &mut memory_counters,
+                std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+            )
+        } != 0;
+
+        let cpu_time_100ns = process_cpu_time_100ns(handle);
+        let cpu_percent = cpu_time_100ns
+            .and_then(|cpu_time| {
+                let previous = cpu_samples.get(&entry.pid)?;
+                if captured_ms <= previous.sampled_ms || cpu_time < previous.cpu_time_100ns {
+                    return None;
+                }
+                let wall_delta_100ns = captured_ms.saturating_sub(previous.sampled_ms) as f64 * 10_000.0;
+                if wall_delta_100ns <= 0.0 {
+                    return None;
+                }
+                let cpu_delta_100ns = cpu_time.saturating_sub(previous.cpu_time_100ns) as f64;
+                Some((cpu_delta_100ns / (wall_delta_100ns * cpu_count)) * 100.0)
+            })
+            .unwrap_or(0.0);
+
+        if let Some(cpu_time) = cpu_time_100ns {
+            cpu_samples.insert(
+                entry.pid,
+                ProcessCpuSample {
+                    sampled_ms: captured_ms,
+                    cpu_time_100ns: cpu_time,
+                },
+            );
+        }
+
+        let working_set_mb = if memory_ok {
+            bytes_to_mb(memory_counters.WorkingSetSize as u64)
+        } else {
+            0.0
+        };
+        let private_mb = if memory_ok {
+            bytes_to_mb(memory_counters.PagefileUsage as u64)
+        } else {
+            0.0
+        };
+
+        snapshots.push(PerformanceProcessSnapshot {
+            pid: entry.pid,
+            parent_pid: entry.parent_pid,
+            name: display_process_name(&entry),
+            role: process_role.role,
+            root_pid: process_role.root_pid,
+            root_name: process_role.root_name,
+            cpu_percent: round_metric(cpu_percent.max(0.0)),
+            working_set_mb: round_metric(working_set_mb),
+            private_mb: round_metric(private_mb),
+        });
+        seen_pids.insert(entry.pid);
+
+        unsafe {
+            CloseHandle(handle);
+        }
+    }
+
+    cpu_samples.retain(|pid, _| seen_pids.contains(pid));
+    snapshots
+}
+
+#[cfg(target_os = "windows")]
+fn performance_process_image_path(pid: u32) -> Option<String> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        return None;
+    }
+
+    let mut buffer = vec![0u16; 1024];
+    let mut size = buffer.len() as u32;
+    let ok = unsafe { QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut size) } != 0;
+    unsafe {
+        CloseHandle(handle);
+    }
+
+    if !ok || size == 0 {
+        return None;
+    }
+    Some(String::from_utf16_lossy(&buffer[..size as usize]))
+}
+
+fn performance_agent_process_role(process_name: &str, image_path: &str) -> Option<&'static str> {
+    let normalized = process_name.to_ascii_lowercase();
+    let normalized_path = image_path.replace('/', "\\").to_ascii_lowercase();
+    if normalized_path.contains("\\openai\\codex\\") {
+        return Some("Codex Desktop");
+    }
+    if normalized_path.contains("\\anthropicclaude\\")
+        || normalized_path.contains("\\claude\\")
+    {
+        return Some("Claude");
+    }
+    if normalized_path.contains("\\github copilot\\") {
+        return Some("Copilot");
+    }
+    if normalized_path.contains("\\microsoft vs code\\")
+        || normalized_path.contains("\\code - insiders\\")
+        || normalized_path.contains("\\vscodium\\")
+    {
+        return Some("VS Code");
+    }
+
+    match normalized.as_str() {
+        "code.exe" => Some("VS Code"),
+        "code - insiders.exe" => Some("VS Code Insiders"),
+        "code - exploration.exe" => Some("VS Code Exploration"),
+        "vscodium.exe" | "codium.exe" => Some("VS Code Compatible"),
+        "codex.exe" | "codex-cli.exe" | "openai-codex.exe" => Some("Codex"),
+        "claude.exe" | "claude-code.exe" | "claude_desktop.exe" | "claude desktop.exe" => {
+            Some("Claude")
+        }
+        "copilot.exe" | "copilot-cli.exe" | "github.copilot.exe" => Some("Copilot"),
+        _ => None,
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn collect_performance_processes(
+    _captured_ms: u64,
+    _include_agent_clients: bool,
+) -> Vec<PerformanceProcessSnapshot> {
+    Vec::new()
+}
+
+#[cfg(target_os = "windows")]
+fn process_cpu_time_100ns(handle: windows_sys::Win32::Foundation::HANDLE) -> Option<u64> {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::GetProcessTimes;
+
+    let mut creation_time: FILETIME = unsafe { std::mem::zeroed() };
+    let mut exit_time: FILETIME = unsafe { std::mem::zeroed() };
+    let mut kernel_time: FILETIME = unsafe { std::mem::zeroed() };
+    let mut user_time: FILETIME = unsafe { std::mem::zeroed() };
+
+    if unsafe {
+        GetProcessTimes(
+            handle,
+            &mut creation_time,
+            &mut exit_time,
+            &mut kernel_time,
+            &mut user_time,
+        )
+    } == 0
+    {
+        return None;
+    }
+
+    Some(filetime_to_u64(kernel_time).saturating_add(filetime_to_u64(user_time)))
+}
+
+#[cfg(target_os = "windows")]
+fn filetime_to_u64(file_time: windows_sys::Win32::Foundation::FILETIME) -> u64 {
+    ((file_time.dwHighDateTime as u64) << 32) | file_time.dwLowDateTime as u64
+}
+
+#[cfg(target_os = "windows")]
+fn wide_null_string(buffer: &[u16]) -> String {
+    let len = buffer
+        .iter()
+        .position(|value| *value == 0)
+        .unwrap_or(buffer.len());
+    String::from_utf16_lossy(&buffer[..len])
+}
+
+fn bytes_to_mb(bytes: u64) -> f64 {
+    bytes as f64 / 1_048_576.0
+}
+
+fn round_metric(value: f64) -> f64 {
+    (value * 10.0).round() / 10.0
+}
+
+#[tauri::command]
 fn open_session(session: OpenSessionRequest) -> Result<(), String> {
+    if clean_option(session.provider.as_deref()) == Some("codex") {
+        return open_codex_session(&session);
+    }
+
     if bridge_extension_installed() {
         if let Some(bridge_link) = session_bridge_link(&session) {
             match open_session_with_bridge(session.workspace_path.as_deref(), &bridge_link) {
@@ -540,6 +1105,11 @@ fn launch_handoff_blocking(request: HandoffLaunchRequest) -> Result<(), String> 
             "claude-vscode.editor.open",
             true,
         ),
+        "codex-app" => {
+            let prompt = clean_option(request.prompt.as_deref())
+                .ok_or_else(|| "Missing handoff prompt".to_string())?;
+            launch_codex_handoff(&target.argument_path, prompt).map(|_| ())
+        }
         other => Err(format!("Unsupported handoff launch mode: {}", other)),
     }
 }
@@ -1001,6 +1571,914 @@ where
 
 fn clean_option(text: Option<&str>) -> Option<&str> {
     text.map(str::trim).filter(|text_value| !text_value.is_empty())
+}
+
+fn scan_codex_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<AgentSession> {
+    let limit = codex_thread_list_limit(options);
+    let mut params = json!({
+        "limit": limit,
+        "sortKey": "updated_at",
+        "sortDirection": "desc"
+    });
+
+    if options.hide_archived {
+        params["archived"] = Value::Bool(false);
+    }
+
+    let Ok(threads) = with_codex_app_server_client(|client| {
+        let response = client.request("thread/list", params)?;
+        let Some(thread_items) = response.get("data").and_then(Value::as_array) else {
+            return Ok(Vec::new());
+        };
+
+        let mut scanned_threads = Vec::with_capacity(thread_items.len());
+        let mut turn_fetch_budget = codex_scan_turn_fetch_budget(options);
+        for thread_json in thread_items {
+            let Some(thread_id) = clean_option(string_at(thread_json, &["/id", "/sessionId"])) else {
+                continue;
+            };
+            let updated_ms = codex_thread_updated_ms(thread_json, scan_time_ms);
+            if !is_active_session(updated_ms, scan_time_ms, options) {
+                continue;
+            }
+
+            let mut turn_summary = cached_codex_turn_summary(thread_id, updated_ms);
+            if turn_summary.is_none() && turn_fetch_budget > 0 {
+                turn_fetch_budget -= 1;
+                if let Some(fetched_summary) =
+                    fetch_codex_turn_summary(client, thread_id, updated_ms, scan_time_ms)
+                {
+                    cache_codex_turn_summary(thread_id, fetched_summary.clone());
+                    turn_summary = Some(fetched_summary);
+                }
+            }
+
+            scanned_threads.push((thread_json.clone(), turn_summary));
+        }
+        Ok(scanned_threads)
+    }) else {
+        return Vec::new();
+    };
+
+    threads
+        .iter()
+        .filter_map(|(thread_json, turn_summary)| {
+            read_codex_thread_with_summary(thread_json, scan_time_ms, options, turn_summary.as_ref())
+        })
+        .collect()
+}
+
+fn codex_thread_list_limit(options: &ResolvedScanOptions) -> usize {
+    options
+        .max_sessions
+        .saturating_mul(2)
+        .max(options.max_sessions + 20)
+        .clamp(40, 120)
+}
+
+fn codex_scan_turn_fetch_budget(options: &ResolvedScanOptions) -> usize {
+    CODEX_SCAN_TURN_FETCH_BUDGET.min(options.max_sessions)
+}
+
+fn codex_thread_updated_ms(thread_json: &Value, scan_time_ms: u64) -> u64 {
+    timestamp_ms_from_json(thread_json)
+        .or_else(|| thread_json.pointer("/createdAt").and_then(timestamp_ms_from_value))
+        .unwrap_or(scan_time_ms)
+}
+
+fn cached_codex_turn_summary(thread_id: &str, updated_ms: u64) -> Option<CodexTurnSummary> {
+    CODEX_TURN_SUMMARY_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(thread_id).cloned())
+        .filter(|summary| summary.thread_updated_ms == updated_ms)
+}
+
+fn cache_codex_turn_summary(thread_id: &str, summary: CodexTurnSummary) {
+    if let Ok(mut cache) = CODEX_TURN_SUMMARY_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        cache.insert(thread_id.to_string(), summary);
+        if cache.len() > 512 {
+            let mut entries: Vec<(String, u64)> = cache
+                .iter()
+                .map(|(cached_thread_id, summary)| (cached_thread_id.clone(), summary.fetched_ms))
+                .collect();
+            entries.sort_by_key(|(_, fetched_ms)| *fetched_ms);
+            let prune_count = cache.len().saturating_sub(512);
+            for (cached_thread_id, _) in entries.into_iter().take(prune_count) {
+                cache.remove(&cached_thread_id);
+            }
+        }
+    }
+}
+
+fn fetch_codex_turn_summary(
+    client: &mut CodexWsClient,
+    thread_id: &str,
+    updated_ms: u64,
+    fetched_ms: u64,
+) -> Option<CodexTurnSummary> {
+    PERFORMANCE_CODEX_TURN_REQUESTS.fetch_add(1, Ordering::Relaxed);
+    let turns_response = client
+        .request(
+            "thread/turns/list",
+            json!({
+                "threadId": thread_id,
+                "limit": CODEX_TURN_FETCH_LIMIT
+            }),
+        )
+        .ok()?;
+    let turns = turns_response.get("data").and_then(Value::as_array)?;
+    PERFORMANCE_CODEX_TURNS_RETURNED.fetch_add(turns.len() as u64, Ordering::Relaxed);
+
+    let mut summary = codex_turn_summary_from_turns(turns);
+    summary.thread_updated_ms = updated_ms;
+    summary.fetched_ms = fetched_ms;
+    Some(summary)
+}
+
+#[cfg(test)]
+fn codex_thread_with_turns(client: &mut CodexWsClient, thread_json: &Value) -> Value {
+    let mut enriched_thread = thread_json.clone();
+    let Some(thread_id) = clean_option(string_at(
+        thread_json,
+        &["/id", "/sessionId"],
+    )) else {
+        return enriched_thread;
+    };
+
+    PERFORMANCE_CODEX_TURN_REQUESTS.fetch_add(1, Ordering::Relaxed);
+    let Ok(turns_response) = client.request(
+        "thread/turns/list",
+        json!({
+            "threadId": thread_id,
+            "limit": CODEX_TURN_FETCH_LIMIT
+        }),
+    ) else {
+        return enriched_thread;
+    };
+
+    if let Some(turns) = turns_response.get("data").and_then(Value::as_array) {
+        PERFORMANCE_CODEX_TURNS_RETURNED.fetch_add(turns.len() as u64, Ordering::Relaxed);
+        if let Some(object) = enriched_thread.as_object_mut() {
+            object.insert("turns".to_string(), Value::Array(turns.clone()));
+        }
+    }
+
+    enriched_thread
+}
+
+#[cfg(test)]
+fn read_codex_thread(
+    thread_json: &Value,
+    scan_time_ms: u64,
+    options: &ResolvedScanOptions,
+) -> Option<AgentSession> {
+    let turn_summary = codex_turn_summary_from_thread(thread_json);
+    read_codex_thread_with_summary(thread_json, scan_time_ms, options, Some(&turn_summary))
+}
+
+fn read_codex_thread_with_summary(
+    thread_json: &Value,
+    scan_time_ms: u64,
+    options: &ResolvedScanOptions,
+    turn_summary: Option<&CodexTurnSummary>,
+) -> Option<AgentSession> {
+    let thread_id = clean_option(string_at(thread_json, &["/id"]).or_else(|| string_at(thread_json, &["/sessionId"])))?;
+    let updated_ms = codex_thread_updated_ms(thread_json, scan_time_ms);
+    if !is_active_session(updated_ms, scan_time_ms, options) {
+        return None;
+    }
+
+    let workspace_path = clean_option(string_at(thread_json, &["/cwd"])).map(str::to_string);
+    let thread_path = clean_option(string_at(thread_json, &["/path"])).map(str::to_string);
+    let preview = clean_option(string_at(thread_json, &["/preview"])).and_then(clean_preview_text);
+    let turn_summary = turn_summary.cloned().unwrap_or_default();
+    let last_user_raw = turn_summary.last_user_message.clone();
+    let last_ai_raw = turn_summary.last_ai_message.clone();
+    let message_count = turn_summary.message_count;
+    let (last_user_message, last_user_message_truncated) = apply_user_preview_budget(last_user_raw);
+    let (last_ai_message, last_ai_message_truncated, last_ai_message_excerpt_kind) = apply_ai_preview_budget(last_ai_raw);
+    let title = clean_option(string_at(thread_json, &["/name"]))
+        .and_then(title_candidate_from_text)
+        .or_else(|| preview.as_deref().and_then(title_candidate_from_text))
+        .unwrap_or_else(|| fallback_session_title("Codex", workspace_path.as_deref().unwrap_or("Codex"), thread_id));
+    let status = codex_status_from_thread_with_turn_status(
+        thread_json,
+        updated_ms,
+        scan_time_ms,
+        turn_summary.latest_turn_status.as_deref(),
+    );
+    let session_resource = codex_thread_resource(thread_id);
+    let workspace_hint = workspace_path
+        .as_deref()
+        .and_then(|path_text| path_segments_basename(&workspace_path_segments(path_text)))
+        .unwrap_or_else(|| "Codex".to_string());
+    let workspace_identity = build_workspace_identity(
+        "codex",
+        thread_id,
+        &workspace_hint,
+        workspace_path.as_deref(),
+        thread_path.as_deref(),
+        Some(&session_resource),
+    );
+    let mut todo_ids = Vec::new();
+    for text in [
+        Some(title.as_str()),
+        preview.as_deref(),
+        last_user_message.as_deref(),
+        last_ai_message.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        collect_todo_ids_from_text(text, &mut todo_ids);
+    }
+
+    Some(AgentSession {
+        id: format!("codex:{}", thread_id),
+        provider: "codex".to_string(),
+        provider_label: "CX".to_string(),
+        title,
+        workspace: workspace_identity.name.clone(),
+        workspace_path,
+        workspace_key: workspace_identity.key,
+        workspace_name: workspace_identity.name,
+        workspace_label: workspace_identity.label,
+        workspace_group: workspace_identity.group,
+        workspace_discriminator: workspace_identity.discriminator,
+        session_path: thread_path,
+        session_resource: Some(session_resource),
+        status,
+        time_label: time_label(updated_ms, scan_time_ms),
+        updated_ms,
+        message_count,
+        last_user_message,
+        last_user_message_truncated,
+        last_ai_message,
+        last_ai_message_truncated,
+        last_ai_message_excerpt_kind,
+        branch: None,
+        todo_ids,
+    })
+}
+
+#[cfg(test)]
+fn codex_turn_summary_from_thread(thread_json: &Value) -> CodexTurnSummary {
+    let Some(turns) = thread_json.get("turns").and_then(Value::as_array) else {
+        return CodexTurnSummary::default();
+    };
+    codex_turn_summary_from_turns(turns)
+}
+
+fn codex_turn_summary_from_turns(turns: &[Value]) -> CodexTurnSummary {
+    let mut last_user_message = None;
+    let mut last_ai_message = None;
+    let mut message_count = 0u32;
+    let mut latest_turn_status = None;
+
+    let mut sorted_turns: Vec<&Value> = turns.iter().collect();
+    sorted_turns.sort_by_key(|turn| codex_turn_timestamp_ms(turn).unwrap_or(0));
+    for turn in sorted_turns {
+        if let Some(status) = string_at(turn, &["/status"]) {
+            latest_turn_status = Some(status.to_string());
+        }
+        if let Some(items) = turn.get("items").and_then(Value::as_array) {
+            for item in items {
+                match string_at(item, &["/type"]) {
+                    Some("userMessage") => {
+                        if let Some(text) = codex_user_message_text(item) {
+                            last_user_message = Some(text);
+                            message_count = message_count.saturating_add(1);
+                        }
+                    }
+                    Some("agentMessage") => {
+                        if let Some(text) = string_at(item, &["/text"]).and_then(clean_preview_text) {
+                            last_ai_message = Some(text);
+                            message_count = message_count.saturating_add(1);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    CodexTurnSummary {
+        last_user_message,
+        last_ai_message,
+        message_count,
+        latest_turn_status,
+        ..CodexTurnSummary::default()
+    }
+}
+
+fn codex_turn_timestamp_ms(turn_json: &Value) -> Option<u64> {
+    timestamp_ms_from_json(turn_json)
+        .or_else(|| turn_json.pointer("/startedAt").and_then(timestamp_ms_from_value))
+        .or_else(|| turn_json.pointer("/completedAt").and_then(timestamp_ms_from_value))
+}
+
+fn codex_user_message_text(item: &Value) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(content_items) = item.get("content").and_then(Value::as_array) {
+        for content_item in content_items {
+            if let Some(text) = string_at(content_item, &["/text"]) {
+                if let Some(clean) = clean_preview_text(text) {
+                    parts.push(clean);
+                }
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        return string_at(item, &["/text"]).and_then(clean_preview_text);
+    }
+
+    clean_preview_text(&parts.join("\n"))
+}
+
+#[cfg(test)]
+fn codex_status_from_thread(thread_json: &Value, updated_ms: u64, scan_time_ms: u64) -> String {
+    let latest_turn_status = codex_latest_turn_status(thread_json).map(str::to_string);
+    codex_status_from_thread_with_turn_status(
+        thread_json,
+        updated_ms,
+        scan_time_ms,
+        latest_turn_status.as_deref(),
+    )
+}
+
+fn codex_status_from_thread_with_turn_status(
+    thread_json: &Value,
+    updated_ms: u64,
+    scan_time_ms: u64,
+    latest_turn_status: Option<&str>,
+) -> String {
+    let status_value = thread_json.get("status").unwrap_or(&Value::Null);
+    let status_type = status_value
+        .get("type")
+        .and_then(Value::as_str)
+        .or_else(|| status_value.as_str())
+        .unwrap_or("idle");
+
+    if status_type.eq_ignore_ascii_case("active") {
+        let active_flags = status_value
+            .get("activeFlags")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        if active_flags.iter().any(|flag| {
+            flag.as_str()
+                .map(|flag_text| {
+                    flag_text.eq_ignore_ascii_case("waitingOnApproval")
+                        || flag_text.eq_ignore_ascii_case("waitingOnUserInput")
+                })
+                .unwrap_or(false)
+        }) {
+            return "waiting".to_string();
+        }
+        return "running".to_string();
+    }
+
+    if let Some(latest_turn_status) = latest_turn_status {
+        if codex_turn_status_is_waiting(latest_turn_status) {
+            return "waiting".to_string();
+        }
+        if codex_turn_status_is_running(latest_turn_status) {
+            return "running".to_string();
+        }
+        if codex_turn_status_is_finished(latest_turn_status) {
+            return "idle".to_string();
+        }
+    }
+
+    if status_type.eq_ignore_ascii_case("running") {
+        "running".to_string()
+    } else if status_type.eq_ignore_ascii_case("waiting") {
+        "waiting".to_string()
+    } else if scan_time_ms.saturating_sub(updated_ms) <= STATUS_RECENT_CONTENT_WINDOW_MS {
+        "running".to_string()
+    } else {
+        "idle".to_string()
+    }
+}
+
+#[cfg(test)]
+fn codex_latest_turn_status(thread_json: &Value) -> Option<&str> {
+    let turns = thread_json.get("turns").and_then(Value::as_array)?;
+    turns
+        .iter()
+        .max_by_key(|turn| codex_turn_timestamp_ms(turn).unwrap_or(0))
+        .and_then(|turn| string_at(turn, &["/status"]))
+}
+
+fn codex_turn_status_is_waiting(status_text: &str) -> bool {
+    matches!(
+        status_text.to_ascii_lowercase().as_str(),
+        "waiting" | "waiting_on_user" | "waiting_on_user_input" | "waiting_on_approval"
+    )
+}
+
+fn codex_turn_status_is_running(status_text: &str) -> bool {
+    matches!(
+        status_text.to_ascii_lowercase().as_str(),
+        "active" | "running" | "in_progress" | "queued" | "pending"
+    )
+}
+
+fn codex_turn_status_is_finished(status_text: &str) -> bool {
+    matches!(
+        status_text.to_ascii_lowercase().as_str(),
+        "completed" | "failed" | "cancelled" | "canceled"
+    )
+}
+
+fn codex_thread_resource(thread_id: &str) -> String {
+    format!("codex://threads/{}", percent_encode_path_segment(thread_id))
+}
+
+fn open_codex_session(session: &OpenSessionRequest) -> Result<(), String> {
+    if let Some(resource) = clean_option(session.session_resource.as_deref()) {
+        if resource.starts_with("codex://") {
+            match open_windows_url(resource) {
+                Ok(()) => return Ok(()),
+                Err(open_error) => {
+                    if let Some(workspace_path) = clean_option(session.workspace_path.as_deref()) {
+                        return open_codex_workspace(workspace_path).map_err(|fallback_error| {
+                            format!(
+                                "Codex thread launch failed ({}); workspace fallback failed ({})",
+                                open_error, fallback_error
+                            )
+                        });
+                    }
+                    return Err(open_error);
+                }
+            }
+        }
+    }
+
+    if let Some(raw_id) = raw_request_session_id(session.id.as_deref()) {
+        let link = codex_thread_resource(raw_id);
+        match open_windows_url(&link) {
+            Ok(()) => return Ok(()),
+            Err(open_error) => {
+                if let Some(workspace_path) = clean_option(session.workspace_path.as_deref()) {
+                    return open_codex_workspace(workspace_path).map_err(|fallback_error| {
+                        format!(
+                            "Codex thread launch failed ({}); workspace fallback failed ({})",
+                            open_error, fallback_error
+                        )
+                    });
+                }
+                return Err(open_error);
+            }
+        }
+    }
+
+    open_codex_workspace(
+        clean_option(session.workspace_path.as_deref()).ok_or_else(|| "Missing Codex workspace path".to_string())?,
+    )
+}
+
+fn launch_codex_handoff(workspace_path: &str, prompt: &str) -> Result<String, String> {
+    let thread_id = with_codex_app_server_client(|client| {
+        let start_response = client.request(
+            "thread/start",
+            json!({
+                "cwd": workspace_path,
+                "threadSource": "user"
+            }),
+        )?;
+        let thread_id = string_at(&start_response, &["/thread/id"])
+            .ok_or_else(|| "Codex app-server did not return a thread id".to_string())?
+            .to_string();
+        client.request(
+            "turn/start",
+            json!({
+                "threadId": thread_id,
+                "input": [
+                    {
+                        "type": "text",
+                        "text": prompt
+                    }
+                ]
+            }),
+        )?;
+        Ok(thread_id)
+    })?;
+
+    let _ = open_windows_url(&codex_thread_resource(&thread_id));
+    Ok(thread_id)
+}
+
+fn with_codex_app_server_client<F, T>(operation: F) -> Result<T, String>
+where
+    F: FnOnce(&mut CodexWsClient) -> Result<T, String>,
+{
+    let port = ensure_codex_app_server()?;
+    let mut client = CodexWsClient::connect(port)?;
+    client.initialize()?;
+    operation(&mut client)
+}
+
+fn ensure_codex_app_server() -> Result<u16, String> {
+    let server_mutex = CODEX_APP_SERVER.get_or_init(|| Mutex::new(None));
+    let mut server_guard = server_mutex
+        .lock()
+        .map_err(|_| "Codex app-server lock poisoned".to_string())?;
+
+    if let Some(server) = server_guard.as_mut() {
+        if server.child.try_wait().ok().flatten().is_none() && codex_app_server_ready(server.port) {
+            return Ok(server.port);
+        }
+        stop_codex_app_server(server);
+        *server_guard = None;
+    }
+
+    let codex_cli = find_codex_cli_path().ok_or_else(|| "Codex CLI not found".to_string())?;
+    let mut last_error = None;
+    for _ in 0..CODEX_APP_SERVER_START_ATTEMPTS {
+        let port = reserve_loopback_port()?;
+        let listen_url = format!("ws://127.0.0.1:{}", port);
+        let mut command = Command::new(&codex_cli);
+        command
+            .args(["app-server", "--listen", &listen_url])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+
+        match spawn_hidden(command) {
+            Ok(mut child) => {
+                if wait_for_codex_app_server_ready(port, CODEX_APP_SERVER_READY_TIMEOUT_MS) {
+                    *server_guard = Some(CodexAppServerProcess { port, child });
+                    return Ok(port);
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                last_error = Some(format!("Codex app-server did not become ready on {}", listen_url));
+            }
+            Err(error) => {
+                last_error = Some(format!("Failed to start Codex app-server: {}", error));
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| "Unable to start Codex app-server".to_string()))
+}
+
+fn stop_codex_app_server(server: &mut CodexAppServerProcess) {
+    let _ = server.child.kill();
+    let _ = server.child.wait();
+}
+
+fn shutdown_codex_app_server() {
+    let Some(server_mutex) = CODEX_APP_SERVER.get() else {
+        return;
+    };
+    let Ok(mut server_guard) = server_mutex.lock() else {
+        return;
+    };
+    if let Some(mut server) = server_guard.take() {
+        stop_codex_app_server(&mut server);
+    }
+}
+
+fn reserve_loopback_port() -> Result<u16, String> {
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|error| format!("Failed to reserve loopback port: {}", error))?;
+    listener
+        .local_addr()
+        .map(|addr| addr.port())
+        .map_err(|error| format!("Failed to read reserved loopback port: {}", error))
+}
+
+fn wait_for_codex_app_server_ready(port: u16, timeout_ms: u64) -> bool {
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    while Instant::now() < deadline {
+        if codex_app_server_ready(port) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+    false
+}
+
+fn codex_app_server_ready(port: u16) -> bool {
+    let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(750)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(750)));
+    let request = format!(
+        "GET /readyz HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+        port
+    );
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+    let mut response = [0u8; 96];
+    stream
+        .read(&mut response)
+        .map(|count| String::from_utf8_lossy(&response[..count]).contains("200 OK"))
+        .unwrap_or(false)
+}
+
+struct CodexWsClient {
+    stream: TcpStream,
+    next_id: u64,
+}
+
+impl CodexWsClient {
+    fn connect(port: u16) -> Result<Self, String> {
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .map_err(|error| format!("Failed to connect to Codex app-server: {}", error))?;
+        let timeout = Duration::from_millis(CODEX_APP_SERVER_RPC_TIMEOUT_MS);
+        let _ = stream.set_read_timeout(Some(timeout));
+        let _ = stream.set_write_timeout(Some(timeout));
+        websocket_handshake(&mut stream, port)?;
+        Ok(Self { stream, next_id: 1 })
+    }
+
+    fn initialize(&mut self) -> Result<(), String> {
+        self.request(
+            "initialize",
+            json!({
+                "clientInfo": {
+                    "name": "agentwatcher",
+                    "title": "AgentWatcher",
+                    "version": env!("CARGO_PKG_VERSION")
+                },
+                "capabilities": {
+                    "experimentalApi": true
+                }
+            }),
+        )?;
+        self.notify("initialized", json!({}))
+    }
+
+    fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        let request_id = self.next_id;
+        self.next_id = self.next_id.saturating_add(1);
+        websocket_send_text(
+            &mut self.stream,
+            &json!({
+                "method": method,
+                "id": request_id,
+                "params": params
+            })
+            .to_string(),
+        )?;
+
+        let deadline = Instant::now() + Duration::from_millis(CODEX_APP_SERVER_RPC_TIMEOUT_MS);
+        while Instant::now() < deadline {
+            let message = websocket_read_text(&mut self.stream)?;
+            let Some(response_json) = serde_json::from_str::<Value>(&message).ok() else {
+                continue;
+            };
+            if response_json.get("id").and_then(Value::as_u64) != Some(request_id) {
+                continue;
+            }
+            if let Some(error_value) = response_json.get("error") {
+                let message = string_at(error_value, &["/message"])
+                    .unwrap_or("Codex app-server request failed");
+                return Err(message.to_string());
+            }
+            return Ok(response_json.get("result").cloned().unwrap_or(Value::Null));
+        }
+
+        Err(format!("Codex app-server request timed out: {}", method))
+    }
+
+    fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
+        websocket_send_text(
+            &mut self.stream,
+            &json!({
+                "method": method,
+                "params": params
+            })
+            .to_string(),
+        )
+    }
+}
+
+impl Drop for CodexWsClient {
+    fn drop(&mut self) {
+        let _ = websocket_send_close(&mut self.stream);
+        let _ = self.stream.shutdown(Shutdown::Both);
+    }
+}
+
+fn websocket_handshake(stream: &mut TcpStream, port: u16) -> Result<(), String> {
+    let seed = current_time_ms() ^ (u64::from(std::process::id()) << 16) ^ u64::from(port);
+    let mut key_bytes = [0u8; 16];
+    key_bytes[..8].copy_from_slice(&seed.to_be_bytes());
+    key_bytes[8..12].copy_from_slice(&std::process::id().to_be_bytes());
+    key_bytes[12..14].copy_from_slice(&port.to_be_bytes());
+    key_bytes[14..].copy_from_slice(&(seed as u16).rotate_left(5).to_be_bytes());
+    let websocket_key = base64_standard(&key_bytes);
+    let request = format!(
+        "GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {websocket_key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|error| format!("Failed to write Codex WebSocket handshake: {}", error))?;
+
+    let mut response = Vec::new();
+    let mut buffer = [0u8; 1];
+    while response.len() < 8192 {
+        stream
+            .read_exact(&mut buffer)
+            .map_err(|error| format!("Failed to read Codex WebSocket handshake: {}", error))?;
+        response.push(buffer[0]);
+        if response.ends_with(b"\r\n\r\n") {
+            break;
+        }
+    }
+    let response_text = String::from_utf8_lossy(&response);
+    if response_text.starts_with("HTTP/1.1 101") || response_text.starts_with("HTTP/1.0 101") {
+        Ok(())
+    } else {
+        Err(format!(
+            "Codex WebSocket handshake failed: {}",
+            response_text.lines().next().unwrap_or("empty response")
+        ))
+    }
+}
+
+fn websocket_send_text(stream: &mut TcpStream, text: &str) -> Result<(), String> {
+    websocket_send_frame(stream, 0x1, text.as_bytes())
+}
+
+fn websocket_send_close(stream: &mut TcpStream) -> Result<(), String> {
+    websocket_send_frame(stream, 0x8, &[])
+}
+
+fn websocket_send_pong(stream: &mut TcpStream, payload: &[u8]) -> Result<(), String> {
+    websocket_send_frame(stream, 0xA, payload)
+}
+
+fn websocket_send_frame(stream: &mut TcpStream, opcode: u8, payload: &[u8]) -> Result<(), String> {
+    let mut frame = Vec::with_capacity(payload.len() + 14);
+    frame.push(0x80 | (opcode & 0x0F));
+    let mask_bit = 0x80;
+    if payload.len() <= 125 {
+        frame.push(mask_bit | payload.len() as u8);
+    } else if payload.len() <= u16::MAX as usize {
+        frame.push(mask_bit | 126);
+        frame.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+    } else {
+        frame.push(mask_bit | 127);
+        frame.extend_from_slice(&(payload.len() as u64).to_be_bytes());
+    }
+    let mask = codex_ws_mask();
+    frame.extend_from_slice(&mask);
+    for (index, byte_value) in payload.iter().enumerate() {
+        frame.push(byte_value ^ mask[index % 4]);
+    }
+    stream
+        .write_all(&frame)
+        .map_err(|error| format!("Failed to write Codex WebSocket frame: {}", error))
+}
+
+fn websocket_read_text(stream: &mut TcpStream) -> Result<String, String> {
+    loop {
+        let mut header = [0u8; 2];
+        stream
+            .read_exact(&mut header)
+            .map_err(|error| format!("Failed to read Codex WebSocket frame: {}", error))?;
+        let opcode = header[0] & 0x0F;
+        let masked = (header[1] & 0x80) != 0;
+        let mut payload_len = u64::from(header[1] & 0x7F);
+        if payload_len == 126 {
+            let mut extended = [0u8; 2];
+            stream
+                .read_exact(&mut extended)
+                .map_err(|error| format!("Failed to read Codex WebSocket frame length: {}", error))?;
+            payload_len = u64::from(u16::from_be_bytes(extended));
+        } else if payload_len == 127 {
+            let mut extended = [0u8; 8];
+            stream
+                .read_exact(&mut extended)
+                .map_err(|error| format!("Failed to read Codex WebSocket frame length: {}", error))?;
+            payload_len = u64::from_be_bytes(extended);
+        }
+        if payload_len > 16 * 1024 * 1024 {
+            return Err("Codex WebSocket frame is too large".to_string());
+        }
+        let mut mask = [0u8; 4];
+        if masked {
+            stream
+                .read_exact(&mut mask)
+                .map_err(|error| format!("Failed to read Codex WebSocket mask: {}", error))?;
+        }
+        let mut payload = vec![0u8; payload_len as usize];
+        stream
+            .read_exact(&mut payload)
+            .map_err(|error| format!("Failed to read Codex WebSocket payload: {}", error))?;
+        if masked {
+            for (index, byte_value) in payload.iter_mut().enumerate() {
+                *byte_value ^= mask[index % 4];
+            }
+        }
+        match opcode {
+            0x1 => {
+                return String::from_utf8(payload)
+                    .map_err(|error| format!("Codex WebSocket payload was not UTF-8: {}", error));
+            }
+            0x8 => return Err("Codex app-server closed the WebSocket".to_string()),
+            0x9 => {
+                websocket_send_pong(stream, &payload)?;
+            }
+            0xA => {}
+            _ => {}
+        }
+    }
+}
+
+fn codex_ws_mask() -> [u8; 4] {
+    let seed = current_time_ms() ^ u64::from(std::process::id());
+    [
+        (seed & 0xFF) as u8,
+        ((seed >> 8) & 0xFF) as u8,
+        ((seed >> 16) & 0xFF) as u8,
+        ((seed >> 24) & 0xFF) as u8,
+    ]
+}
+
+fn base64_standard(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    let mut index = 0usize;
+    while index + 3 <= bytes.len() {
+        let first = bytes[index];
+        let second = bytes[index + 1];
+        let third = bytes[index + 2];
+        output.push(ALPHABET[(first >> 2) as usize] as char);
+        output.push(ALPHABET[(((first << 4) | (second >> 4)) & 63) as usize] as char);
+        output.push(ALPHABET[(((second << 2) | (third >> 6)) & 63) as usize] as char);
+        output.push(ALPHABET[(third & 63) as usize] as char);
+        index += 3;
+    }
+    match bytes.len() - index {
+        1 => {
+            let first = bytes[index];
+            output.push(ALPHABET[(first >> 2) as usize] as char);
+            output.push(ALPHABET[((first << 4) & 63) as usize] as char);
+            output.push('=');
+            output.push('=');
+        }
+        2 => {
+            let first = bytes[index];
+            let second = bytes[index + 1];
+            output.push(ALPHABET[(first >> 2) as usize] as char);
+            output.push(ALPHABET[(((first << 4) | (second >> 4)) & 63) as usize] as char);
+            output.push(ALPHABET[((second << 2) & 63) as usize] as char);
+            output.push('=');
+        }
+        _ => {}
+    }
+    output
+}
+
+fn find_codex_cli_path() -> Option<String> {
+    let mut candidates = Vec::new();
+    if let Some(appdata_path) = env::var_os("APPDATA") {
+        candidates.push(path_to_string(&PathBuf::from(appdata_path).join("npm").join("codex.cmd")));
+    }
+    candidates.extend(["codex.cmd", "codex.exe", "codex"].iter().map(|candidate| candidate.to_string()));
+
+    for candidate in candidates {
+        let mut command = Command::new(&candidate);
+        command.arg("--version");
+        if spawn_hidden_with_output(command)
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+        {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn open_codex_workspace(workspace_path: &str) -> Result<(), String> {
+    let codex_cli = find_codex_cli_path().ok_or_else(|| "Codex CLI not found".to_string())?;
+    let mut command = Command::new(codex_cli);
+    command.args(["app", workspace_path]);
+    spawn_hidden(command)
+        .map(|_| ())
+        .map_err(|error| format!("Failed to open Codex workspace: {}", error))
+}
+
+fn open_windows_url(url: &str) -> Result<(), String> {
+    let mut protocol_command = Command::new("rundll32.exe");
+    protocol_command.args(["url.dll,FileProtocolHandler", url]);
+    spawn_hidden(protocol_command)
+        .map(|_| ())
+        .map_err(|error| format!("Windows protocol launch failed: {}", error))
 }
 
 fn scan_copilot_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<AgentSession> {
@@ -1946,7 +3424,7 @@ fn read_file_prefix_text(session_path: &Path, file_len: u64, max_bytes: usize) -
     let mut file = File::open(session_path).ok()?;
     let read_len = file_len.min(max_bytes as u64);
     let mut bytes = Vec::with_capacity(read_len as usize);
-    file.by_ref().take(read_len).read_to_end(&mut bytes).ok()?;
+    Read::by_ref(&mut file).take(read_len).read_to_end(&mut bytes).ok()?;
 
     if file_len > max_bytes as u64 && !bytes.ends_with(b"\n") {
         truncate_after_last_newline(&mut bytes);
@@ -1962,7 +3440,7 @@ fn read_file_suffix_text(session_path: &Path, file_len: u64, max_bytes: usize) -
     file.seek(SeekFrom::Start(start_offset)).ok()?;
 
     let mut bytes = Vec::with_capacity(read_len as usize);
-    file.by_ref().take(read_len).read_to_end(&mut bytes).ok()?;
+    Read::by_ref(&mut file).take(read_len).read_to_end(&mut bytes).ok()?;
 
     if start_offset > 0 {
         drop_partial_first_line(&mut bytes);
@@ -2968,6 +4446,7 @@ fn resolve_scan_options(options: Option<ScanOptions>) -> ResolvedScanOptions {
         hide_archived: None,
         include_copilot: None,
         include_claude: None,
+        include_codex: None,
     });
     let active_days = options
         .active_window_days
@@ -2983,6 +4462,7 @@ fn resolve_scan_options(options: Option<ScanOptions>) -> ResolvedScanOptions {
         hide_archived: options.hide_archived.unwrap_or(true),
         include_copilot: options.include_copilot.unwrap_or(true),
         include_claude: options.include_claude.unwrap_or(true),
+        include_codex: options.include_codex.unwrap_or(true),
     }
 }
 
@@ -4905,6 +6385,398 @@ mod tests {
     }
 
     #[test]
+    fn scan_options_include_codex_by_default_and_can_disable_it() {
+        assert!(resolve_scan_options(None).include_codex);
+
+        let options = resolve_scan_options(Some(ScanOptions {
+            max_sessions: None,
+            active_window_days: None,
+            hide_archived: None,
+            include_copilot: None,
+            include_claude: None,
+            include_codex: Some(false),
+        }));
+
+        assert!(!options.include_codex);
+    }
+
+    #[test]
+    fn codex_status_maps_app_server_thread_states() {
+        let scan_time_ms = 1_780_653_500_000;
+        let recent_updated_ms = scan_time_ms - 60_000;
+        let old_updated_ms = scan_time_ms - STATUS_RECENT_CONTENT_WINDOW_MS - 1;
+
+        assert_eq!(
+            codex_status_from_thread(&json!({
+                "status": { "type": "active", "activeFlags": ["waitingOnUserInput"] }
+            }), old_updated_ms, scan_time_ms),
+            "waiting"
+        );
+        assert_eq!(
+            codex_status_from_thread(&json!({
+                "status": { "type": "active", "activeFlags": [] }
+            }), old_updated_ms, scan_time_ms),
+            "running"
+        );
+        assert_eq!(
+            codex_status_from_thread(&json!({ "status": "notLoaded" }), recent_updated_ms, scan_time_ms),
+            "running"
+        );
+        assert_eq!(
+            codex_status_from_thread(
+                &json!({
+                    "status": "notLoaded",
+                    "turns": [
+                        { "status": "completed", "startedAt": recent_updated_ms, "completedAt": recent_updated_ms + 1 }
+                    ]
+                }),
+                recent_updated_ms,
+                scan_time_ms
+            ),
+            "idle"
+        );
+        assert_eq!(
+            codex_status_from_thread(&json!({ "status": "notLoaded" }), old_updated_ms, scan_time_ms),
+            "idle"
+        );
+    }
+
+    #[test]
+    fn codex_thread_resource_percent_encodes_thread_id() {
+        assert_eq!(
+            codex_thread_resource("thread/with space"),
+            "codex://threads/thread%2Fwith%20space"
+        );
+    }
+
+    #[test]
+    fn codex_thread_summary_reads_app_server_thread_json() {
+        let scan_time_ms = 1_780_651_255_000;
+        let updated_ms = scan_time_ms - STATUS_RECENT_CONTENT_WINDOW_MS - 1;
+        let options = resolve_scan_options(Some(ScanOptions {
+            max_sessions: Some(80),
+            active_window_days: Some(7),
+            hide_archived: Some(true),
+            include_copilot: Some(false),
+            include_claude: Some(false),
+            include_codex: Some(true),
+        }));
+        let thread = json!({
+            "id": "019e9715-ea58-74f2-af8f-feca74ba9d08",
+            "preview": "Wire Codex desktop support",
+            "status": "notLoaded",
+            "updatedAt": updated_ms,
+            "cwd": r"F:\AiProject\AgentWatcher",
+            "path": r"C:\Users\me\.codex\sessions\2026\06\05\thread.jsonl",
+            "turns": [
+                {
+                    "id": "turn-new",
+                    "status": "completed",
+                    "startedAt": updated_ms,
+                    "completedAt": updated_ms + 1,
+                    "items": [
+                        {
+                            "type": "userMessage",
+                            "content": [
+                                { "type": "text", "text": "Latest Codex Todo handoff todo-mpz70wv9-afo8hl" }
+                            ]
+                        },
+                        {
+                            "type": "agentMessage",
+                            "text": "Latest AI reply."
+                        }
+                    ]
+                },
+                {
+                    "id": "turn-old",
+                    "status": "completed",
+                    "startedAt": updated_ms - 60_000,
+                    "completedAt": updated_ms - 59_000,
+                    "items": [
+                        {
+                            "type": "userMessage",
+                            "content": [
+                                { "type": "text", "text": "First prompt should not win" }
+                            ]
+                        },
+                        {
+                            "type": "agentMessage",
+                            "text": "Old AI reply."
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let session = read_codex_thread(&thread, scan_time_ms, &options).unwrap();
+
+        assert_eq!(session.id, "codex:019e9715-ea58-74f2-af8f-feca74ba9d08");
+        assert_eq!(session.provider, "codex");
+        assert_eq!(session.provider_label, "CX");
+        assert_eq!(session.status, "idle");
+        assert_eq!(session.workspace_path.as_deref(), Some(r"F:\AiProject\AgentWatcher"));
+        assert_eq!(
+            session.session_resource.as_deref(),
+            Some("codex://threads/019e9715-ea58-74f2-af8f-feca74ba9d08")
+        );
+        assert_eq!(session.message_count, 4);
+        assert_eq!(
+            session.last_user_message.as_deref(),
+            Some("Latest Codex Todo handoff todo-mpz70wv9-afo8hl")
+        );
+        assert_eq!(session.last_ai_message.as_deref(), Some("Latest AI reply."));
+        assert_eq!(session.todo_ids, vec!["todo-mpz70wv9-afo8hl".to_string()]);
+    }
+
+    #[test]
+    fn codex_thread_without_turn_summary_does_not_use_first_preview_as_last_user() {
+        let scan_time_ms = 1_780_651_255_000;
+        let updated_ms = scan_time_ms - STATUS_RECENT_CONTENT_WINDOW_MS - 1;
+        let options = resolve_scan_options(Some(ScanOptions {
+            max_sessions: Some(80),
+            active_window_days: Some(7),
+            hide_archived: Some(true),
+            include_copilot: Some(false),
+            include_claude: Some(false),
+            include_codex: Some(true),
+        }));
+        let thread = json!({
+            "id": "thread-preview-only",
+            "preview": "This is the first prompt, not the latest user message",
+            "status": "notLoaded",
+            "updatedAt": updated_ms,
+            "cwd": r"F:\AiProject\AgentWatcher"
+        });
+
+        let session = read_codex_thread_with_summary(&thread, scan_time_ms, &options, None).unwrap();
+
+        assert_eq!(session.title, "This is the first prompt, not the latest user message");
+        assert_eq!(session.last_user_message, None);
+        assert_eq!(session.last_ai_message, None);
+        assert_eq!(session.message_count, 0);
+    }
+
+    #[test]
+    fn codex_thread_uses_cached_turn_summary_for_preview_fields() {
+        let scan_time_ms = 1_780_651_255_000;
+        let updated_ms = scan_time_ms - STATUS_RECENT_CONTENT_WINDOW_MS - 1;
+        let options = resolve_scan_options(Some(ScanOptions {
+            max_sessions: Some(80),
+            active_window_days: Some(7),
+            hide_archived: Some(true),
+            include_copilot: Some(false),
+            include_claude: Some(false),
+            include_codex: Some(true),
+        }));
+        let thread = json!({
+            "id": "thread-cached-summary",
+            "preview": "First prompt should stay title-only",
+            "status": "notLoaded",
+            "updatedAt": updated_ms,
+            "cwd": r"F:\AiProject\AgentWatcher"
+        });
+        let summary = CodexTurnSummary {
+            thread_updated_ms: updated_ms,
+            fetched_ms: scan_time_ms,
+            last_user_message: Some("Actually latest user input".to_string()),
+            last_ai_message: Some("Actually latest AI reply".to_string()),
+            message_count: 2,
+            latest_turn_status: Some("completed".to_string()),
+        };
+
+        let session =
+            read_codex_thread_with_summary(&thread, scan_time_ms, &options, Some(&summary)).unwrap();
+
+        assert_eq!(session.status, "idle");
+        assert_eq!(session.last_user_message.as_deref(), Some("Actually latest user input"));
+        assert_eq!(session.last_ai_message.as_deref(), Some("Actually latest AI reply"));
+        assert_eq!(session.message_count, 2);
+    }
+
+    #[test]
+    fn codex_turn_summary_cache_is_keyed_by_thread_updated_ms() {
+        let thread_id = format!("cache-test-{}", current_time_ms());
+        cache_codex_turn_summary(
+            &thread_id,
+            CodexTurnSummary {
+                thread_updated_ms: 100,
+                fetched_ms: 200,
+                last_user_message: Some("cached user".to_string()),
+                last_ai_message: Some("cached ai".to_string()),
+                message_count: 2,
+                latest_turn_status: Some("completed".to_string()),
+            },
+        );
+
+        assert!(cached_codex_turn_summary(&thread_id, 101).is_none());
+        assert_eq!(
+            cached_codex_turn_summary(&thread_id, 100)
+                .and_then(|summary| summary.last_user_message)
+                .as_deref(),
+            Some("cached user")
+        );
+    }
+
+    #[test]
+    fn codex_scan_turn_fetch_budget_stays_small() {
+        let options = resolve_scan_options(Some(ScanOptions {
+            max_sessions: Some(80),
+            active_window_days: Some(7),
+            hide_archived: Some(true),
+            include_copilot: Some(false),
+            include_claude: Some(false),
+            include_codex: Some(true),
+        }));
+
+        assert_eq!(codex_scan_turn_fetch_budget(&options), CODEX_SCAN_TURN_FETCH_BUDGET);
+        assert!(codex_thread_list_limit(&options) <= 120);
+    }
+
+    #[test]
+    fn codex_live_handoff_and_todo_tracking_when_enabled() {
+        if env::var("AGENTWATCHER_CODEX_LIVE_TEST").ok().as_deref() != Some("1") {
+            return;
+        }
+
+        let mut workspace_dir = env::current_dir().unwrap();
+        if workspace_dir
+            .file_name()
+            .and_then(|file_name| file_name.to_str())
+            .map(|file_name| file_name.eq_ignore_ascii_case("src-tauri"))
+            .unwrap_or(false)
+        {
+            if let Some(parent_dir) = workspace_dir.parent() {
+                workspace_dir = parent_dir.to_path_buf();
+            }
+        }
+        let workspace_path = path_to_cli_string(&workspace_dir);
+        let token = format!("AGENTWATCHER-CODEX-LIVE-{:x}", current_time_ms());
+        let todo_id = format!("todo-awlive-{:x}", current_time_ms());
+        let prompt = format!(
+            "AgentWatcher live Codex verification.\nAgentWatcher Todo ID: {}\nToken: {}\nPlease reply only: received {}.",
+            todo_id, token, token
+        );
+
+        let thread_id = launch_codex_handoff(&workspace_path, &prompt).unwrap();
+        let options = resolve_scan_options(Some(ScanOptions {
+            max_sessions: Some(80),
+            active_window_days: Some(7),
+            hide_archived: Some(true),
+            include_copilot: Some(false),
+            include_claude: Some(false),
+            include_codex: Some(true),
+        }));
+
+        let session = wait_for_live_codex_session(&thread_id, &token, &options)
+            .unwrap_or_else(|| panic!("Codex live session was not visible: {}", thread_id));
+
+        assert_eq!(session.provider, "codex");
+        assert_eq!(session.provider_label, "CX");
+        assert_eq!(session.workspace_path.as_deref(), Some(workspace_path.as_str()));
+        let expected_resource = codex_thread_resource(&thread_id);
+        assert_eq!(session.session_resource.as_deref(), Some(expected_resource.as_str()));
+        assert!(session
+            .last_user_message
+            .as_deref()
+            .unwrap_or("")
+            .contains(&token));
+        assert!(session.todo_ids.contains(&todo_id));
+        assert!(matches!(session.status.as_str(), "running" | "waiting" | "idle"));
+        shutdown_codex_app_server();
+    }
+
+    fn wait_for_live_codex_session(
+        thread_id: &str,
+        token: &str,
+        options: &ResolvedScanOptions,
+    ) -> Option<AgentSession> {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while Instant::now() < deadline {
+            if let Some(session) = read_live_codex_session(thread_id, options) {
+                if session
+                    .last_user_message
+                    .as_deref()
+                    .map(|message| message.contains(token))
+                    .unwrap_or(false)
+                {
+                    return Some(session);
+                }
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        }
+        None
+    }
+
+    fn read_live_codex_session(
+        thread_id: &str,
+        options: &ResolvedScanOptions,
+    ) -> Option<AgentSession> {
+        with_codex_app_server_client(|client| {
+            let response = client.request(
+                "thread/list",
+                json!({
+                    "limit": 100,
+                    "sortKey": "updated_at",
+                    "sortDirection": "desc",
+                    "archived": false
+                }),
+            )?;
+            let Some(thread_json) = response
+                .get("data")
+                .and_then(Value::as_array)
+                .and_then(|threads| {
+                    threads
+                        .iter()
+                        .find(|thread| {
+                            string_at(thread, &["/id", "/sessionId"])
+                                .map(|candidate| candidate == thread_id)
+                                .unwrap_or(false)
+                        })
+                        .cloned()
+                })
+            else {
+                return Ok(None);
+            };
+
+            let enriched_thread = codex_thread_with_turns(client, &thread_json);
+            Ok(read_codex_thread(&enriched_thread, current_time_ms(), options))
+        })
+        .ok()
+        .flatten()
+    }
+
+    #[test]
+    fn performance_snapshot_samples_current_process_tree() {
+        let first_snapshot = get_performance_snapshot(None);
+        std::thread::sleep(Duration::from_millis(30));
+        let second_snapshot = get_performance_snapshot(None);
+
+        assert!(second_snapshot.captured_ms >= first_snapshot.captured_ms);
+        #[cfg(target_os = "windows")]
+        {
+            assert!(second_snapshot.process.process_count >= 1);
+            assert!(second_snapshot
+                .processes
+                .iter()
+                .any(|process| process.pid > 0 && !process.name.is_empty()));
+        }
+    }
+
+    #[test]
+    fn performance_snapshot_can_enable_agent_client_scope() {
+        let snapshot = get_performance_snapshot(Some(PerformanceSnapshotOptions {
+            include_agent_clients: Some(true),
+        }));
+
+        assert!(snapshot.gpu_note.contains("Advanced mode"));
+        #[cfg(target_os = "windows")]
+        assert!(snapshot
+            .processes
+            .iter()
+            .any(|process| process.role == "AgentWatcher" && process.root_pid > 0));
+    }
+
+    #[test]
     fn claude_empty_tool_use_result_answers_clear_pending_ask() {
         let mut status_hint = Some(SessionStatusHint::Waiting);
         let mut pending_ask_ids = HashSet::new();
@@ -4923,10 +6795,11 @@ mod tests {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             scan_sessions,
+            get_performance_snapshot,
             open_session,
             launch_handoff,
             get_todo_state,
@@ -4960,6 +6833,15 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running AgentWatcher");
+        .build(tauri::generate_context!())
+        .expect("error while building AgentWatcher");
+
+    app.run(|_app_handle, event| {
+        if matches!(
+            event,
+            tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
+        ) {
+            shutdown_codex_app_server();
+        }
+    });
 }

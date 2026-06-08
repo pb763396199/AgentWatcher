@@ -12,6 +12,8 @@
       document.documentElement.classList.add('is-handoff-window-pending');
     } else if (bootParams.get('todo') === '1') {
       document.documentElement.classList.add('is-todo-window-pending');
+    } else if (bootParams.get('performance') === '1') {
+      document.documentElement.classList.add('is-performance-window-pending');
     }
   </script>
   <style>
@@ -178,6 +180,12 @@
       border-color: #ce7248;
       background: #fff3ed;
       color: #9a4d25;
+    }
+
+    body[data-theme="light"] .provider.cx {
+      border-color: #2d74c4;
+      background: #edf5ff;
+      color: #15599f;
     }
 
     body[data-theme="light"] .lane-header {
@@ -438,7 +446,7 @@
 
     .window-controls {
       display: grid;
-      grid-template-columns: repeat(4, 30px);
+      grid-template-columns: repeat(5, 30px);
       height: 32px;
     }
 
@@ -458,6 +466,21 @@
     .win-btn:hover { background: #303030; color: #ffffff; }
     .win-btn.is-active { background: rgba(14, 99, 156, 0.32); color: #ffffff; }
     .win-btn.close:hover { background: #c42b1c; color: #ffffff; }
+
+    .performance-monitor-icon {
+      display: grid;
+      width: 16px;
+      height: 16px;
+      place-items: center;
+      color: currentColor;
+    }
+
+    .performance-monitor-icon svg {
+      display: block;
+      width: 16px;
+      height: 16px;
+      stroke: currentColor;
+    }
 
     .settings-panel {
       position: absolute;
@@ -1234,6 +1257,7 @@
 
     .provider.gh { color: #4ec9b0; border-color: #4ec9b0; }
     .provider.cl { color: #ce9178; border-color: #ce9178; }
+    .provider.cx { color: #75beff; border-color: #75beff; }
     .time {
       min-width: 0;
       overflow: hidden;
@@ -1814,6 +1838,616 @@
 
     .toast.show { display: flex; }
 
+    .perf-panel {
+      position: fixed;
+      left: auto;
+      top: auto;
+      right: 10px;
+      bottom: 10px;
+      z-index: 2147483600;
+      width: min(460px, calc(100vw - 20px));
+      min-width: 340px;
+      min-height: 320px;
+      height: min(620px, calc(100vh - 20px));
+      max-height: calc(100vh - 20px);
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: rgba(37, 37, 38, 0.97);
+      color: var(--text);
+      box-shadow: var(--shadow);
+      font-size: 11px;
+      line-height: 1.35;
+      pointer-events: auto;
+      overflow: hidden;
+    }
+
+    body.is-performance-window .perf-panel {
+      inset: 0 !important;
+      left: 0 !important;
+      top: 0 !important;
+      right: auto !important;
+      bottom: auto !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      min-width: 0;
+      min-height: 0;
+      max-height: none;
+      border-radius: 8px;
+    }
+
+    .perf-panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 34px;
+      padding: 7px 9px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      cursor: move;
+      user-select: none;
+    }
+
+    .perf-title {
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .perf-subtitle {
+      display: block;
+      margin-top: 1px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 500;
+    }
+
+    .perf-actions {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .perf-copy {
+      height: 24px;
+      padding: 0 9px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: var(--surface-3);
+      color: var(--text);
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .perf-icon {
+      width: 24px;
+      min-width: 24px;
+      padding: 0;
+      font-size: 15px;
+      line-height: 1;
+    }
+
+    .perf-copy:hover,
+    .perf-icon:hover {
+      border-color: var(--accent);
+    }
+
+    .perf-speed-wrap {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .perf-speed {
+      position: relative;
+      min-width: 52px;
+      max-width: 72px;
+      padding-right: 18px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .perf-speed::after {
+      content: "";
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      width: 6px;
+      height: 6px;
+      border-right: 1px solid currentColor;
+      border-bottom: 1px solid currentColor;
+      transform: translateY(-65%) rotate(45deg);
+      opacity: 0.78;
+    }
+
+    .perf-speed-menu {
+      position: absolute;
+      z-index: 5;
+      right: 0;
+      top: calc(100% + 5px);
+      min-width: 142px;
+      padding: 5px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface-2);
+      box-shadow: var(--shadow);
+    }
+
+    .perf-speed-menu[hidden] { display: none; }
+
+    .perf-speed-item {
+      width: 100%;
+      min-height: 27px;
+      display: grid;
+      grid-template-columns: 16px minmax(0, 1fr);
+      gap: 5px;
+      align-items: center;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--text);
+      cursor: pointer;
+      font: inherit;
+      font-size: 11px;
+      text-align: left;
+    }
+
+    .perf-speed-item:hover,
+    .perf-speed-item:focus-visible {
+      outline: none;
+      background: rgba(14, 99, 156, 0.25);
+      color: #ffffff;
+    }
+
+    .perf-speed-check {
+      color: var(--accent);
+      text-align: center;
+      opacity: 0;
+    }
+
+    .perf-speed-item.is-active .perf-speed-check {
+      opacity: 1;
+    }
+
+    .perf-speed-separator {
+      height: 1px;
+      margin: 5px 2px;
+      background: var(--border);
+    }
+
+    .perf-scope {
+      max-width: 112px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .perf-scope.is-active {
+      border-color: rgba(55, 148, 255, 0.7);
+      background: rgba(55, 148, 255, 0.18);
+      color: #9cdcfe;
+    }
+
+    .perf-body {
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      gap: 8px;
+      min-height: 0;
+      overflow: hidden;
+      padding: 9px;
+      scrollbar-width: thin;
+      scrollbar-color: #5f5f5f #252526;
+    }
+
+    .perf-signal {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      min-height: 34px;
+      padding: 7px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+    }
+
+    .perf-signal strong {
+      display: block;
+      color: var(--text);
+      font-size: 12px;
+    }
+
+    .perf-signal span {
+      display: block;
+      margin-top: 1px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .perf-chip {
+      min-width: 52px;
+      padding: 3px 7px;
+      border: 1px solid rgba(106, 153, 85, 0.48);
+      border-radius: 999px;
+      color: #b5cea8;
+      text-align: center;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .perf-chip.warn {
+      border-color: rgba(206, 145, 120, 0.58);
+      color: #ce9178;
+    }
+
+    .perf-chip.hot {
+      border-color: rgba(241, 76, 76, 0.58);
+      color: #ff9f9f;
+    }
+
+    .perf-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    .perf-metric {
+      min-width: 0;
+      min-height: 76px;
+      padding: 7px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+    }
+
+    .perf-metric span,
+    .perf-note {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .perf-metric strong {
+      display: block;
+      margin-top: 2px;
+      color: var(--text);
+      font-size: 13px;
+      letter-spacing: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .perf-explain {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.35;
+    }
+
+    .perf-card-spark {
+      width: 100%;
+      height: 28px;
+      margin-top: 5px;
+      overflow: hidden;
+    }
+
+    .perf-spark-svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .perf-spark-grid {
+      stroke: rgba(128, 128, 128, 0.16);
+      stroke-width: 1;
+    }
+
+    .perf-spark-line {
+      fill: none;
+      stroke: #9cdcfe;
+      stroke-width: 1.8;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .perf-spark-fill {
+      fill: rgba(156, 220, 254, 0.12);
+      stroke: none;
+    }
+
+    .perf-section-title {
+      display: flex;
+      justify-content: flex-start;
+      gap: 8px;
+      align-items: center;
+      min-height: 18px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0;
+      text-transform: none;
+      white-space: nowrap;
+    }
+
+    .perf-section-title span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .perf-process-panel {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 6px;
+      min-height: 0;
+      padding: 7px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: rgba(0, 0, 0, 0.08);
+      overflow: hidden;
+    }
+
+    .perf-process-scroll {
+      min-width: 0;
+      min-height: 0;
+      overflow: auto;
+      padding-right: 2px;
+      scrollbar-width: thin;
+      scrollbar-color: #5f5f5f #252526;
+    }
+
+    .perf-process-list {
+      display: grid;
+      gap: 4px;
+      min-width: 100%;
+      width: max-content;
+      min-height: min-content;
+      padding-bottom: 2px;
+      --perf-col-name: 132px;
+      --perf-col-role: 86px;
+      --perf-col-cpu: 54px;
+      --perf-col-trend: 74px;
+      --perf-col-mem: 78px;
+    }
+
+    .perf-process-row {
+      display: grid;
+      grid-template-columns: var(--perf-col-name) var(--perf-col-role) var(--perf-col-cpu) var(--perf-col-trend) var(--perf-col-mem);
+      gap: 4px;
+      align-items: center;
+      width: max-content;
+      min-width: 100%;
+      min-height: 25px;
+      padding: 4px 6px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: var(--surface);
+    }
+
+    .perf-process-row.role-codex,
+    .perf-process-row.role-codex-desktop { border-left: 2px solid #3794ff; }
+    .perf-process-row.role-vs-code,
+    .perf-process-row.role-vs-code-insiders,
+    .perf-process-row.role-vs-code-compatible { border-left: 2px solid #7a9cff; }
+    .perf-process-row.role-claude { border-left: 2px solid #ce9178; }
+    .perf-process-row.role-copilot { border-left: 2px solid #6a9955; }
+    .perf-process-row.role-agentwatcher { border-left: 2px solid #c586c0; }
+
+    .perf-process-row.header {
+      min-height: 20px;
+      border-color: transparent;
+      background: transparent;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    .perf-header-cell {
+      position: relative;
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      height: 20px;
+      padding-right: 7px;
+    }
+
+    .perf-process-row .perf-header-cell {
+      overflow: visible;
+    }
+
+    .perf-header-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .perf-header-cell.num {
+      justify-content: flex-end;
+    }
+
+    .perf-sort-btn {
+      flex: 1;
+      min-width: 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      font-weight: 700;
+      text-align: left;
+      cursor: pointer;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .perf-header-cell.num .perf-header-label {
+      text-align: right;
+    }
+
+    .perf-col-resizer {
+      position: absolute;
+      top: 2px;
+      right: -3px;
+      width: 7px;
+      height: 16px;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      cursor: col-resize;
+    }
+
+    .perf-col-resizer::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      bottom: 2px;
+      left: 3px;
+      width: 1px;
+      background: rgba(128, 128, 128, 0.38);
+    }
+
+    .perf-col-resizer:hover::after,
+    .perf-col-resizer:focus-visible::after {
+      background: var(--accent);
+    }
+
+    .perf-sort-btn.num {
+      text-align: right;
+    }
+
+    .perf-sort-btn.is-active {
+      color: var(--text);
+    }
+
+    .perf-process-row span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .perf-process-main {
+      display: grid;
+      gap: 1px;
+      min-width: 0;
+    }
+
+    .perf-process-main strong,
+    .perf-process-main em {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .perf-process-main strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .perf-process-main em {
+      color: var(--muted);
+      font-size: 9px;
+      font-style: normal;
+    }
+
+    .perf-role-pill {
+      justify-self: start;
+      max-width: 100%;
+      padding: 1px 5px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.03);
+      font-size: 9px;
+      font-weight: 700;
+    }
+
+    .perf-process-spark {
+      width: 100%;
+      min-width: 0;
+      height: 18px;
+      overflow: hidden;
+    }
+
+    .perf-process-row .num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .perf-note {
+      color: var(--muted);
+      white-space: normal;
+    }
+
+    .perf-resize-handle {
+      position: absolute;
+      z-index: 2;
+      width: 13px;
+      height: 13px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+
+    .perf-resize-handle.nw { left: 0; top: 0; cursor: nwse-resize; }
+    .perf-resize-handle.ne { right: 0; top: 0; cursor: nesw-resize; }
+    .perf-resize-handle.sw { left: 0; bottom: 0; cursor: nesw-resize; }
+    .perf-resize-handle.se { right: 0; bottom: 0; cursor: nwse-resize; }
+
+    .perf-raw {
+      margin: 0;
+      white-space: pre-wrap;
+      color: var(--text);
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 10px;
+      line-height: 1.4;
+    }
+
+    body[data-theme="light"] .perf-panel {
+      background: rgba(255, 255, 255, 0.97);
+    }
+
+    body[data-theme="light"] .perf-copy,
+    body[data-theme="light"] .perf-icon,
+    body[data-theme="light"] .perf-speed-menu,
+    body[data-theme="light"] .perf-metric,
+    body[data-theme="light"] .perf-signal,
+    body[data-theme="light"] .perf-process-row:not(.header) {
+      background: #ffffff;
+      color: #1f1f1f;
+    }
+
+    body[data-theme="light"] .perf-panel-head {
+      background: #f8f8f8;
+    }
+
+    body[data-theme="light"] .perf-chip {
+      color: #386a03;
+    }
+
+    body[data-theme="light"] .perf-chip.warn {
+      color: #8a4b00;
+    }
+
+    body[data-theme="light"] .perf-chip.hot {
+      color: #a4262c;
+    }
+
+    body[data-theme="light"] .perf-scope.is-active {
+      background: rgba(0, 120, 212, 0.12);
+      color: #005a9e;
+    }
+
     .handoff-context-menu {
       position: fixed;
       z-index: 2147483647;
@@ -2109,18 +2743,30 @@
     html.is-todo-window-pending .watcher-window,
     html.is-todo-window-pending .compact-rail,
     html.is-todo-window-pending .waiting-alert-layer,
+    html.is-performance-window-pending .watcher-window,
+    html.is-performance-window-pending .compact-rail,
+    html.is-performance-window-pending .waiting-alert-layer,
     body.is-todo-window .watcher-window,
     body.is-todo-window .compact-rail,
     body.is-todo-window .waiting-alert-layer,
     body.is-todo-window .session-preview,
-    body.is-todo-window .handoff-layer {
+    body.is-todo-window .handoff-layer,
+    body.is-performance-window .watcher-window,
+    body.is-performance-window .compact-rail,
+    body.is-performance-window .waiting-alert-layer,
+    body.is-performance-window .session-preview,
+    body.is-performance-window .handoff-layer,
+    body.is-performance-window .todo-window {
       display: none !important;
     }
 
-    body.is-todo-window .desktop {
+    body.is-todo-window .desktop,
+    body.is-performance-window .desktop {
       display: block;
       padding: 0;
       background: transparent;
+      width: 100vw;
+      height: 100vh;
     }
 
     body.is-todo-window .todo-window {
@@ -2593,7 +3239,7 @@
     }
 
     .agenttask-titlebar .window-controls {
-      grid-template-columns: repeat(4, 30px);
+      grid-template-columns: repeat(5, 30px);
     }
 
     .agenttask-body {
@@ -4111,6 +4757,7 @@
         <div class="drag-region" data-tauri-drag-region><span class="app-icon"></span><span class="window-title">AgentWatcher</span></div>
         <div class="window-controls">
           <button class="win-btn mode-switch-btn" id="todoToggle" type="button" aria-label="Switch to AgentTask" title="Switch to AgentTask"><span class="mode-switch-icon task-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M10 6h10"></path><path d="M10 12h10"></path><path d="M10 18h10"></path><path d="m3 6 1.5 1.5L7 4"></path><path d="m3 12 1.5 1.5L7 10"></path><circle cx="5" cy="18" r="1.2"></circle></svg></span></button>
+          <button class="win-btn performance-monitor-btn" id="performanceToggle" type="button" aria-pressed="false" data-performance-toggle data-i18n-title="performanceMonitor" data-i18n-aria="performanceMonitor"><span class="performance-monitor-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M4 19V5"></path><path d="M4 19h16"></path><path d="m7 15 3-4 3 2 4-6"></path><path d="M17 7h3v3"></path></svg></span></button>
           <button class="win-btn" id="settingsToggle" type="button" aria-label="Settings">⚙</button>
           <button class="win-btn" type="button" data-window-action="minimize" aria-label="Collapse to rail">−</button>
           <button class="win-btn close" type="button" data-window-action="close" aria-label="Close">×</button>
@@ -4186,6 +4833,10 @@
           <div class="setting-row">
             <label for="includeClaude" data-i18n="includeClaude">Claude sessions</label>
             <input class="setting-check" id="includeClaude" type="checkbox" checked />
+          </div>
+          <div class="setting-row">
+            <label for="includeCodex" data-i18n="includeCodex">Codex sessions</label>
+            <input class="setting-check" id="includeCodex" type="checkbox" checked />
           </div>
           <div class="setting-row">
             <label for="hideArchived" data-i18n="hideArchived">Hide archived</label>
@@ -4270,7 +4921,7 @@
             <section class="lane waiting" data-status="waiting" data-total="8">
               <div class="lane-header"><span class="lane-label"><span class="lane-dot"></span><span class="lane-name" data-lane-name="waiting">Waiting</span> <span class="lane-count">8</span></span><span class="lane-note" data-lane-note="priority">priority</span></div>
               <div class="cards">
-                <button class="session-card waiting" type="button" data-open="AesWorld"><div class="card-head"><span class="provider cl">C</span><span class="time">02:14</span></div><div class="workspace">AesWorld</div><div class="session-title">Review required</div><div class="card-foot"><span>User input</span></div></button>
+                <button class="session-card waiting" type="button" data-open="AesWorld"><div class="card-head"><span class="provider cx">CX</span><span class="time">02:14</span></div><div class="workspace">AesWorld</div><div class="session-title">Review required</div><div class="card-foot"><span>User input</span></div></button>
                 <button class="session-card waiting" type="button" data-open="AgentWatcher"><div class="card-head"><span class="provider gh">GH</span><span class="time">00:42</span></div><div class="workspace">AgentWatcher</div><div class="session-title">Pick UI path</div><div class="card-foot"><span>Decision</span></div></button>
                 <button class="session-card waiting" type="button" data-open="UE Master"><div class="card-head"><span class="provider cl">C</span><span class="time">05:06</span></div><div class="workspace">UE Master</div><div class="session-title">Permission hold</div><div class="card-foot"><span>Confirm</span></div></button>
                 <button class="session-card waiting" type="button" data-open="Prefab"><div class="card-head"><span class="provider gh">GH</span><span class="time">07:30</span></div><div class="workspace">Prefab</div><div class="session-title">Choose variant</div><div class="card-foot"><span>Waiting</span></div></button>
@@ -4285,7 +4936,7 @@
               <div class="lane-header"><span class="lane-label"><span class="lane-dot"></span><span class="lane-name" data-lane-name="running">Running</span> <span class="lane-count">12</span></span><span class="lane-note" data-lane-note="live">live</span></div>
               <div class="cards">
                 <button class="session-card running" type="button" data-open="Terrain"><div class="card-head"><span class="provider cl">C</span><span class="time">live</span></div><div class="workspace">Terrain</div><div class="session-title">Build fix loop</div><div class="card-foot"><span>Writing</span></div></button>
-                <button class="session-card running" type="button" data-open="Tools"><div class="card-head"><span class="provider gh">GH</span><span class="time">01:18</span></div><div class="workspace">Tools</div><div class="session-title">Index scanner</div><div class="card-foot"><span>Scanning</span></div></button>
+                <button class="session-card running" type="button" data-open="Tools"><div class="card-head"><span class="provider cx">CX</span><span class="time">01:18</span></div><div class="workspace">Tools</div><div class="session-title">Index scanner</div><div class="card-foot"><span>Scanning</span></div></button>
                 <button class="session-card running" type="button" data-open="Docs"><div class="card-head"><span class="provider cl">C</span><span class="time">03:44</span></div><div class="workspace">Docs</div><div class="session-title">Research report</div><div class="card-foot"><span>Reading</span></div></button>
                 <button class="session-card running" type="button" data-open="BuildHost"><div class="card-head"><span class="provider gh">GH</span><span class="time">04:12</span></div><div class="workspace">BuildHost</div><div class="session-title">Compile branch</div><div class="card-foot"><span>Running</span></div></button>
                 <button class="session-card running" type="button" data-open="Shader"><div class="card-head"><span class="provider cl">C</span><span class="time">05:50</span></div><div class="workspace">Shader</div><div class="session-title">Shader compile</div><div class="card-foot"><span>Running</span></div></button>
@@ -4302,7 +4953,7 @@
             <section class="lane idle" data-status="idle" data-total="31">
               <div class="lane-header"><span class="lane-label"><span class="lane-dot"></span><span class="lane-name" data-lane-name="idle">Idle</span> <span class="lane-count">31</span></span><span class="lane-note" data-lane-note="quiet">quiet</span></div>
               <div class="cards">
-                <button class="session-card idle" type="button" data-open="RuntimeShader"><div class="card-head"><span class="provider cl">C</span><span class="time">18m</span></div><div class="workspace">RuntimeShader</div><div class="session-title">No activity</div><div class="card-foot"><span>Idle</span></div></button>
+                <button class="session-card idle" type="button" data-open="RuntimeShader"><div class="card-head"><span class="provider cx">CX</span><span class="time">18m</span></div><div class="workspace">RuntimeShader</div><div class="session-title">No activity</div><div class="card-foot"><span>Idle</span></div></button>
                 <button class="session-card idle" type="button" data-open="Nanite"><div class="card-head"><span class="provider gh">GH</span><span class="time">24m</span></div><div class="workspace">Nanite</div><div class="session-title">Completed</div><div class="card-foot"><span>Idle</span></div></button>
                 <button class="session-card idle" type="button" data-open="Vegetation"><div class="card-head"><span class="provider cl">C</span><span class="time">31m</span></div><div class="workspace">Vegetation</div><div class="session-title">Paused</div><div class="card-foot"><span>Idle</span></div></button>
                 <button class="session-card idle" type="button" data-open="Buildings"><div class="card-head"><span class="provider gh">GH</span><span class="time">44m</span></div><div class="workspace">Buildings</div><div class="session-title">Archived</div><div class="card-foot"><span>Idle</span></div></button>
@@ -4324,6 +4975,7 @@
           </div>
           <div class="window-controls">
           <button class="win-btn mode-switch-btn" id="agentTaskBack" type="button" data-i18n-title="watcherSwitch" data-i18n-aria="watcherSwitch"><span class="mode-switch-icon watcher-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><rect x="4" y="5" width="16" height="11" rx="2"></rect><path d="M12 16v4"></path><path d="M8 20h8"></path></svg></span></button>
+            <button class="win-btn performance-monitor-btn" id="agentTaskPerformanceToggle" type="button" aria-pressed="false" data-performance-toggle data-i18n-title="performanceMonitor" data-i18n-aria="performanceMonitor"><span class="performance-monitor-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M4 19V5"></path><path d="M4 19h16"></path><path d="m7 15 3-4 3 2 4-6"></path><path d="M17 7h3v3"></path></svg></span></button>
             <button class="win-btn" id="agentTaskSettingsToggle" type="button" data-i18n-title="settings" data-i18n-aria="settings">⚙</button>
             <button class="win-btn" type="button" data-window-action="minimize" aria-label="Collapse to rail">−</button>
             <button class="win-btn close" type="button" data-window-action="close" aria-label="Close">×</button>
@@ -4512,6 +5164,101 @@
 
     <div class="session-preview" id="sessionPreview" aria-live="polite" hidden></div>
 
+    <section class="perf-panel" id="perfPanel" aria-live="polite" hidden>
+      <div class="perf-panel-head" id="perfTitlebar">
+        <div>
+          <strong class="perf-title" data-i18n="perfTitle">Performance</strong>
+          <span class="perf-subtitle" data-i18n="perfSubtitle">AgentWatcher diagnostics</span>
+        </div>
+        <div class="perf-actions">
+          <button class="perf-copy perf-scope" id="perfAgentScope" type="button" aria-pressed="false" data-i18n="perfAgentScopeOff">Agent processes</button>
+          <div class="perf-speed-wrap" id="perfSpeedWrap">
+            <button class="perf-copy perf-speed" id="perfUpdateSpeed" type="button" aria-haspopup="menu" aria-expanded="false" data-i18n-title="perfUpdateSpeedTitle">Normal</button>
+            <div class="perf-speed-menu" id="perfUpdateSpeedMenu" role="menu" hidden>
+              <button class="perf-speed-item" type="button" role="menuitem" data-perf-refresh-now="1">
+                <span class="perf-speed-check" aria-hidden="true"></span>
+                <span data-i18n="perfRefreshNow">Refresh now</span>
+              </button>
+              <div class="perf-speed-separator" role="separator"></div>
+              <button class="perf-speed-item" type="button" role="menuitemradio" data-perf-speed="high" aria-checked="false">
+                <span class="perf-speed-check" aria-hidden="true">●</span>
+                <span data-i18n="perfUpdateHigh">High</span>
+              </button>
+              <button class="perf-speed-item" type="button" role="menuitemradio" data-perf-speed="normal" aria-checked="false">
+                <span class="perf-speed-check" aria-hidden="true">●</span>
+                <span data-i18n="perfUpdateNormal">Normal</span>
+              </button>
+              <button class="perf-speed-item" type="button" role="menuitemradio" data-perf-speed="low" aria-checked="false">
+                <span class="perf-speed-check" aria-hidden="true">●</span>
+                <span data-i18n="perfUpdateLow">Low</span>
+              </button>
+              <button class="perf-speed-item" type="button" role="menuitemradio" data-perf-speed="paused" aria-checked="false">
+                <span class="perf-speed-check" aria-hidden="true">●</span>
+                <span data-i18n="perfUpdatePaused">Paused</span>
+              </button>
+            </div>
+          </div>
+          <button class="perf-copy" id="perfCopy" type="button" data-i18n="perfCopy">Copy</button>
+          <button class="perf-copy perf-icon" id="perfClose" type="button" data-i18n-title="perfClose" data-i18n-aria="perfClose">×</button>
+        </div>
+      </div>
+      <div class="perf-body">
+        <div class="perf-signal">
+          <div>
+            <strong id="perfSignalTitle">--</strong>
+            <span id="perfSignalText">--</span>
+          </div>
+          <div class="perf-chip" id="perfSignalChip">OK</div>
+        </div>
+        <div class="perf-grid">
+          <div class="perf-metric">
+            <span data-i18n="perfCpu">CPU</span>
+            <strong id="perfCpuValue">--</strong>
+            <div class="perf-card-spark" id="perfCpuSpark" aria-hidden="true"></div>
+            <em class="perf-explain" id="perfCpuExplain">--</em>
+          </div>
+          <div class="perf-metric">
+            <span data-i18n="perfMemory">Memory</span>
+            <strong id="perfMemoryValue">--</strong>
+            <em class="perf-explain" id="perfMemoryExplain">--</em>
+          </div>
+          <div class="perf-metric">
+            <span data-i18n="perfScan">Scan</span>
+            <strong id="perfScanValue">--</strong>
+            <em class="perf-explain" id="perfScanExplain">--</em>
+          </div>
+          <div class="perf-metric">
+            <span data-i18n="perfUiHealth">UI</span>
+            <strong id="perfUiValue">--</strong>
+            <em class="perf-explain" id="perfUiExplain">--</em>
+          </div>
+          <div class="perf-metric">
+            <span data-i18n="perfHotProcess">Hot process</span>
+            <strong id="perfHotProcessValue">--</strong>
+            <em class="perf-explain" id="perfHotProcessExplain">--</em>
+          </div>
+          <div class="perf-metric">
+            <span data-i18n="perfScopeMetric">Scope</span>
+            <strong id="perfScopeValue">--</strong>
+            <em class="perf-explain" id="perfScopeExplain">--</em>
+          </div>
+        </div>
+        <div class="perf-process-panel">
+          <div class="perf-section-title">
+            <span id="perfProcessesTitle" data-i18n="perfProcessesTitle">Process tree</span>
+            <span id="perfGpuNote">GPU N/A</span>
+          </div>
+          <div class="perf-process-scroll">
+            <div class="perf-process-list" id="perfProcesses"></div>
+          </div>
+        </div>
+      </div>
+      <button class="perf-resize-handle nw" type="button" data-perf-resize="nw" data-i18n-aria="perfResizeTopLeft"></button>
+      <button class="perf-resize-handle ne" type="button" data-perf-resize="ne" data-i18n-aria="perfResizeTopRight"></button>
+      <button class="perf-resize-handle sw" type="button" data-perf-resize="sw" data-i18n-aria="perfResizeBottomLeft"></button>
+      <button class="perf-resize-handle se" type="button" data-perf-resize="se" data-i18n-aria="perfResizeBottomRight"></button>
+    </section>
+
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   </main>
@@ -4533,16 +5280,19 @@
     let nativePreviewWindow = null;
     let nativeHandoffWindow = null;
     let nativeTodoWindow = null;
+    let nativePerformanceWindow = null;
     let latestSessionPreviewData = null;
     let latestHandoffPayload = null;
     let handoffWindowDesiredVisible = false;
     let todoWindowDesiredVisible = false;
+    let performanceWindowDesiredVisible = false;
     let sessionPreviewDesiredVisible = false;
     let sessionPreviewRequestId = 0;
     const runtimeParams = new URLSearchParams(window.location.search);
     const isPreviewWindow = runtimeParams.get('preview') === '1';
     const isHandoffWindow = runtimeParams.get('handoff') === '1';
     const isTodoWindow = runtimeParams.get('todo') === '1';
+    const isPerformanceWindow = runtimeParams.get('performance') === '1';
     const EXPANDED_MIN_WIDTH = 360;
     const EXPANDED_MIN_HEIGHT = 460;
     const WAITING_ALERT_GAP = 8;
@@ -4578,6 +5328,7 @@
     if (isPreviewWindow) document.body.classList.add('is-preview-window');
     if (isHandoffWindow) document.body.classList.add('is-handoff-window');
     if (isTodoWindow) document.body.classList.add('is-todo-window');
+    if (isPerformanceWindow) document.body.classList.add('is-performance-window');
     const root = document.documentElement;
     const toast = document.getElementById('toast');
     const sessionScroll = document.getElementById('sessionScroll');
@@ -4598,6 +5349,7 @@
     const dragRegion = document.querySelector('.drag-region');
     const appHeader = document.querySelector('.app-header');
     const windowActionButtons = Array.from(document.querySelectorAll('[data-window-action]'));
+    const performanceToggleButtons = Array.from(document.querySelectorAll('[data-performance-toggle]'));
     const settingsToggle = document.getElementById('settingsToggle');
     const settingsPanel = document.getElementById('settingsPanel');
     const settingLangButtons = Array.from(document.querySelectorAll('[data-setting-lang]'));
@@ -4607,10 +5359,13 @@
     const alwaysOnTop = document.getElementById('alwaysOnTop');
     const includeCopilot = document.getElementById('includeCopilot');
     const includeClaude = document.getElementById('includeClaude');
+    const includeCodex = document.getElementById('includeCodex');
     const hideArchived = document.getElementById('hideArchived');
     const activeWindowDays = document.getElementById('activeWindowDays');
     const maxSessions = document.getElementById('maxSessions');
     const refreshIntervalSeconds = document.getElementById('refreshIntervalSeconds');
+    const performanceDebug = document.getElementById('performanceDebug');
+    const performanceAgentProcesses = document.getElementById('performanceAgentProcesses');
     const maxCardsPerRow = document.getElementById('maxCardsPerRow');
     const agentTaskFlipMs = document.getElementById('agentTaskFlipMs');
     const agentTaskTitleSize = document.getElementById('agentTaskTitleSize');
@@ -4618,6 +5373,34 @@
     const waitingAlertDurationSeconds = document.getElementById('waitingAlertDurationSeconds');
     const bridgeStatus = document.getElementById('bridgeStatus');
     const bridgeAction = document.getElementById('bridgeAction');
+    const perfPanel = document.getElementById('perfPanel');
+    const perfTitlebar = document.getElementById('perfTitlebar');
+    const perfAgentScope = document.getElementById('perfAgentScope');
+    const perfSpeedWrap = document.getElementById('perfSpeedWrap');
+    const perfUpdateSpeed = document.getElementById('perfUpdateSpeed');
+    const perfUpdateSpeedMenu = document.getElementById('perfUpdateSpeedMenu');
+    const perfCopy = document.getElementById('perfCopy');
+    const perfClose = document.getElementById('perfClose');
+    const perfResizeHandles = Array.from(document.querySelectorAll('[data-perf-resize]'));
+    const perfSignalTitle = document.getElementById('perfSignalTitle');
+    const perfSignalText = document.getElementById('perfSignalText');
+    const perfSignalChip = document.getElementById('perfSignalChip');
+    const perfCpuValue = document.getElementById('perfCpuValue');
+    const perfCpuExplain = document.getElementById('perfCpuExplain');
+    const perfMemoryValue = document.getElementById('perfMemoryValue');
+    const perfMemoryExplain = document.getElementById('perfMemoryExplain');
+    const perfScanValue = document.getElementById('perfScanValue');
+    const perfScanExplain = document.getElementById('perfScanExplain');
+    const perfCpuSpark = document.getElementById('perfCpuSpark');
+    const perfUiValue = document.getElementById('perfUiValue');
+    const perfUiExplain = document.getElementById('perfUiExplain');
+    const perfHotProcessValue = document.getElementById('perfHotProcessValue');
+    const perfHotProcessExplain = document.getElementById('perfHotProcessExplain');
+    const perfScopeValue = document.getElementById('perfScopeValue');
+    const perfScopeExplain = document.getElementById('perfScopeExplain');
+    const perfProcessesTitle = document.getElementById('perfProcessesTitle');
+    const perfGpuNote = document.getElementById('perfGpuNote');
+    const perfProcesses = document.getElementById('perfProcesses');
     const urgentChip = document.getElementById('urgentChip');
     const workspaceLabel = document.getElementById('workspaceLabel');
     const perRowLabel = document.getElementById('perRowLabel');
@@ -4765,6 +5548,21 @@
     let eventRefreshTimer = 0;
     let refreshInFlight = false;
     let refreshQueued = false;
+    let performanceTimer = 0;
+    let performanceFrontendTimer = 0;
+    let performanceFrameId = 0;
+    let performanceFrameCount = 0;
+    let performanceFrameSampleStarted = 0;
+    let performanceFps = 0;
+    let performanceSnapshot = null;
+    let performanceFrontendData = null;
+    let performanceObserver = null;
+    let performanceLongTaskCount = 0;
+    let performanceLongTaskMs = 0;
+    let performanceLastHistoryMs = 0;
+    let performanceCpuHistory = [];
+    let performanceProcessCpuHistory = new Map();
+    let performanceProcessSort = { key: 'cpuPercent', direction: 'desc' };
     let isTextComposing = false;
     let textInputQuietUntil = 0;
     let inputGuardFlushTimer = 0;
@@ -4787,6 +5585,21 @@
     const PAGE_ZOOM_LEVELS = [25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500];
     const TEXT_INPUT_QUIET_MS = 1400;
     const TEXT_COMPOSITION_QUIET_MS = 2200;
+    const PERFORMANCE_PANEL_GEOMETRY_KEY = 'agentwatcher.performancePanelGeometry';
+    const PERFORMANCE_PROCESS_COLUMNS_KEY = 'agentwatcher.performanceProcessColumns';
+    const PERFORMANCE_PANEL_MIN_WIDTH = 340;
+    const PERFORMANCE_PANEL_MIN_HEIGHT = 320;
+    const PERFORMANCE_PANEL_DEFAULT_SIZE = { width: 460, height: 620 };
+    const PERFORMANCE_HISTORY_LIMIT = 28;
+    const PERFORMANCE_PROCESS_COLUMN_DEFAULTS = { name: 132, role: 86, cpu: 54, trend: 74, memory: 78 };
+    const PERFORMANCE_PROCESS_COLUMN_MIN = { name: 86, role: 58, cpu: 44, trend: 46, memory: 56 };
+    const PERFORMANCE_UPDATE_SPEEDS = [
+      { key: 'high', intervalMs: 500, labelKey: 'perfUpdateHigh' },
+      { key: 'normal', intervalMs: 1500, labelKey: 'perfUpdateNormal' },
+      { key: 'low', intervalMs: 4000, labelKey: 'perfUpdateLow' },
+      { key: 'paused', intervalMs: 0, labelKey: 'perfUpdatePaused' }
+    ];
+    let performanceProcessColumns = loadPerformanceProcessColumns();
     const defaultSettings = {
       language: document.body.dataset.lang || 'en',
       theme: document.body.dataset.theme || 'dark',
@@ -4794,6 +5607,7 @@
       alwaysOnTop: true,
       includeCopilot: true,
       includeClaude: true,
+      includeCodex: true,
       hideArchived: true,
       activeWindowDays: 7,
       maxSessions: 80,
@@ -4803,7 +5617,10 @@
       agentTaskTitleSize: AGENT_TASK_TITLE_DEFAULT_PX,
       pageZoom: PAGE_ZOOM_DEFAULT,
       waitingAlertSize: 'medium',
-      waitingAlertDurationSeconds: 15
+      waitingAlertDurationSeconds: 15,
+      performanceDebug: false,
+      performanceAgentProcesses: false,
+      performanceUpdateSpeed: 'normal'
     };
     let settings = loadSettings();
     const i18n = {
@@ -4899,6 +5716,13 @@
       }
     };
       Object.assign(i18n.en, {
+        openWorkspace: 'Open workspace: ',
+        includeCodex: 'Codex sessions',
+        handoffCodexLabel: 'Codex Desktop',
+        handoffCodexDescription: 'Create a Codex desktop thread in the selected workspace and send the handoff prompt',
+        handoffTargetAgentCodex: 'Codex desktop',
+        handoffProviderCodex: 'Codex desktop',
+        handoffParserHintCodex: 'Codex sessions are available through the Codex desktop app-server. Use the provider resource to open the source thread when needed, and rely on the snapshot if the source thread is not accessible.',
         agentTaskTitle: 'AgentTask',
         watcherWindowLabel: 'AgentWatcher Windows app window',
         agentTaskFaceLabel: 'AgentTask workspace todo',
@@ -4972,9 +5796,80 @@
         handoffResizeBottomLeft: 'Resize handoff panel from bottom left',
         handoffResizeBottomRight: 'Resize handoff panel from bottom right',
         todoMoveUp: 'Move task up',
-        todoMoveDown: 'Move task down'
+        todoMoveDown: 'Move task down',
+        diagnostics: 'Diagnostics',
+        performanceDebug: 'Performance debug overlay',
+        performanceAgentProcesses: 'Advanced agent process scan',
+        performanceMonitor: 'Performance monitor',
+        perfTitle: 'Performance',
+        perfSubtitle: 'AgentWatcher diagnostics',
+        perfCopy: 'Copy',
+        perfClose: 'Close diagnostics',
+        perfAgentScopeOff: 'AW only',
+        perfAgentScopeOn: 'All agents',
+        perfAgentScopeExplain: 'Include compatible VS Code, Copilot, Claude, and Codex client process trees.',
+        perfUpdateSpeedTitle: 'Update speed',
+        perfUpdateSpeedSet: 'Update speed',
+        perfRefreshNow: 'Refresh now',
+        perfUpdateHigh: 'High',
+        perfUpdateNormal: 'Normal',
+        perfUpdateLow: 'Low',
+        perfUpdatePaused: 'Paused',
+        perfLightScope: 'AgentWatcher only',
+        perfCopied: 'Performance snapshot copied',
+        perfCopyFailed: 'Copy failed',
+        perfCpu: 'Process CPU',
+        perfMemory: 'Memory',
+        perfScan: 'Scan',
+        perfUiHealth: 'UI health',
+        perfHotProcess: 'Hot process',
+        perfScopeMetric: 'Scope',
+        perfProcessesTitle: 'AgentWatcher process tree',
+        perfProcessesTitleAdvanced: 'Compatible agent process trees',
+        perfGpuNA: 'GPU N/A in lightweight mode',
+        perfSignalOk: 'OK',
+        perfSignalWatch: 'Watch',
+        perfSignalHot: 'Hot',
+        perfSignalOkTitle: 'No obvious bottleneck',
+        perfSignalOkText: 'Scan, UI frames, and process usage are inside the current thresholds.',
+        perfSignalScanTitle: 'Scan latency is high',
+        perfSignalScanText: 'Last session scan is slow; check provider counts and Codex RPCs.',
+        perfSignalCodexTitle: 'Codex RPC is active',
+        perfSignalCodexText: 'Codex turns were fetched this scan; repeated spikes point at CX preview/session enrichment.',
+        perfSignalUiTitle: 'UI thread is blocked',
+        perfSignalUiText: 'Low FPS or long tasks mean rendering or synchronous JS is causing jank.',
+        perfSignalProcessTitle: 'Process usage is high',
+        perfSignalProcessText: 'A child process is consuming CPU or memory; check the process tree below.',
+        perfCpuExplain: 'Live CPU heartbeat for the sampled AgentWatcher process tree.',
+        perfCpuExplainAdvanced: 'Sampled AgentWatcher and compatible agent client process trees across logical cores.',
+        perfMemoryExplain: 'Working set memory currently resident in RAM.',
+        perfMemoryExplainAdvanced: 'Working set memory for sampled AgentWatcher and agent client process trees.',
+        perfScanExplain: 'Last scan duration, provider load, and Codex turn-fetch pressure when present.',
+        perfUiExplain: 'Main window FPS and long tasks over 50ms.',
+        perfHotProcessExplain: 'Highest current CPU process; memory is shown for tie-breaking.',
+        perfScopeExplain: 'Sampled process count and detected root agent groups.',
+        perfProcessName: 'Process',
+        perfProcessRole: 'Scope',
+        perfProcessPid: 'PID',
+        perfProcessCpu: 'CPU',
+        perfProcessTrend: 'Trend',
+        perfProcessMem: 'RAM',
+        perfSortAsc: 'asc',
+        perfSortDesc: 'desc',
+        perfNoProcesses: 'No process sample yet',
+        perfResizeTopLeft: 'Resize diagnostics from top left',
+        perfResizeTopRight: 'Resize diagnostics from top right',
+        perfResizeBottomLeft: 'Resize diagnostics from bottom left',
+        perfResizeBottomRight: 'Resize diagnostics from bottom right'
       });
       Object.assign(i18n.zh, {
+        openWorkspace: '打开工作区：',
+        includeCodex: 'Codex 会话',
+        handoffCodexLabel: 'Codex 桌面端',
+        handoffCodexDescription: '在选中的工作区创建 Codex 桌面端会话，并发送接续提示词',
+        handoffTargetAgentCodex: 'Codex 桌面端',
+        handoffProviderCodex: 'Codex 桌面端',
+        handoffParserHintCodex: 'Codex 会话通过 Codex 桌面端 app-server 访问。需要时使用 provider resource 打开来源线程；若无法访问来源线程，则从快照继续。',
         agentTaskTitle: 'AgentTask',
         watcherWindowLabel: 'AgentWatcher 主窗口',
         agentTaskFaceLabel: 'AgentTask 工作区待办',
@@ -5048,13 +5943,78 @@
         handoffResizeBottomLeft: '从左下角调整接续面板大小',
         handoffResizeBottomRight: '从右下角调整接续面板大小',
         todoMoveUp: '上移任务',
-        todoMoveDown: '下移任务'
+        todoMoveDown: '下移任务',
+        diagnostics: '诊断',
+        performanceDebug: '性能诊断浮层',
+        performanceAgentProcesses: '高级 Agent 进程扫描',
+        performanceMonitor: '性能监控',
+        perfTitle: '性能',
+        perfSubtitle: 'AgentWatcher 诊断',
+        perfCopy: '复制',
+        perfClose: '关闭诊断',
+        perfAgentScopeOff: '仅 AW',
+        perfAgentScopeOn: '全部 Agent',
+        perfAgentScopeExplain: '纳入兼容的 VS Code、Copilot、Claude、Codex 客户端进程树。',
+        perfUpdateSpeedTitle: '更新速度',
+        perfUpdateSpeedSet: '更新速度',
+        perfRefreshNow: '立即刷新(R)',
+        perfUpdateHigh: '高(H)',
+        perfUpdateNormal: '正常(N)',
+        perfUpdateLow: '低(L)',
+        perfUpdatePaused: '已暂停(P)',
+        perfLightScope: '仅 AgentWatcher',
+        perfCopied: '性能快照已复制',
+        perfCopyFailed: '复制失败',
+        perfCpu: '进程 CPU',
+        perfMemory: '内存',
+        perfScan: '扫描',
+        perfUiHealth: 'UI 健康',
+        perfHotProcess: '热点进程',
+        perfScopeMetric: '采样范围',
+        perfProcessesTitle: 'AgentWatcher 进程树',
+        perfProcessesTitleAdvanced: '兼容 Agent 进程树',
+        perfGpuNA: '轻量模式不采样 GPU',
+        perfSignalOk: '正常',
+        perfSignalWatch: '观察',
+        perfSignalHot: '热点',
+        perfSignalOkTitle: '暂无明显瓶颈',
+        perfSignalOkText: '扫描、UI 帧率和进程资源都在当前阈值内。',
+        perfSignalScanTitle: '扫描耗时偏高',
+        perfSignalScanText: '最近一次会话扫描偏慢；重点看 provider 数量和 Codex RPC。',
+        perfSignalCodexTitle: 'Codex RPC 正在活跃',
+        perfSignalCodexText: '本轮扫描拉取了 Codex turns；若持续尖峰，问题在 CX 预览/会话补全。',
+        perfSignalUiTitle: 'UI 线程被阻塞',
+        perfSignalUiText: 'FPS 偏低或长任务偏多，说明渲染或同步 JS 造成卡顿。',
+        perfSignalProcessTitle: '进程资源偏高',
+        perfSignalProcessText: '某个子进程 CPU 或内存偏高；查看下面进程树。',
+        perfCpuExplain: 'AgentWatcher 进程树的实时 CPU 心电图。',
+        perfCpuExplainAdvanced: 'AgentWatcher 与兼容 Agent 客户端进程树在所有逻辑核心上的 CPU 占比。',
+        perfMemoryExplain: '当前常驻 RAM 的工作集内存。',
+        perfMemoryExplainAdvanced: 'AgentWatcher 与兼容 Agent 客户端进程树当前常驻 RAM 的工作集内存。',
+        perfScanExplain: '最近一次扫描耗时、provider 压力，以及必要时的 Codex turn 拉取压力。',
+        perfUiExplain: '主窗口 FPS 和超过 50ms 的长任务。',
+        perfHotProcessExplain: '当前 CPU 最高的进程；内存用于辅助判断。',
+        perfScopeExplain: '当前采样到的进程数量和根 Agent 分组。',
+        perfProcessName: '进程',
+        perfProcessRole: '范围',
+        perfProcessPid: 'PID',
+        perfProcessCpu: 'CPU',
+        perfProcessTrend: '趋势',
+        perfProcessMem: '内存',
+        perfSortAsc: '升序',
+        perfSortDesc: '降序',
+        perfNoProcesses: '还没有进程采样',
+        perfResizeTopLeft: '从左上角调整诊断面板大小',
+        perfResizeTopRight: '从右上角调整诊断面板大小',
+        perfResizeBottomLeft: '从左下角调整诊断面板大小',
+        perfResizeBottomRight: '从右下角调整诊断面板大小'
       });
 
     const handoffLaunchModes = [
       { value: 'agents', labelKey: 'handoffAgentsLabel', descriptionKey: 'handoffAgentsDescription' },
       { value: 'code-chat', labelKey: 'handoffCodeChatLabel', descriptionKey: 'handoffCodeChatDescription' },
-      { value: 'claude-panel', labelKey: 'handoffClaudeLabel', descriptionKey: 'handoffClaudeDescription' }
+      { value: 'claude-panel', labelKey: 'handoffClaudeLabel', descriptionKey: 'handoffClaudeDescription' },
+      { value: 'codex-app', labelKey: 'handoffCodexLabel', descriptionKey: 'handoffCodexDescription' }
     ];
     let currentLang = settings.language;
     let previewCard = null;
@@ -5709,7 +6669,9 @@
     }
 
     function todoProviderForMode(mode) {
-      return mode === 'claude-panel' ? 'claude' : 'copilot';
+      if (mode === 'claude-panel') return 'claude';
+      if (mode === 'codex-app') return 'codex';
+      return 'copilot';
     }
 
     function todoStatusText(status) {
@@ -7482,8 +8444,10 @@
 
     function todoDispatchModeFromSession(session) {
       const text = [session?.lastUserMessage, session?.title, session?.branch].filter(Boolean).join('\n').toLowerCase();
+      if (text.includes('codex desktop') || text.includes('codex 桌面端')) return 'codex-app';
       if (text.includes('claude code') || text.includes('claude code 编辑器')) return 'claude-panel';
       if (text.includes('copilot cli') || text.includes('copilot cli 编辑器')) return 'code-chat';
+      if (session?.provider === 'codex') return 'codex-app';
       if (session?.provider === 'claude') return 'claude-panel';
       return 'agents';
     }
@@ -7941,6 +8905,8 @@
 
     function sessionFromCard(card, fallbackId) {
       const providerText = cardText(card, '.provider');
+      const provider = providerMeta(card.dataset.provider || providerText);
+      const fallbackProvider = provider.provider === 'unknown' ? providerMeta(providerText || 'claude') : provider;
       return normalizeSession({
         id: card.dataset.sessionId || fallbackId,
         status: cardStatus(card),
@@ -7951,8 +8917,8 @@
         workspaceLabel: card.dataset.workspaceLabel || cardText(card, '.workspace') || '',
         workspaceGroup: card.dataset.workspaceGroup || '',
         workspaceDiscriminator: card.dataset.workspaceDiscriminator || '',
-        provider: providerText === 'GH' ? 'copilot' : 'claude',
-        providerLabel: providerText || 'C',
+        provider: fallbackProvider.provider,
+        providerLabel: providerText || fallbackProvider.label,
         timeLabel: cardText(card, '.time'),
         title: cardText(card, '.session-title') || card.dataset.open || 'Session',
         branch: cardText(card, '.card-foot span') || statusText(cardStatus(card))
@@ -8050,6 +9016,24 @@
       }, 700);
     }
 
+    function normalizePerformanceUpdateSpeed(value) {
+      const text = String(value || '').trim();
+      return PERFORMANCE_UPDATE_SPEEDS.some(item => item.key === text) ? text : defaultSettings.performanceUpdateSpeed;
+    }
+
+    function performanceUpdateSpeedConfig(speed = settings.performanceUpdateSpeed) {
+      const key = normalizePerformanceUpdateSpeed(speed);
+      return PERFORMANCE_UPDATE_SPEEDS.find(item => item.key === key) || PERFORMANCE_UPDATE_SPEEDS[1];
+    }
+
+    function performanceUpdateIntervalMs() {
+      return performanceUpdateSpeedConfig().intervalMs;
+    }
+
+    function isPerformanceRefreshPaused() {
+      return performanceUpdateIntervalMs() <= 0;
+    }
+
     function loadSettings() {
       try {
         const savedSettings = JSON.parse(localStorage.getItem('agentwatcher.settings') || '{}');
@@ -8063,6 +9047,7 @@
           alwaysOnTop: savedSettings.alwaysOnTop !== false,
           includeCopilot: savedSettings.includeCopilot !== false,
           includeClaude: savedSettings.includeClaude !== false,
+          includeCodex: savedSettings.includeCodex !== false,
           hideArchived: savedSettings.hideArchived !== false,
           activeWindowDays: clampNumber(savedSettings.activeWindowDays, 1, 30, defaultSettings.activeWindowDays),
           maxSessions: clampNumber(savedSettings.maxSessions, 1, 5000, defaultSettings.maxSessions),
@@ -8072,7 +9057,10 @@
           agentTaskTitleSize: clampNumber(savedSettings.agentTaskTitleSize, AGENT_TASK_TITLE_MIN_PX, AGENT_TASK_TITLE_MAX_PX, defaultSettings.agentTaskTitleSize),
           pageZoom: clampNumber(savedSettings.pageZoom, PAGE_ZOOM_MIN, PAGE_ZOOM_MAX, defaultSettings.pageZoom),
           waitingAlertSize: savedAlertSize,
-          waitingAlertDurationSeconds: clampNumber(savedSettings.waitingAlertDurationSeconds, 1, 300, defaultSettings.waitingAlertDurationSeconds)
+          waitingAlertDurationSeconds: clampNumber(savedSettings.waitingAlertDurationSeconds, 1, 300, defaultSettings.waitingAlertDurationSeconds),
+          performanceDebug: savedSettings.performanceDebug === true,
+          performanceAgentProcesses: savedSettings.performanceAgentProcesses === true,
+          performanceUpdateSpeed: normalizePerformanceUpdateSpeed(savedSettings.performanceUpdateSpeed)
         };
       } catch (error) {
         return { ...defaultSettings };
@@ -8102,7 +9090,7 @@
     }
 
     function isChildWindow() {
-      return isPreviewWindow || isHandoffWindow || isTodoWindow;
+      return isPreviewWindow || isHandoffWindow || isTodoWindow || isPerformanceWindow;
     }
 
     function pageZoomFactor() {
@@ -8209,19 +9197,23 @@
         layout: settings.layout,
         agentTaskFlipMs: agentTaskFlipDurationMs(),
         agentTaskTitleSize: clampNumber(settings.agentTaskTitleSize, AGENT_TASK_TITLE_MIN_PX, AGENT_TASK_TITLE_MAX_PX, defaultSettings.agentTaskTitleSize),
-        alwaysOnTop: !!settings.alwaysOnTop
+        alwaysOnTop: !!settings.alwaysOnTop,
+        performanceAgentProcesses: !!settings.performanceAgentProcesses,
+        performanceUpdateSpeed: normalizePerformanceUpdateSpeed(settings.performanceUpdateSpeed)
       };
     }
 
     function emitRuntimeSettings(targetLabel) {
       const payload = runtimeSettingsPayload();
-      const targets = targetLabel ? [targetLabel] : ['session-preview', 'handoff-panel', 'todo-panel'];
+      const targets = targetLabel ? [targetLabel] : ['session-preview', 'handoff-panel', 'todo-panel', 'performance-panel'];
       targets.forEach(label => tauriEmitTo?.(label, 'agentwatcher-settings-data', payload).catch(() => {}));
       return payload;
     }
 
     function applyRuntimeSettings(payload) {
       if (!payload) return;
+      const previousAgentScope = !!settings.performanceAgentProcesses;
+      const previousUpdateSpeed = normalizePerformanceUpdateSpeed(settings.performanceUpdateSpeed);
       settings = {
         ...settings,
         language: ['en', 'zh'].includes(payload.language) ? payload.language : settings.language,
@@ -8229,13 +9221,20 @@
         layout: ['horizontal', 'vertical'].includes(payload.layout) ? payload.layout : settings.layout,
         agentTaskFlipMs: clampNumber(payload.agentTaskFlipMs, AGENT_TASK_FLIP_MIN_MS, AGENT_TASK_FLIP_MAX_MS, settings.agentTaskFlipMs),
         agentTaskTitleSize: clampNumber(payload.agentTaskTitleSize, AGENT_TASK_TITLE_MIN_PX, AGENT_TASK_TITLE_MAX_PX, settings.agentTaskTitleSize),
-        alwaysOnTop: typeof payload.alwaysOnTop === 'boolean' ? payload.alwaysOnTop : settings.alwaysOnTop
+        alwaysOnTop: typeof payload.alwaysOnTop === 'boolean' ? payload.alwaysOnTop : settings.alwaysOnTop,
+        performanceAgentProcesses: typeof payload.performanceAgentProcesses === 'boolean' ? payload.performanceAgentProcesses : settings.performanceAgentProcesses,
+        performanceUpdateSpeed: normalizePerformanceUpdateSpeed(payload.performanceUpdateSpeed || settings.performanceUpdateSpeed)
       };
       applySettingsControls();
       applyAlwaysOnTopSetting();
       applyLanguage();
       if (isPreviewWindow && latestSessionPreviewData) updatePreviewWindowContent(latestSessionPreviewData);
       if (isHandoffWindow) updateHandoffPrompt();
+      const updateSpeedChanged = previousUpdateSpeed !== normalizePerformanceUpdateSpeed(settings.performanceUpdateSpeed);
+      if (settings.performanceDebug && (previousAgentScope !== !!settings.performanceAgentProcesses || updateSpeedChanged)) {
+        performanceSnapshot = null;
+        restartPerformanceSampling({ sampleNow: !isPerformanceRefreshPaused() });
+      }
     }
 
     function loadSessionPreviewSize() {
@@ -8290,6 +9289,7 @@
       return {
         includeCopilot: settings.includeCopilot,
         includeClaude: settings.includeClaude,
+        includeCodex: settings.includeCodex,
         hideArchived: settings.hideArchived,
         activeWindowDays: settings.activeWindowDays,
         maxSessions: settings.maxSessions
@@ -8306,10 +9306,19 @@
       alwaysOnTop.checked = settings.alwaysOnTop;
       includeCopilot.checked = settings.includeCopilot;
       includeClaude.checked = settings.includeClaude;
+      includeCodex.checked = settings.includeCodex;
       hideArchived.checked = settings.hideArchived;
       activeWindowDays.value = String(settings.activeWindowDays);
       maxSessions.value = String(settings.maxSessions);
       refreshIntervalSeconds.value = String(settings.refreshIntervalSeconds);
+      if (performanceDebug) performanceDebug.checked = !!settings.performanceDebug;
+      if (performanceAgentProcesses) performanceAgentProcesses.checked = !!settings.performanceAgentProcesses;
+      performanceToggleButtons.forEach(button => {
+        button.classList.toggle('is-active', !!settings.performanceDebug);
+        button.setAttribute('aria-pressed', String(!!settings.performanceDebug));
+      });
+      updatePerformanceScopeControl();
+      updatePerformanceSpeedControl();
       maxCardsPerRow.value = String(settings.maxCardsPerRow);
       agentTaskFlipMs.value = String(settings.agentTaskFlipMs);
       agentTaskTitleSize.value = String(settings.agentTaskTitleSize);
@@ -8321,8 +9330,67 @@
       document.querySelectorAll('[data-i18n]').forEach(element => {
         element.textContent = t(element.dataset.i18n);
       });
+      updatePerformanceScopeControl();
+      updatePerformanceSpeedControl();
       applyWaitingAlertSize();
       syncWaitingAlertLayout();
+      updatePerformanceDebugMode();
+    }
+
+    function updatePerformanceScopeControl() {
+      const enabled = !!settings.performanceAgentProcesses;
+      if (performanceAgentProcesses) performanceAgentProcesses.checked = enabled;
+      if (!perfAgentScope) return;
+      perfAgentScope.classList.toggle('is-active', enabled);
+      perfAgentScope.setAttribute('aria-pressed', String(enabled));
+      perfAgentScope.textContent = enabled ? t('perfAgentScopeOn') : t('perfAgentScopeOff');
+      perfAgentScope.title = t('perfAgentScopeExplain');
+    }
+
+    function updatePerformanceSpeedControl() {
+      const config = performanceUpdateSpeedConfig();
+      if (perfUpdateSpeed) {
+        perfUpdateSpeed.textContent = t(config.labelKey);
+        perfUpdateSpeed.title = t('perfUpdateSpeedTitle') + ': ' + t(config.labelKey);
+        perfUpdateSpeed.setAttribute('aria-expanded', String(!perfUpdateSpeedMenu?.hidden));
+      }
+      perfUpdateSpeedMenu?.querySelectorAll('[data-perf-speed]').forEach(item => {
+        const active = item.dataset.perfSpeed === config.key;
+        item.classList.toggle('is-active', active);
+        item.setAttribute('aria-checked', String(active));
+      });
+    }
+
+    function closePerformanceSpeedMenu() {
+      if (!perfUpdateSpeedMenu || perfUpdateSpeedMenu.hidden) return;
+      perfUpdateSpeedMenu.hidden = true;
+      updatePerformanceSpeedControl();
+    }
+
+    function togglePerformanceSpeedMenu() {
+      if (!perfUpdateSpeedMenu) return;
+      perfUpdateSpeedMenu.hidden = !perfUpdateSpeedMenu.hidden;
+      updatePerformanceSpeedControl();
+    }
+
+    function handlePerformanceSpeedMenuClick(event) {
+      const refresh = event.target.closest('[data-perf-refresh-now]');
+      if (refresh) {
+        refreshPerformanceNow();
+        return;
+      }
+      const speed = event.target.closest('[data-perf-speed]')?.dataset.perfSpeed;
+      if (speed) setPerformanceUpdateSpeed(speed, { announce: true });
+    }
+
+    function handlePerformanceSpeedOutsidePointer(event) {
+      if (!perfSpeedWrap || perfSpeedWrap.contains(event.target)) return;
+      closePerformanceSpeedMenu();
+    }
+
+    function handlePerformanceSpeedKeydown(event) {
+      if (event.key !== 'Escape') return;
+      closePerformanceSpeedMenu();
     }
 
     function updateSetting(key, value, options = {}) {
@@ -8392,6 +9460,858 @@
       toastTimer = window.setTimeout(() => toast.classList.remove('show'), 2200);
     }
 
+    function updatePerformanceDebugMode() {
+      const enabled = !!settings.performanceDebug;
+      if (isPerformanceWindow) {
+        if (perfPanel) perfPanel.hidden = !enabled;
+        if (enabled) startPerformanceDebug();
+        else stopPerformanceDebug();
+        return;
+      }
+      if (isChildWindow()) {
+        if (perfPanel) perfPanel.hidden = true;
+        stopPerformanceDebug();
+        return;
+      }
+      if (enabled && WebviewWindowClass) {
+        if (perfPanel) perfPanel.hidden = true;
+        startPerformanceFrontendDebug();
+        if (!performanceWindowDesiredVisible || !nativePerformanceWindow) {
+          showNativePerformanceWindow().catch(error => showToast(String(error)));
+        }
+        return;
+      }
+      if (perfPanel) perfPanel.hidden = !enabled;
+      if (enabled) {
+        positionPerformancePanel(false);
+        startPerformanceDebug();
+      } else {
+        stopPerformanceDebug();
+        stopPerformanceFrontendDebug();
+        hideNativePerformanceWindow();
+      }
+    }
+
+    function performanceFrontendPayload() {
+      return {
+        updatedAt: Date.now(),
+        fps: performanceFps,
+        longTaskCount: performanceLongTaskCount,
+        longTaskMs: Math.round(performanceLongTaskMs),
+        frameSignalReliable: typeof document.hasFocus === 'function' && document.visibilityState === 'visible' && document.hasFocus(),
+        performanceUpdateSpeed: normalizePerformanceUpdateSpeed(settings.performanceUpdateSpeed),
+        refreshInFlight,
+        refreshQueued,
+        visibleCards: cards.length,
+        selectedWorkspaceKey,
+        scanOptions: scanOptions()
+      };
+    }
+
+    function publishPerformanceFrontendData(targetLabel = 'performance-panel') {
+      if (isChildWindow()) return;
+      performanceFrontendData = performanceFrontendPayload();
+      tauriEmitTo?.(targetLabel, 'agentwatcher-performance-frontend-data', performanceFrontendData).catch(() => {});
+    }
+
+    function startPerformanceFrontendDebug() {
+      if (isChildWindow()) return;
+      if (isPerformanceRefreshPaused()) {
+        stopPerformanceFrontendDebug();
+        stopPerformanceSamplers();
+        return;
+      }
+      startPerformanceFrameSampler();
+      startPerformanceLongTaskObserver();
+      schedulePerformanceFrontendTimer({ publishNow: true });
+    }
+
+    function stopPerformanceFrontendDebug() {
+      if (performanceFrontendTimer) {
+        window.clearInterval(performanceFrontendTimer);
+        performanceFrontendTimer = 0;
+      }
+    }
+
+    function schedulePerformanceFrontendTimer(options = {}) {
+      stopPerformanceFrontendDebug();
+      if (isChildWindow() || !settings.performanceDebug || isPerformanceRefreshPaused()) return;
+      if (options.publishNow) publishPerformanceFrontendData();
+      performanceFrontendTimer = window.setInterval(publishPerformanceFrontendData, performanceUpdateIntervalMs());
+    }
+
+    function shouldSamplePerformanceSnapshotHere() {
+      if (!settings.performanceDebug) return false;
+      if (isChildWindow() && !isPerformanceWindow) return false;
+      return isPerformanceWindow || !perfPanel?.hidden;
+    }
+
+    function setPerformanceAgentProcessScope(enabled, options = {}) {
+      settings = { ...settings, performanceAgentProcesses: !!enabled };
+      saveSettings();
+      if (performanceAgentProcesses) performanceAgentProcesses.checked = !!settings.performanceAgentProcesses;
+      updatePerformanceScopeControl();
+      if (isPerformanceWindow) {
+        tauriEmitTo?.('main', 'agentwatcher-performance-agent-scope', { enabled: !!settings.performanceAgentProcesses }).catch(() => {});
+      } else {
+        emitRuntimeSettings('performance-panel');
+      }
+      if (settings.performanceDebug) {
+        performanceSnapshot = null;
+        renderPerformancePanel();
+        if (shouldSamplePerformanceSnapshotHere()) samplePerformanceSnapshot({ force: true });
+      }
+      if (options.announce) showToast(t('settingsSaved'));
+    }
+
+    function togglePerformanceAgentProcessScope() {
+      setPerformanceAgentProcessScope(!settings.performanceAgentProcesses, { announce: true });
+    }
+
+    function setPerformanceUpdateSpeed(speed, options = {}) {
+      const nextSpeed = normalizePerformanceUpdateSpeed(speed);
+      settings = { ...settings, performanceUpdateSpeed: nextSpeed };
+      saveSettings();
+      closePerformanceSpeedMenu();
+      updatePerformanceSpeedControl();
+
+      if (isPerformanceWindow) {
+        if (options.source !== 'main') {
+          tauriEmitTo?.('main', 'agentwatcher-performance-update-speed', { speed: nextSpeed }).catch(() => {});
+        }
+      } else if (options.source !== 'child') {
+        emitRuntimeSettings('performance-panel');
+      }
+
+      if (settings.performanceDebug) {
+        if (!isChildWindow()) startPerformanceFrontendDebug();
+        restartPerformanceSampling({ sampleNow: !isPerformanceRefreshPaused(), resetFrame: true });
+      }
+      if (options.announce) showToast(t('perfUpdateSpeedSet') + ': ' + t(performanceUpdateSpeedConfig(nextSpeed).labelKey));
+    }
+
+    async function refreshPerformanceNow() {
+      closePerformanceSpeedMenu();
+      if (!isChildWindow()) publishPerformanceFrontendData();
+      if (isPerformanceWindow) {
+        tauriEmitTo?.('main', 'agentwatcher-performance-refresh-now', {}).catch(() => {});
+      }
+      await samplePerformanceSnapshot({ force: true });
+    }
+
+    function schedulePerformanceSnapshotTimer() {
+      if (performanceTimer) {
+        window.clearInterval(performanceTimer);
+        performanceTimer = 0;
+      }
+      if (!shouldSamplePerformanceSnapshotHere() || isPerformanceRefreshPaused()) return;
+      performanceTimer = window.setInterval(samplePerformanceSnapshot, performanceUpdateIntervalMs());
+    }
+
+    function restartPerformanceSampling(options = {}) {
+      updatePerformanceSpeedControl();
+      schedulePerformanceSnapshotTimer();
+      if (!shouldSamplePerformanceSnapshotHere()) return;
+      if (isPerformanceRefreshPaused()) {
+        stopPerformanceSamplers();
+        renderPerformancePanel();
+        return;
+      }
+      if (options.resetFrame) {
+        performanceFrameCount = 0;
+        performanceFrameSampleStarted = performance.now();
+      }
+      startPerformanceFrameSampler();
+      startPerformanceLongTaskObserver();
+      if (options.sampleNow) samplePerformanceSnapshot({ force: true });
+      renderPerformancePanel();
+    }
+
+    function startPerformanceDebug() {
+      if (performanceTimer) {
+        restartPerformanceSampling({ sampleNow: false });
+        return;
+      }
+      performanceFrameCount = 0;
+      performanceFrameSampleStarted = performance.now();
+      performanceFps = 0;
+      performanceLongTaskCount = 0;
+      performanceLongTaskMs = 0;
+      restartPerformanceSampling({ sampleNow: !isPerformanceRefreshPaused(), resetFrame: true });
+    }
+
+    function loadPerformancePanelGeometry() {
+      try {
+        const geometry = JSON.parse(localStorage.getItem(PERFORMANCE_PANEL_GEOMETRY_KEY) || '{}');
+        return {
+          left: Number.isFinite(Number(geometry.left)) ? Number(geometry.left) : null,
+          top: Number.isFinite(Number(geometry.top)) ? Number(geometry.top) : null,
+          width: clampNumber(geometry.width, PERFORMANCE_PANEL_MIN_WIDTH, Math.max(PERFORMANCE_PANEL_MIN_WIDTH, window.innerWidth - 20), PERFORMANCE_PANEL_DEFAULT_SIZE.width),
+          height: clampNumber(geometry.height, PERFORMANCE_PANEL_MIN_HEIGHT, Math.max(PERFORMANCE_PANEL_MIN_HEIGHT, window.innerHeight - 20), PERFORMANCE_PANEL_DEFAULT_SIZE.height)
+        };
+      } catch (error) {
+        return { left: null, top: null, ...PERFORMANCE_PANEL_DEFAULT_SIZE };
+      }
+    }
+
+    function savePerformancePanelGeometry() {
+      if (!perfPanel || perfPanel.hidden) return;
+      const rect = perfPanel.getBoundingClientRect();
+      localStorage.setItem(PERFORMANCE_PANEL_GEOMETRY_KEY, JSON.stringify({
+        left: Math.round(rect.left),
+        top: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height)
+      }));
+    }
+
+    function loadPerformanceProcessColumns() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(PERFORMANCE_PROCESS_COLUMNS_KEY) || '{}');
+        return Object.fromEntries(Object.keys(PERFORMANCE_PROCESS_COLUMN_DEFAULTS).map(key => [
+          key,
+          clampNumber(saved[key], PERFORMANCE_PROCESS_COLUMN_MIN[key], 280, PERFORMANCE_PROCESS_COLUMN_DEFAULTS[key])
+        ]));
+      } catch (error) {
+        return { ...PERFORMANCE_PROCESS_COLUMN_DEFAULTS };
+      }
+    }
+
+    function savePerformanceProcessColumns() {
+      localStorage.setItem(PERFORMANCE_PROCESS_COLUMNS_KEY, JSON.stringify(performanceProcessColumns));
+    }
+
+    function applyPerformanceProcessColumns() {
+      if (!perfProcesses) return;
+      perfProcesses.style.setProperty('--perf-col-name', Math.round(performanceProcessColumns.name) + 'px');
+      perfProcesses.style.setProperty('--perf-col-role', Math.round(performanceProcessColumns.role) + 'px');
+      perfProcesses.style.setProperty('--perf-col-cpu', Math.round(performanceProcessColumns.cpu) + 'px');
+      perfProcesses.style.setProperty('--perf-col-trend', Math.round(performanceProcessColumns.trend) + 'px');
+      perfProcesses.style.setProperty('--perf-col-mem', Math.round(performanceProcessColumns.memory) + 'px');
+    }
+
+    function startPerformanceColumnResize(event) {
+      const handle = event.target.closest('[data-perf-col-resize]');
+      if (!handle) return;
+      const column = handle.dataset.perfColResize;
+      if (!column || !(column in performanceProcessColumns)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const startX = event.clientX;
+      const startWidth = performanceProcessColumns[column];
+      const minWidth = PERFORMANCE_PROCESS_COLUMN_MIN[column] || 44;
+      const maxWidth = column === 'name' ? 420 : 240;
+      handle.setPointerCapture?.(event.pointerId);
+
+      function applyColumnResize(moveEvent) {
+        const nextWidth = clampNumber(startWidth + moveEvent.clientX - startX, minWidth, maxWidth, startWidth);
+        performanceProcessColumns = { ...performanceProcessColumns, [column]: nextWidth };
+        applyPerformanceProcessColumns();
+      }
+
+      function stopColumnResize() {
+        handle.releasePointerCapture?.(event.pointerId);
+        window.removeEventListener('pointermove', applyColumnResize);
+        window.removeEventListener('pointerup', stopColumnResize);
+        window.removeEventListener('pointercancel', stopColumnResize);
+        savePerformanceProcessColumns();
+      }
+
+      window.addEventListener('pointermove', applyColumnResize);
+      window.addEventListener('pointerup', stopColumnResize);
+      window.addEventListener('pointercancel', stopColumnResize);
+    }
+
+    function positionPerformancePanel(reset) {
+      if (!perfPanel || perfPanel.hidden) return;
+      const margin = 10;
+      const geometry = reset ? { left: null, top: null, ...PERFORMANCE_PANEL_DEFAULT_SIZE } : loadPerformancePanelGeometry();
+      const width = Math.min(Math.max(geometry.width, PERFORMANCE_PANEL_MIN_WIDTH), Math.max(PERFORMANCE_PANEL_MIN_WIDTH, window.innerWidth - margin * 2));
+      const height = Math.min(Math.max(geometry.height, PERFORMANCE_PANEL_MIN_HEIGHT), Math.max(PERFORMANCE_PANEL_MIN_HEIGHT, window.innerHeight - margin * 2));
+      const defaultLeft = Math.max(margin, window.innerWidth - width - margin);
+      const defaultTop = Math.max(margin, window.innerHeight - height - margin);
+      const left = Math.max(margin, Math.min(geometry.left ?? defaultLeft, window.innerWidth - width - margin));
+      const top = Math.max(margin, Math.min(geometry.top ?? defaultTop, window.innerHeight - height - margin));
+      perfPanel.style.right = 'auto';
+      perfPanel.style.bottom = 'auto';
+      perfPanel.style.left = Math.round(left) + 'px';
+      perfPanel.style.top = Math.round(top) + 'px';
+      perfPanel.style.width = Math.round(width) + 'px';
+      perfPanel.style.height = Math.round(height) + 'px';
+    }
+
+    async function closePerformancePanel() {
+      if (isPerformanceWindow && tauriWindow) {
+        tauriEmitTo?.('main', 'agentwatcher-performance-close', {}).catch(() => {});
+        try {
+          await tauriWindow.hide();
+          return;
+        } catch (error) {
+          try {
+            await tauriWindow.close();
+            return;
+          } catch (closeError) {
+            if (typeof tauriWindow.destroy === 'function') {
+              await tauriWindow.destroy().catch(() => {});
+            }
+          }
+        }
+        return;
+      }
+      updateSetting('performanceDebug', false, { announce: true, refresh: false });
+    }
+
+    function startPerformancePanelDrag(event) {
+      if (event.button !== 0 || event.target.closest('button')) return;
+      if (!perfPanel || perfPanel.hidden) return;
+      if (isPerformanceWindow && tauriWindow) {
+        event.preventDefault();
+        event.stopPropagation();
+        tauriWindow.startDragging().catch(error => showToast(String(error)));
+        return;
+      }
+      const rect = perfPanel.getBoundingClientRect();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startLeft = rect.left;
+      const startTop = rect.top;
+      const margin = 8;
+      event.preventDefault();
+
+      function applyMove(moveEvent) {
+        const nextLeft = Math.max(margin, Math.min(startLeft + moveEvent.clientX - startX, window.innerWidth - rect.width - margin));
+        const nextTop = Math.max(margin, Math.min(startTop + moveEvent.clientY - startY, window.innerHeight - rect.height - margin));
+        perfPanel.style.right = 'auto';
+        perfPanel.style.bottom = 'auto';
+        perfPanel.style.left = Math.round(nextLeft) + 'px';
+        perfPanel.style.top = Math.round(nextTop) + 'px';
+      }
+
+      function stopMove() {
+        window.removeEventListener('pointermove', applyMove);
+        window.removeEventListener('pointerup', stopMove);
+        window.removeEventListener('pointercancel', stopMove);
+        savePerformancePanelGeometry();
+      }
+
+      window.addEventListener('pointermove', applyMove);
+      window.addEventListener('pointerup', stopMove);
+      window.addEventListener('pointercancel', stopMove);
+    }
+
+    function startPerformancePanelResize(event) {
+      if (!perfPanel || perfPanel.hidden) return;
+      const direction = event.currentTarget.dataset.perfResize || '';
+      if (isPerformanceWindow && tauriWindow) {
+        const resizeDirections = { nw: 'NorthWest', ne: 'NorthEast', sw: 'SouthWest', se: 'SouthEast' };
+        event.preventDefault();
+        event.stopPropagation();
+        tauriWindow.startResizeDragging(resizeDirections[direction]).catch(error => showToast(String(error)));
+        return;
+      }
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const rect = perfPanel.getBoundingClientRect();
+      const margin = 8;
+      event.preventDefault();
+      event.stopPropagation();
+
+      function applyResize(moveEvent) {
+        const deltaX = moveEvent.clientX - startX;
+        const deltaY = moveEvent.clientY - startY;
+        let left = rect.left;
+        let top = rect.top;
+        let width = rect.width;
+        let height = rect.height;
+
+        if (direction.includes('e')) width = Math.max(PERFORMANCE_PANEL_MIN_WIDTH, rect.width + deltaX);
+        if (direction.includes('s')) height = Math.max(PERFORMANCE_PANEL_MIN_HEIGHT, rect.height + deltaY);
+        if (direction.includes('w')) {
+          width = Math.max(PERFORMANCE_PANEL_MIN_WIDTH, rect.width - deltaX);
+          left = rect.right - width;
+        }
+        if (direction.includes('n')) {
+          height = Math.max(PERFORMANCE_PANEL_MIN_HEIGHT, rect.height - deltaY);
+          top = rect.bottom - height;
+        }
+
+        left = Math.max(margin, Math.min(left, window.innerWidth - PERFORMANCE_PANEL_MIN_WIDTH - margin));
+        top = Math.max(margin, Math.min(top, window.innerHeight - PERFORMANCE_PANEL_MIN_HEIGHT - margin));
+        width = Math.min(width, window.innerWidth - left - margin);
+        height = Math.min(height, window.innerHeight - top - margin);
+        perfPanel.style.right = 'auto';
+        perfPanel.style.bottom = 'auto';
+        perfPanel.style.left = Math.round(left) + 'px';
+        perfPanel.style.top = Math.round(top) + 'px';
+        perfPanel.style.width = Math.round(width) + 'px';
+        perfPanel.style.height = Math.round(height) + 'px';
+      }
+
+      function stopResize() {
+        window.removeEventListener('pointermove', applyResize);
+        window.removeEventListener('pointerup', stopResize);
+        window.removeEventListener('pointercancel', stopResize);
+        savePerformancePanelGeometry();
+      }
+
+      window.addEventListener('pointermove', applyResize);
+      window.addEventListener('pointerup', stopResize);
+      window.addEventListener('pointercancel', stopResize);
+    }
+
+    function stopPerformanceDebug() {
+      stopPerformanceFrontendDebug();
+      if (performanceTimer) {
+        window.clearInterval(performanceTimer);
+        performanceTimer = 0;
+      }
+      stopPerformanceSamplers();
+    }
+
+    function stopPerformanceSamplers() {
+      if (performanceFrameId) {
+        cancelAnimationFrame(performanceFrameId);
+        performanceFrameId = 0;
+      }
+      if (performanceObserver) {
+        performanceObserver.disconnect();
+        performanceObserver = null;
+      }
+    }
+
+    function startPerformanceFrameSampler() {
+      if (performanceFrameId) return;
+      const tick = now => {
+        if (!settings.performanceDebug || isPerformanceRefreshPaused() || (isChildWindow() && !isPerformanceWindow)) {
+          performanceFrameId = 0;
+          return;
+        }
+        performanceFrameCount += 1;
+        const elapsed = now - performanceFrameSampleStarted;
+        if (elapsed >= Math.max(1000, performanceUpdateIntervalMs())) {
+          performanceFps = Math.round((performanceFrameCount * 1000) / elapsed);
+          performanceFrameCount = 0;
+          performanceFrameSampleStarted = now;
+          renderPerformancePanel();
+        }
+        performanceFrameId = requestAnimationFrame(tick);
+      };
+      performanceFrameId = requestAnimationFrame(tick);
+    }
+
+    function startPerformanceLongTaskObserver() {
+      if (performanceObserver || typeof PerformanceObserver === 'undefined') return;
+      try {
+        performanceObserver = new PerformanceObserver(list => {
+          for (const entry of list.getEntries()) {
+            performanceLongTaskCount += 1;
+            performanceLongTaskMs += entry.duration || 0;
+          }
+          renderPerformancePanel();
+        });
+        performanceObserver.observe({ entryTypes: ['longtask'] });
+      } catch (error) {
+        performanceObserver = null;
+      }
+    }
+
+    async function samplePerformanceSnapshot(options = {}) {
+      if (!shouldSamplePerformanceSnapshotHere() && !options.force) return;
+      try {
+        performanceSnapshot = tauriInvoke
+          ? await tauriInvoke('get_performance_snapshot', { options: { includeAgentClients: !!settings.performanceAgentProcesses } })
+          : browserPerformanceSnapshot();
+        rememberPerformanceSnapshot(performanceSnapshot);
+      } catch (error) {
+        performanceSnapshot = {
+          capturedMs: Date.now(),
+          includeAgentClients: !!settings.performanceAgentProcesses,
+          error: String(error),
+          process: { cpuPercent: 0, workingSetMb: 0, privateMb: 0, processCount: 0 },
+          processes: [],
+          scan: {}
+        };
+      }
+      renderPerformancePanel();
+    }
+
+    function browserPerformanceSnapshot() {
+      const memory = performance.memory || {};
+      const usedMb = Number.isFinite(memory.usedJSHeapSize) ? memory.usedJSHeapSize / 1048576 : 0;
+      return {
+        capturedMs: Date.now(),
+        includeAgentClients: !!settings.performanceAgentProcesses,
+        process: { cpuPercent: 0, workingSetMb: usedMb, privateMb: usedMb, processCount: 1 },
+        processes: [{ pid: 0, parentPid: 0, name: 'browser-preview', role: 'Browser', rootPid: 0, rootName: 'browser-preview', cpuPercent: 0, workingSetMb: usedMb, privateMb: usedMb }],
+        scan: { durationMs: 0, totalSessions: cards.length, providerCounts: {}, codexTurnRequests: 0, codexTurnsReturned: 0 },
+        gpuNote: t('perfGpuNA')
+      };
+    }
+
+    function appendBoundedHistory(history, value) {
+      const numberValue = Number(value);
+      history.push(Number.isFinite(numberValue) ? Math.max(0, numberValue) : 0);
+      while (history.length > PERFORMANCE_HISTORY_LIMIT) history.shift();
+      return history;
+    }
+
+    function processHistoryKey(process) {
+      return [process.pid || 0, process.name || '', process.rootPid || 0].join(':');
+    }
+
+    function rememberPerformanceSnapshot(snapshot) {
+      if (!snapshot || snapshot.error || snapshot.capturedMs === performanceLastHistoryMs) return;
+      performanceLastHistoryMs = snapshot.capturedMs || Date.now();
+      appendBoundedHistory(performanceCpuHistory, snapshot.process?.cpuPercent || 0);
+      const activeKeys = new Set();
+      (snapshot.processes || []).forEach(process => {
+        const key = processHistoryKey(process);
+        activeKeys.add(key);
+        const history = performanceProcessCpuHistory.get(key) || [];
+        performanceProcessCpuHistory.set(key, appendBoundedHistory(history, process.cpuPercent || 0));
+      });
+      performanceProcessCpuHistory.forEach((_, key) => {
+        if (!activeKeys.has(key)) performanceProcessCpuHistory.delete(key);
+      });
+    }
+
+    function sparklineSvg(values, options = {}) {
+      const width = options.width || 100;
+      const height = options.height || 28;
+      const maxValue = Math.max(1, options.maxValue || 0, ...values.map(value => Number(value) || 0));
+      const safeValues = values.length ? values : [0];
+      const points = safeValues.map((value, index) => {
+        const x = safeValues.length <= 1 ? width : (index / (safeValues.length - 1)) * width;
+        const y = height - ((Number(value) || 0) / maxValue) * (height - 3) - 1.5;
+        return [x, Math.max(1, Math.min(height - 1, y))];
+      });
+      const pointText = points.map(point => point.map(number => number.toFixed(1)).join(',')).join(' ');
+      const fillPoints = '0,' + height + ' ' + pointText + ' ' + width + ',' + height;
+      return '<svg class="perf-spark-svg" viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="none" aria-hidden="true">'
+        + '<path class="perf-spark-grid" d="M0 ' + (height - 1) + 'H' + width + 'M0 ' + Math.round(height / 2) + 'H' + width + '"></path>'
+        + '<polygon class="perf-spark-fill" points="' + fillPoints + '"></polygon>'
+        + '<polyline class="perf-spark-line" points="' + pointText + '"></polyline>'
+        + '</svg>';
+    }
+
+    function renderSparkline(container, values, options = {}) {
+      if (!container) return;
+      container.innerHTML = sparklineSvg(values, options);
+    }
+
+    function renderPerformancePanel() {
+      if (!perfPanel || perfPanel.hidden) return;
+      const snapshot = performanceSnapshot || browserPerformanceSnapshot();
+      const snapshotAgentScope = !!snapshot.includeAgentClients;
+      const process = snapshot.process || {};
+      const scan = snapshot.scan || {};
+      const counts = scan.providerCounts || {};
+      const frontend = performanceFrontendData || performanceFrontendPayload();
+      const processes = snapshot.processes || [];
+      const hottestProcess = hotPerformanceProcess(processes);
+      const scope = performanceScopeSummary(processes, snapshotAgentScope);
+      const signal = performanceSignal(snapshot, process, scan, frontend);
+      perfSignalTitle.textContent = signal.title;
+      perfSignalText.textContent = signal.text;
+      perfSignalChip.textContent = signal.chip;
+      perfSignalChip.className = 'perf-chip' + (signal.level === 'hot' ? ' hot' : signal.level === 'warn' ? ' warn' : '');
+      perfCpuValue.textContent = formatPercent(process.cpuPercent);
+      renderSparkline(perfCpuSpark, performanceCpuHistory, { maxValue: Math.max(10, Number(process.cpuPercent) || 0) });
+      perfMemoryValue.textContent = formatMb(process.workingSetMb);
+      perfMemoryValue.title = 'Private ' + formatMb(process.privateMb);
+      perfScanValue.textContent = formatScanMetric(scan, counts);
+      perfUiValue.textContent = formatUiMetric(frontend);
+      perfHotProcessValue.textContent = hottestProcess ? hotProcessMetric(hottestProcess) : '--';
+      perfScopeValue.textContent = scope.value;
+      perfGpuNote.textContent = formatSnapshotTime(snapshot.capturedMs) + ' · ' + (snapshotAgentScope ? t('perfAgentScopeOn') : t('perfLightScope'));
+      perfProcessesTitle.textContent = snapshotAgentScope ? t('perfProcessesTitleAdvanced') : t('perfProcessesTitle');
+      perfCpuExplain.textContent = snapshotAgentScope ? t('perfCpuExplainAdvanced') : t('perfCpuExplain');
+      perfMemoryExplain.textContent = (snapshotAgentScope ? t('perfMemoryExplainAdvanced') : t('perfMemoryExplain')) + ' · Private ' + formatMb(process.privateMb);
+      perfScanExplain.textContent = scanExplainText(scan, counts);
+      perfUiExplain.textContent = t('perfUiExplain');
+      perfHotProcessExplain.textContent = hottestProcess ? hotProcessExplain(hottestProcess) : t('perfHotProcessExplain');
+      perfScopeExplain.textContent = scope.explain;
+      renderPerformanceProcesses(processes, snapshot.error);
+    }
+
+    function performanceSignal(snapshot, process, scan, frontend = performanceFrontendPayload()) {
+      const scanMs = Number(scan.durationMs) || 0;
+      const codexRpc = Number(scan.codexTurnRequests) || 0;
+      const cpu = Number(process.cpuPercent) || 0;
+      const mem = Number(process.workingSetMb) || 0;
+      const fps = Number(frontend.fps) || 60;
+      const longTaskMs = Number(frontend.longTaskMs) || 0;
+      const hasFocusApi = typeof document.hasFocus === 'function';
+      const frameSignalReliable = performanceFrontendData
+        ? performanceFrontendData.frameSignalReliable !== false
+        : hasFocusApi && document.visibilityState === 'visible' && document.hasFocus();
+      if (scanMs >= 1200) {
+        return { level: 'hot', chip: t('perfSignalHot'), title: t('perfSignalScanTitle'), text: t('perfSignalScanText') };
+      }
+      if ((frameSignalReliable && fps > 0 && fps < 45) || longTaskMs >= 1000) {
+        return { level: 'hot', chip: t('perfSignalHot'), title: t('perfSignalUiTitle'), text: t('perfSignalUiText') };
+      }
+      if (cpu >= 30 || mem >= 900) {
+        return { level: 'warn', chip: t('perfSignalWatch'), title: t('perfSignalProcessTitle'), text: t('perfSignalProcessText') };
+      }
+      if (codexRpc > 0 || scanMs >= 450) {
+        return { level: 'warn', chip: t('perfSignalWatch'), title: codexRpc > 0 ? t('perfSignalCodexTitle') : t('perfSignalScanTitle'), text: codexRpc > 0 ? t('perfSignalCodexText') : t('perfSignalScanText') };
+      }
+      if (snapshot.error) {
+        return { level: 'warn', chip: t('perfSignalWatch'), title: t('perfCopyFailed'), text: String(snapshot.error) };
+      }
+      return { level: 'ok', chip: t('perfSignalOk'), title: t('perfSignalOkTitle'), text: t('perfSignalOkText') };
+    }
+
+    function formatPercent(value) {
+      const numberValue = Number(value);
+      return Number.isFinite(numberValue) ? numberValue.toFixed(1) + '%' : '--';
+    }
+
+    function formatMb(value) {
+      const numberValue = Number(value);
+      return Number.isFinite(numberValue) ? numberValue.toFixed(1) + ' MB' : '--';
+    }
+
+    function formatScanMetric(scan, counts) {
+      const duration = Number.isFinite(Number(scan.durationMs)) ? scan.durationMs + 'ms' : '--';
+      const total = Number.isFinite(Number(scan.totalSessions)) ? scan.totalSessions : 0;
+      return duration + ' / ' + total + ' | GH ' + (counts.copilot || 0) + ' C ' + (counts.claude || 0) + ' CX ' + (counts.codex || 0);
+    }
+
+    function scanExplainText(scan, counts) {
+      const providers = 'GH ' + (counts.copilot || 0) + ' · C ' + (counts.claude || 0) + ' · CX ' + (counts.codex || 0);
+      const codexRpc = Number(scan.codexTurnRequests) || 0;
+      const codexTurns = Number(scan.codexTurnsReturned) || 0;
+      return t('perfScanExplain') + ' ' + providers + (codexRpc ? ' · Codex ' + codexRpc + ' rpc / ' + codexTurns + ' turns' : '');
+    }
+
+    function formatUiMetric(frontend) {
+      const fps = Number(frontend.fps) || 0;
+      const longTasks = Number(frontend.longTaskCount) || 0;
+      const longTaskMs = Number(frontend.longTaskMs) || 0;
+      return (fps ? fps + ' fps' : '--') + ' · ' + longTasks + '/' + Math.round(longTaskMs) + 'ms';
+    }
+
+    function hotPerformanceProcess(processes) {
+      return [...processes].sort((left, right) => {
+        const cpuDelta = (Number(right.cpuPercent) || 0) - (Number(left.cpuPercent) || 0);
+        if (Math.abs(cpuDelta) > 0.001) return cpuDelta;
+        return (Number(right.workingSetMb) || 0) - (Number(left.workingSetMb) || 0);
+      })[0] || null;
+    }
+
+    function hotProcessMetric(process) {
+      return String(process.name || 'process') + ' · ' + formatPercent(process.cpuPercent);
+    }
+
+    function hotProcessExplain(process) {
+      return String(process.role || process.rootName || 'Agent') + ' · ' + formatMb(process.workingSetMb) + ' RAM · Private ' + formatMb(process.privateMb);
+    }
+
+    function performanceScopeSummary(processes, advanced) {
+      const roles = new Map();
+      const roots = new Map();
+      processes.forEach(process => {
+        const role = String(process.role || 'Agent');
+        roles.set(role, (roles.get(role) || 0) + 1);
+        const rootKey = String(process.rootPid || process.pid || 0) + ':' + String(process.rootName || process.name || '');
+        roots.set(rootKey, { role, name: process.rootName || process.name || 'process' });
+      });
+      const roleText = [...roles.entries()]
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, 3)
+        .map(([role, count]) => role + ' ' + count)
+        .join(' · ');
+      return {
+        value: processes.length + ' proc / ' + roots.size + ' roots',
+        explain: (advanced ? t('perfAgentScopeOn') : t('perfLightScope')) + (roleText ? ' · ' + roleText : '')
+      };
+    }
+
+    function performanceRoleClass(role) {
+      return 'role-' + String(role || 'agent')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
+    }
+
+    function performanceSortValue(process, key) {
+      if (key === 'name') return String(process.name || '').toLowerCase();
+      if (key === 'role') return String(process.role || process.rootName || '').toLowerCase();
+      if (key === 'pid') return Number(process.pid) || 0;
+      if (key === 'workingSetMb') return Number(process.workingSetMb) || 0;
+      if (key === 'privateMb') return Number(process.privateMb) || 0;
+      return Number(process.cpuPercent) || 0;
+    }
+
+    function sortedPerformanceProcesses(processes) {
+      const key = performanceProcessSort.key || 'cpuPercent';
+      const direction = performanceProcessSort.direction === 'asc' ? 1 : -1;
+      return [...processes].sort((left, right) => {
+        const leftValue = performanceSortValue(left, key);
+        const rightValue = performanceSortValue(right, key);
+        if (typeof leftValue === 'string' || typeof rightValue === 'string') {
+          const result = String(leftValue).localeCompare(String(rightValue));
+          if (result !== 0) return result * direction;
+        } else if (leftValue !== rightValue) {
+          return (leftValue - rightValue) * direction;
+        }
+        return (Number(right.cpuPercent) || 0) - (Number(left.cpuPercent) || 0);
+      });
+    }
+
+    function setPerformanceProcessSort(key) {
+      if (!key) return;
+      if (performanceProcessSort.key === key) {
+        performanceProcessSort = {
+          key,
+          direction: performanceProcessSort.direction === 'asc' ? 'desc' : 'asc'
+        };
+      } else {
+        performanceProcessSort = {
+          key,
+          direction: ['name', 'role', 'pid'].includes(key) ? 'asc' : 'desc'
+        };
+      }
+      renderPerformancePanel();
+    }
+
+    function formatSnapshotTime(value) {
+      const ms = Number(value);
+      if (!Number.isFinite(ms) || ms <= 0) return '--';
+      return new Date(ms).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    function renderPerformanceProcesses(processes, errorText) {
+      perfProcesses.replaceChildren();
+      applyPerformanceProcessColumns();
+      if (errorText) {
+        const raw = document.createElement('pre');
+        raw.className = 'perf-raw';
+        raw.textContent = String(errorText);
+        perfProcesses.appendChild(raw);
+        return;
+      }
+      const header = document.createElement('div');
+      header.className = 'perf-process-row header';
+      [
+        ['name', 'name', t('perfProcessName'), false],
+        ['role', 'role', t('perfProcessRole'), false],
+        ['cpu', 'cpuPercent', t('perfProcessCpu'), true],
+        ['trend', null, t('perfProcessTrend'), false],
+        ['memory', 'workingSetMb', t('perfProcessMem'), true]
+      ].forEach(([column, sortKey, label, numeric]) => {
+        const cell = document.createElement('span');
+        cell.className = 'perf-header-cell' + (numeric ? ' num' : '');
+
+        if (sortKey) {
+          const button = document.createElement('button');
+          button.className = 'perf-sort-btn' + (numeric ? ' num' : '') + (performanceProcessSort.key === sortKey ? ' is-active' : '');
+          button.type = 'button';
+          button.dataset.perfSort = sortKey;
+          button.textContent = label + (performanceProcessSort.key === sortKey ? (performanceProcessSort.direction === 'asc' ? ' ↑' : ' ↓') : '');
+          button.title = label + ' ' + (performanceProcessSort.direction === 'asc' ? t('perfSortAsc') : t('perfSortDesc'));
+          cell.appendChild(button);
+        } else {
+          const span = document.createElement('span');
+          span.className = 'perf-header-label';
+          span.textContent = label;
+          cell.appendChild(span);
+        }
+
+        const resize = document.createElement('button');
+        resize.className = 'perf-col-resizer';
+        resize.type = 'button';
+        resize.dataset.perfColResize = column;
+        resize.title = label;
+        resize.setAttribute('aria-label', label);
+        cell.appendChild(resize);
+        header.appendChild(cell);
+      });
+      perfProcesses.appendChild(header);
+
+      if (!processes.length) {
+        const empty = document.createElement('div');
+        empty.className = 'perf-note';
+        empty.textContent = t('perfNoProcesses');
+        perfProcesses.appendChild(empty);
+        return;
+      }
+
+      sortedPerformanceProcesses(processes).forEach(process => {
+        const row = document.createElement('div');
+        row.className = 'perf-process-row ' + performanceRoleClass(process.role);
+        const role = String(process.role || process.rootName || 'Agent');
+
+        const processCell = document.createElement('span');
+        processCell.className = 'perf-process-main';
+        const name = document.createElement('strong');
+        name.textContent = String(process.name || 'process');
+        const pid = document.createElement('em');
+        pid.textContent = '#' + String(process.pid || 0);
+        processCell.title = String(process.name || 'process') + ' #' + String(process.pid || 0);
+        processCell.appendChild(name);
+        processCell.appendChild(pid);
+        row.appendChild(processCell);
+
+        const roleCell = document.createElement('span');
+        roleCell.className = 'perf-role-pill';
+        roleCell.textContent = role;
+        roleCell.title = role + (process.rootName ? ' · root ' + process.rootName + ' #' + (process.rootPid || 0) : '');
+        row.appendChild(roleCell);
+
+        const cpu = document.createElement('span');
+        cpu.className = 'num';
+        cpu.textContent = formatPercent(process.cpuPercent);
+        row.appendChild(cpu);
+
+        const trend = document.createElement('span');
+        trend.className = 'perf-process-spark';
+        trend.innerHTML = sparklineSvg(performanceProcessCpuHistory.get(processHistoryKey(process)) || [process.cpuPercent || 0], { width: 62, height: 18, maxValue: Math.max(5, Number(process.cpuPercent) || 0) });
+        row.appendChild(trend);
+
+        const memory = document.createElement('span');
+        memory.className = 'num';
+        memory.textContent = formatMb(process.workingSetMb);
+        memory.title = 'Private ' + formatMb(process.privateMb);
+        row.appendChild(memory);
+        perfProcesses.appendChild(row);
+      });
+    }
+
+    async function copyPerformanceSnapshot() {
+      const payload = {
+        copiedAt: new Date().toISOString(),
+        frontend: {
+          ...performanceFrontendPayload(),
+          ...(performanceFrontendData || {}),
+          performanceAgentProcesses: !!settings.performanceAgentProcesses,
+          processSort: performanceProcessSort,
+          cpuHistory: performanceCpuHistory.slice()
+        },
+        snapshot: performanceSnapshot
+      };
+      const text = JSON.stringify(payload, null, 2);
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const textarea = document.createElement('textarea');
+          textarea.value = text;
+          textarea.style.position = 'fixed';
+          textarea.style.left = '-9999px';
+          document.body.appendChild(textarea);
+          textarea.select();
+          document.execCommand('copy');
+          textarea.remove();
+        }
+        showToast(t('perfCopied'));
+      } catch (error) {
+        showToast(t('perfCopyFailed') + ': ' + String(error));
+      }
+    }
+
     function makeHandoffId() {
       return 'aw-' + Math.random().toString(36).slice(2, 8) + '-' + Date.now().toString(36).slice(-5);
     }
@@ -8401,6 +10321,21 @@
       return handoffId;
     }
 
+    function providerMeta(provider) {
+      const text = String(provider || '').trim();
+      const key = text.toLowerCase();
+      if (key === 'copilot' || key === 'gh' || key === 'github copilot') {
+        return { provider: 'copilot', label: 'GH', className: 'gh', nameKey: 'handoffProviderCopilot' };
+      }
+      if (key === 'codex' || key === 'cx' || key === 'codex desktop') {
+        return { provider: 'codex', label: 'CX', className: 'cx', nameKey: 'handoffProviderCodex' };
+      }
+      if (key === 'claude' || key === 'cl' || key === 'c' || key === 'claude code') {
+        return { provider: 'claude', label: 'C', className: 'cl', nameKey: 'handoffProviderClaude' };
+      }
+      return { provider: 'unknown', label: text || '?', className: 'unknown', nameKey: 'handoffUnknown' };
+    }
+
     function handoffSessionFromCard(card) {
       if (!card) return null;
       const alertSession = card.dataset.alertId ? waitingAlertItems.get(card.dataset.alertId)?.session : null;
@@ -8408,7 +10343,7 @@
     }
 
     function handoffProviderText(provider) {
-      return provider === 'copilot' ? 'GH' : 'CL';
+      return providerMeta(provider).label;
     }
 
     function handoffLaunchModeName(item) {
@@ -8547,28 +10482,33 @@
           ? cwd + '打开 Copilot CLI 编辑器标签页；填入接续提示词'
           : cwd + 'open Copilot CLI editor tab; insert "<handoff prompt>"';
       }
+      if (handoffLaunchMode === 'codex-app') {
+        return currentLang === 'zh'
+          ? cwd + '创建 Codex 桌面端会话；发送接续提示词'
+          : cwd + 'create a Codex desktop thread; send "<handoff prompt>"';
+      }
       return currentLang === 'zh'
         ? cwd + '在 VS Code 编辑器标签页打开 Claude Code；填入接续提示词'
         : cwd + 'open Claude Code in a VS Code editor tab; insert "<handoff prompt>"';
     }
 
     function handoffTargetAgentName() {
+      if (handoffLaunchMode === 'codex-app') return t('handoffTargetAgentCodex');
       if (handoffLaunchMode === 'claude-panel') return t('handoffTargetAgentClaude');
       if (handoffLaunchMode === 'code-chat') return t('handoffTargetAgentCli');
       return t('handoffTargetAgentCopilot');
     }
 
     function handoffProviderName(provider) {
-      if (provider === 'claude') return t('handoffProviderClaude');
-      if (provider === 'copilot') return t('handoffProviderCopilot');
-      return t('handoffUnknown');
+      const meta = providerMeta(provider);
+      return meta.provider === 'unknown' ? t('handoffUnknown') : t(meta.nameKey);
     }
 
     function buildSourceAccessGuide(source) {
       const provider = source.provider || 'unknown';
       const sourceFile = source.sessionPath || t('handoffNone');
       const sourceResource = source.sessionResource || t('handoffNone');
-      const sameProvider = (provider === 'claude' && handoffLaunchMode === 'claude-panel') || (provider === 'copilot' && handoffLaunchMode !== 'claude-panel');
+      const sameProvider = provider !== 'unknown' && provider === todoProviderForMode(handoffLaunchMode);
       const portabilityNote = sameProvider
         ? t('handoffSameProviderNote')
         : t('handoffCrossProviderWarning');
@@ -8576,7 +10516,9 @@
         ? t('handoffParserHintClaude')
         : provider === 'copilot'
           ? t('handoffParserHintCopilot')
-          : t('handoffParserHintUnknown');
+          : provider === 'codex'
+            ? t('handoffParserHintCodex')
+            : t('handoffParserHintUnknown');
       return [
         '',
         t('handoffSourceAccessTitle'),
@@ -8654,8 +10596,9 @@
       handoffTask.value = payload.task || '';
       handoffSnapshotToggle.classList.toggle('is-active', handoffIncludeSnapshot);
       handoffLocatorToggle.classList.toggle('is-active', handoffIncludeLocator);
-      handoffSourceProvider.textContent = handoffProviderText(handoffSourceSession.provider);
-      handoffSourceProvider.className = 'provider ' + (handoffSourceSession.provider === 'copilot' ? 'gh' : 'cl');
+      const sourceProviderMeta = providerMeta(handoffSourceSession.provider || handoffSourceSession.providerLabel);
+      handoffSourceProvider.textContent = handoffProviderText(sourceProviderMeta.provider);
+      handoffSourceProvider.className = 'provider ' + sourceProviderMeta.className;
       handoffSourceLabel.textContent = [handoffSourceSession.workspaceLabel || handoffSourceSession.workspace, handoffSourceSession.title].filter(Boolean).join(' / ');
       updateHandoffWorkspaceLabel();
       updateHandoffProviderLabel();
@@ -8834,6 +10777,83 @@
         x: Math.round(Math.max(screenLeft + margin, Math.min(x, maxX))),
         y: Math.round(Math.max(screenTop + margin, Math.min(mainTop + 24, maxY)))
       };
+    }
+
+    async function nativePerformanceWindowPosition() {
+      if (!tauriWindow) return { x: 96, y: 96 };
+      const [windowPosition, windowSize, scaleFactor] = await Promise.all([
+        tauriWindow.outerPosition(),
+        tauriWindow.outerSize(),
+        tauriWindow.scaleFactor()
+      ]);
+
+      const monitor = await tauriCurrentMonitor?.().catch(() => null);
+      const scale = monitor?.scaleFactor || scaleFactor || window.devicePixelRatio || 1;
+      const screenLeft = (monitor?.position?.x ?? Math.round((window.screen.availLeft || 0) * scale)) / scale;
+      const screenTop = (monitor?.position?.y ?? Math.round((window.screen.availTop || 0) * scale)) / scale;
+      const screenWidth = (monitor?.size?.width ?? Math.round((window.screen.availWidth || window.innerWidth || PERFORMANCE_PANEL_DEFAULT_SIZE.width) * scale)) / scale;
+      const screenHeight = (monitor?.size?.height ?? Math.round((window.screen.availHeight || window.innerHeight || PERFORMANCE_PANEL_DEFAULT_SIZE.height) * scale)) / scale;
+      const margin = 8;
+      const gap = 12;
+      const panelWidth = PERFORMANCE_PANEL_DEFAULT_SIZE.width;
+      const panelHeight = PERFORMANCE_PANEL_DEFAULT_SIZE.height;
+      const mainLeft = windowPosition.x / scaleFactor;
+      const mainTop = windowPosition.y / scaleFactor;
+      const mainWidth = windowSize.width / scaleFactor;
+      const maxX = Math.max(screenLeft + margin, screenLeft + screenWidth - panelWidth - margin);
+      const maxY = Math.max(screenTop + margin, screenTop + screenHeight - panelHeight - margin);
+      let x = mainLeft + mainWidth + gap;
+      if (x > maxX) x = mainLeft - panelWidth - gap;
+      if (x < screenLeft + margin || x > maxX) x = mainLeft + 24;
+      return {
+        x: Math.round(Math.max(screenLeft + margin, Math.min(x, maxX))),
+        y: Math.round(Math.max(screenTop + margin, Math.min(mainTop + 24, maxY)))
+      };
+    }
+
+    async function showNativePerformanceWindow() {
+      if (!WebviewWindowClass || isPerformanceWindow) return false;
+      performanceWindowDesiredVisible = true;
+      const position = await nativePerformanceWindowPosition();
+      const existing = nativePerformanceWindow || await WebviewWindowClass.getByLabel('performance-panel');
+      if (existing) {
+        nativePerformanceWindow = existing;
+        emitRuntimeSettings('performance-panel');
+        await existing.show().catch(() => {});
+        await existing.setFocus().catch(() => {});
+        return true;
+      }
+
+      nativePerformanceWindow = new WebviewWindowClass('performance-panel', {
+        url: childWindowUrl('?performance=1'),
+        title: 'AgentWatcher Diagnostics',
+        x: position.x,
+        y: position.y,
+        width: PERFORMANCE_PANEL_DEFAULT_SIZE.width,
+        height: PERFORMANCE_PANEL_DEFAULT_SIZE.height,
+        minWidth: PERFORMANCE_PANEL_MIN_WIDTH,
+        minHeight: PERFORMANCE_PANEL_MIN_HEIGHT,
+        resizable: true,
+        decorations: false,
+        transparent: true,
+        alwaysOnTop: !!settings.alwaysOnTop,
+        skipTaskbar: true,
+        shadow: false,
+        focus: true,
+        visible: false,
+        preventOverflow: false
+      });
+      nativePerformanceWindow.once('tauri://destroyed', () => { nativePerformanceWindow = null; });
+      nativePerformanceWindow.once('tauri://error', () => { nativePerformanceWindow = null; });
+      nativePerformanceWindow.once('tauri://created', () => {
+        nativePerformanceWindow?.setPosition(new LogicalPositionClass(position.x, position.y)).catch(() => {});
+      });
+      return true;
+    }
+
+    function hideNativePerformanceWindow() {
+      performanceWindowDesiredVisible = false;
+      nativePerformanceWindow?.hide().catch(() => {});
     }
 
     async function showNativeTodoWindow(workspaceKey = '') {
@@ -9394,6 +11414,8 @@
       renderHandoffProviderOptions();
       updateHandoffPrompt();
       renderTodoEverywhere();
+      updatePerformanceScopeControl();
+      updatePerformanceSpeedControl();
     }
 
     function isHorizontalLayout() {
@@ -10450,6 +12472,20 @@
       requestAnimationFrame(() => todoTitleInput.focus());
     }
 
+    function setupPerformanceWindow() {
+      document.title = 'AgentWatcher Diagnostics';
+      settings = { ...settings, performanceDebug: true };
+      applyLanguage();
+      perfPanel.hidden = false;
+      startPerformanceDebug();
+      tauriListen?.('agentwatcher-settings-data', event => applyRuntimeSettings(event.payload)).catch(() => {});
+      tauriListen?.('agentwatcher-performance-frontend-data', event => {
+        performanceFrontendData = event.payload || null;
+        renderPerformancePanel();
+      }).catch(() => {});
+      tauriEmitTo?.('main', 'agentwatcher-performance-ready', {}).catch(() => {});
+    }
+
     function bindTodoControls() {
       if (!todoWindow || todoWindow.dataset.bound === 'true') return;
       todoWindow.dataset.bound = 'true';
@@ -10735,8 +12771,8 @@
 
       const cardHead = document.createElement('div');
       cardHead.className = 'card-head';
-      const providerClass = normalizedSession.provider === 'copilot' ? 'gh' : 'cl';
-      appendText(cardHead, 'span', 'provider ' + providerClass, normalizedSession.providerLabel || (normalizedSession.provider === 'copilot' ? 'GH' : 'C'));
+      const provider = providerMeta(normalizedSession.provider || normalizedSession.providerLabel);
+      appendText(cardHead, 'span', 'provider ' + provider.className, normalizedSession.providerLabel || provider.label);
       appendText(cardHead, 'span', 'time', normalizedSession.timeLabel || '');
       card.appendChild(cardHead);
 
@@ -10941,6 +12977,22 @@
       });
     } else if (isTodoWindow) {
       setupTodoWindow();
+    } else if (isPerformanceWindow) {
+      setupPerformanceWindow();
+      perfAgentScope.addEventListener('click', togglePerformanceAgentProcessScope);
+      perfUpdateSpeed.addEventListener('click', togglePerformanceSpeedMenu);
+      perfUpdateSpeedMenu.addEventListener('click', handlePerformanceSpeedMenuClick);
+      document.addEventListener('pointerdown', handlePerformanceSpeedOutsidePointer);
+      document.addEventListener('keydown', handlePerformanceSpeedKeydown);
+      perfCopy.addEventListener('click', copyPerformanceSnapshot);
+      perfClose.addEventListener('click', closePerformancePanel);
+      perfTitlebar.addEventListener('pointerdown', startPerformancePanelDrag);
+      perfResizeHandles.forEach(handle => handle.addEventListener('pointerdown', startPerformancePanelResize));
+      perfProcesses.addEventListener('click', event => {
+        const button = event.target.closest('[data-perf-sort]');
+        if (button) setPerformanceProcessSort(button.dataset.perfSort);
+      });
+      perfProcesses.addEventListener('pointerdown', startPerformanceColumnResize);
     } else {
       tauriListen?.('agentwatcher-preview-hover', cancelSessionPreviewHide).catch(() => {});
       tauriListen?.('agentwatcher-preview-close', () => { sessionPreviewDesiredVisible = false; }).catch(() => {});
@@ -10965,6 +13017,35 @@
             await existing.hide().catch(() => {});
           }
         }
+      }).catch(() => {});
+      tauriListen?.('agentwatcher-performance-ready', async () => {
+        const existing = nativePerformanceWindow || await WebviewWindowClass?.getByLabel('performance-panel');
+        if (existing) {
+          nativePerformanceWindow = existing;
+          emitRuntimeSettings('performance-panel');
+          publishPerformanceFrontendData('performance-panel');
+          if (performanceWindowDesiredVisible) {
+            await existing.show().catch(() => {});
+            await existing.setFocus().catch(() => {});
+          } else {
+            await existing.hide().catch(() => {});
+          }
+        }
+      }).catch(() => {});
+      tauriListen?.('agentwatcher-performance-close', () => {
+        performanceWindowDesiredVisible = false;
+        if (settings.performanceDebug) {
+          updateSetting('performanceDebug', false, { announce: false, refresh: false });
+        }
+      }).catch(() => {});
+      tauriListen?.('agentwatcher-performance-agent-scope', event => {
+        setPerformanceAgentProcessScope(!!event.payload?.enabled, { announce: false });
+      }).catch(() => {});
+      tauriListen?.('agentwatcher-performance-update-speed', event => {
+        setPerformanceUpdateSpeed(event.payload?.speed, { announce: false, source: 'child' });
+      }).catch(() => {});
+      tauriListen?.('agentwatcher-performance-refresh-now', () => {
+        publishPerformanceFrontendData('performance-panel');
       }).catch(() => {});
       tauriListen?.('agentwatcher-preview-ready', async () => {
         const existing = nativePreviewWindow || await WebviewWindowClass?.getByLabel('session-preview');
@@ -11172,16 +13253,36 @@
       });
       includeCopilot.addEventListener('change', () => updateSetting('includeCopilot', includeCopilot.checked, { announce: true }));
       includeClaude.addEventListener('change', () => updateSetting('includeClaude', includeClaude.checked, { announce: true }));
+      includeCodex.addEventListener('change', () => updateSetting('includeCodex', includeCodex.checked, { announce: true }));
       hideArchived.addEventListener('change', () => updateSetting('hideArchived', hideArchived.checked, { announce: true }));
       activeWindowDays.addEventListener('change', () => updateSetting('activeWindowDays', clampNumber(activeWindowDays.value, 1, 30, defaultSettings.activeWindowDays), { announce: true }));
       maxSessions.addEventListener('change', () => updateSetting('maxSessions', clampNumber(maxSessions.value, 1, 5000, defaultSettings.maxSessions), { announce: true }));
       refreshIntervalSeconds.addEventListener('change', () => updateSetting('refreshIntervalSeconds', clampNumber(refreshIntervalSeconds.value, 1, 3600, defaultSettings.refreshIntervalSeconds), { announce: true, reschedule: true }));
+      performanceDebug?.addEventListener('change', () => updateSetting('performanceDebug', performanceDebug.checked, { announce: true, refresh: false }));
+      performanceAgentProcesses?.addEventListener('change', () => setPerformanceAgentProcessScope(performanceAgentProcesses.checked, { announce: true }));
+      performanceToggleButtons.forEach(button => {
+        button.addEventListener('click', () => updateSetting('performanceDebug', !settings.performanceDebug, { announce: true, refresh: false }));
+      });
       maxCardsPerRow.addEventListener('change', () => updateSetting('maxCardsPerRow', clampNumber(maxCardsPerRow.value, 1, 20, defaultSettings.maxCardsPerRow), { announce: true, refresh: false }));
       agentTaskFlipMs.addEventListener('change', () => updateSetting('agentTaskFlipMs', clampNumber(agentTaskFlipMs.value, AGENT_TASK_FLIP_MIN_MS, AGENT_TASK_FLIP_MAX_MS, defaultSettings.agentTaskFlipMs), { announce: true, refresh: false }));
       agentTaskTitleSize.addEventListener('change', () => updateSetting('agentTaskTitleSize', clampNumber(agentTaskTitleSize.value, AGENT_TASK_TITLE_MIN_PX, AGENT_TASK_TITLE_MAX_PX, defaultSettings.agentTaskTitleSize), { announce: true, refresh: false }));
       zoomLevel.addEventListener('change', () => setPageZoom(zoomLevel.value, { announce: true }));
       waitingAlertDurationSeconds.addEventListener('change', () => updateSetting('waitingAlertDurationSeconds', clampNumber(waitingAlertDurationSeconds.value, 1, 300, defaultSettings.waitingAlertDurationSeconds), { announce: true, refresh: false }));
       bridgeAction.addEventListener('click', installBridge);
+      perfAgentScope.addEventListener('click', togglePerformanceAgentProcessScope);
+      perfUpdateSpeed.addEventListener('click', togglePerformanceSpeedMenu);
+      perfUpdateSpeedMenu.addEventListener('click', handlePerformanceSpeedMenuClick);
+      document.addEventListener('pointerdown', handlePerformanceSpeedOutsidePointer);
+      document.addEventListener('keydown', handlePerformanceSpeedKeydown);
+      perfCopy.addEventListener('click', copyPerformanceSnapshot);
+      perfClose.addEventListener('click', closePerformancePanel);
+      perfTitlebar.addEventListener('pointerdown', startPerformancePanelDrag);
+      perfResizeHandles.forEach(handle => handle.addEventListener('pointerdown', startPerformancePanelResize));
+      perfProcesses.addEventListener('click', event => {
+        const button = event.target.closest('[data-perf-sort]');
+        if (button) setPerformanceProcessSort(button.dataset.perfSort);
+      });
+      perfProcesses.addEventListener('pointerdown', startPerformanceColumnResize);
       [appHeader, compactRail].forEach(source => source?.addEventListener('pointerdown', startWindowDrag));
       windowActionButtons.forEach(button => button.addEventListener('click', () => runWindowAction(button.dataset.windowAction)));
       railLogo.addEventListener('click', toggleRailWindow);
@@ -11202,6 +13303,7 @@
         if (!sessionPreview.hidden) positionSessionPreview();
         if (!workspacePickerPopover.hidden) updateWorkspacePickerGeometry();
         if (!handoffLayer.hidden) positionHandoffPanel(false);
+        if (settings.performanceDebug && !perfPanel.hidden) positionPerformancePanel(false);
         requestAnimationFrame(syncCompactRail);
         requestAnimationFrame(syncWaitingAlertLayout);
       });
