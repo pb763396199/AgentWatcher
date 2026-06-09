@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.1.3 - 2026-06-09
+
+- 接入 Codex 桌面会话扫描，主列表与 AgentTask / Todo 流程并入统一会话模型，支持状态筛选与跳转。
+- 新增 Codex 会话来源的 handoff 目标入口，与 Copilot/Claude 一致走 session 跳转与承接链路。
+- 新增主窗口整页缩放（Ctrl+/-/0 与 Ctrl+滚轮）与持久化缩放状态，支持 25%~500%。
+- 新增 AgentTask 与 Todo 面板窗口（含可缩放手柄）以及性能诊断面板（CPU/进程采样与快照）。
+- 修复 Claude 会话卡片打开路径，支持直接在 Claude editor 打开目标会话。
+
+发布包：`AgentWatcher-v0.1.3-windows-x64.zip`
+
+SHA256：`85A69EDB914DA8A342FC87800A8FC36EF9D2C959D4286F7CAB7592023673660C`
+
+验证：`cargo test --manifest-path src-tauri\Cargo.toml`、`node --check vscode-agentwatcher-bridge\extension.js`、`node .tmp\bridge-handoff-routing-test.cjs`、`npm run build:ui`、`git diff --check`、`npm run package:exe`、zip/manifest/SHA256 检查、重复安装最终 VSIX 后只保留稳定 Bridge ID。
+
 ## v0.1.2 - 2026-06-01
 
 - 新增 full-path workspace grouping：同名 workspace 使用完整路径区分，减少跨目录 session 混淆。
@@ -20,7 +34,7 @@
 
 发布包：`AgentWatcher-v0.1.2-windows-x64.zip`
 
-SHA256：`53874E575906A6701A9F609C258D9062744840581AAB7EE5BC88E18F4411F792`
+SHA256：`93DAFE31A9CC95085226797BEE534E8C0C81624580E5C7CF29DA306313F647C1`
 
 验证：`cargo test --manifest-path src-tauri\Cargo.toml`、`node --check vscode-agentwatcher-bridge\extension.js`、`node .tmp\bridge-handoff-routing-test.cjs`、`npm run build:ui`、`git diff --check`、`npm run package:exe`、zip/manifest/SHA256 检查、重复安装最终 VSIX 后只保留稳定 Bridge ID。
 

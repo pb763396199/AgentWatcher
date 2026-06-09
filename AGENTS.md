@@ -23,7 +23,7 @@ AgentWatcher 是一个 Windows 桌面小工具，用 Tauri 2 写的。它盯着 
 
 - `src-tauri/src/lib.rs` —— 唯一的 Rust 文件，4678 行左右。`pub fn run()` 是 Tauri 的入口，所有 `#[tauri::command]` 都注册在文件末尾。所有 session 解析、状态机、bridge 版本管理、handoff 确认逻辑全在这里。
 - `src-tauri/src/main.rs` —— 5 行，就一句 `agentwatcher_lib::run()`。
-- `src-tauri/capabilities/{default,session-preview,handoff-panel}.json` —— Tauri 2 的权限文件，对应三个 webview 窗口：`main`（主窗口）、`session-preview`（悬浮预览）、`handoff-panel`（接续对话框）。
+- `src-tauri/capabilities/{default,session-preview,handoff-panel,performance-panel,todo-panel}.json` —— Tauri 2 的权限文件，对应五个窗口：`main`（主窗口）、`session-preview`（悬浮预览）、`handoff-panel`（接续对话框）、`performance-panel`（性能诊断窗口）、`todo-panel`（todo 面板）。
 - `ui/index.html` —— 整个前端就这一个文件，5280 行左右，纯 HTML+CSS+JS，没有任何框架。Tauri 接口是动态 import 的，只有检测到 `window.__TAURI_INTERNALS__` 才加载。
 - `vscode-agentwatcher-bridge/` —— VS Code 扩展本体。`extension.js` 是 CommonJS 模块，用 `require('vscode')`，没有 TypeScript。Bridge 自己有个版本号（`0.1.11`），跟 App 版本号没关系，最后会打成 VSIX 跟 `AgentWatcher.exe` 放一起发布。
 - `scripts/{package-exe,generate-icons}.mjs` —— 发布相关的脚本。
@@ -76,7 +76,7 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 
 ## 前端怎么和 Rust 配合
 
-`ui/index.html` 是单文件 SPA。`window.__TAURI_INTERNALS__` 不存在时走 mock 模式，存在就动态 `import('@tauri-apps/api/...')`。运行时它会通过 `WebviewWindow` 新建两个 Tauri webview 窗口（label 是 `session-preview` 和 `handoff-panel`），给它们发事件（`agentwatcher-preview-data`、`agentwatcher-handoff-data`、`agentwatcher-runtime-settings`）。URL 上加 `?preview=1` 或 `?handoff=1` 会让同一个 HTML 文件直接以预览或接续模式启动（body 加 `is-preview-window` / `is-handoff-window` class）。
+`ui/index.html` 是单文件 SPA。`window.__TAURI_INTERNALS__` 不存在时走 mock 模式，存在就动态 `import('@tauri-apps/api/...')`。运行时它会通过 `WebviewWindow` 新建多个 Tauri webview 窗口（`session-preview`、`handoff-panel`、`performance-panel`、`todo-panel`），并给这些窗口发事件（`agentwatcher-preview-data`、`agentwatcher-handoff-data`、`agentwatcher-runtime-settings`）。URL 上加 `?preview=1` 或 `?handoff=1` 会让同一个 HTML 文件直接以预览或接续模式启动（body 加 `is-preview-window` / `is-handoff-window` class）。
 
 ## AgentTask / Watcher UI 约束
 
@@ -104,12 +104,14 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 
 ## 版本号规则
 
-- App 版本和 Bridge 版本**完全独立**。v0.1.x 的热修发布就直接覆盖上一个 `AgentWatcher-v0.1.2-windows-x64.zip`，不会让用户看到版本号往前跳。
+- App 版本和 Bridge 版本**完全独立**。v0.1.x 的热修发布会直接覆盖上一个同 minor 的 `AgentWatcher-v<minor>-windows-x64.zip`，不会让用户看到 App 版本号往前跳。
 - `CHANGELOG.md` 里要写发布的 zip 名字和对应的 SHA256。每次 `npm run package:exe` 跑完产物变了，要顺手同步过去。
 
 ## 发布规范
 
 按这个顺序走，不要只打个包就说发布好了。
+
+- 发布起点边界要求：验收范围必须从上一次发布 commit（本仓库用 `git tag` 指向的最近发布 tag）到当前 `HEAD`，所有 `git diff --name-only <tag>..HEAD` 涉及文件都要逐项复核。
 
 1. 先定范围和版本。
 	- 先说清楚这次是“新版本”还是“原地热修”。没明确要新版本，就别随手把 `0.1.2` 改成 `0.1.3`。
@@ -118,7 +120,7 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 
 2. 先清文档和旧口径。
 	- 发布前同步 `README.md`、`CHANGELOG.md`、`vscode-agentwatcher-bridge/README.md`、`TODO.md`，必要时看 `DESIGN.md` 和 `AGENTS.md`。
-	- 搜旧版本号、旧 Bridge ID、`safe*`、旧命令名、旧路径、过时注释。能改准就改准，不能闭环就写到 Future / Known Issues，别装作完成。
+	- 搜旧版本号、旧 Bridge ID、`safe*`、旧命令名、旧路径、过时注释。对应 `README/TODO/AGENTS/CHANGELOG/Bridge README` 与实现注释要保持口径一致。能改准就改准，不能闭环就写到 Future / Known Issues，别装作完成。
 	- `CHANGELOG.md` 必须写最终 zip 名和 SHA256；每次重打包，SHA 都要重算。
 
 3. 让“专家组”按角色过一遍。

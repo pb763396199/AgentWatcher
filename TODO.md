@@ -109,10 +109,21 @@
 
 ## 当前优先级
 
-1. 完成 v0.1.2 热修验证清单，优先确认 Bridge 稳定 ID 安装/更新清理、session 跳转、handoff ack、i18n/theme 子窗口同步和 zip/SHA256 更新。
+1. 完成 v0.1.3 发布检查清单，优先确认 Bridge 稳定 ID 安装/更新清理、session 跳转、handoff ack、i18n/theme 子窗口同步和 zip/SHA256 更新。
 2. 验证长时间运行时的扫描和 UI 刷新稳定性。
 3. 补充窗口位置记忆、托盘入口和全局快捷键。
 4. 继续收敛 Session Preview 和 Handoff Panel 的真实 Tauri 交互体验。
+
+## v0.1.3 发布检查清单
+
+- [x] 从 `artifacts/AgentWatcher/AgentWatcher.exe` 启动验证（可执行、可退出）。
+- [x] 自动安装/更新 Bridge 后，`code --list-extensions --show-versions | findstr agentwatcher` 只出现 `agentwatcher.agentwatcher-vscode-session-bridge@0.1.11`，不出现 `safe1`~`safe4`（重复安装最终 VSIX 验证通过）。
+- [ ] 点击 Copilot / Claude / Codex session 卡片可打开目标 workspace/session；失败时可见可操作错误。
+- [ ] 右键 session 卡片可 handoff 到 Copilot、Copilot CLI 和 Claude，并在 UI 呈现确认 ack（失败给出可读错误）。
+- [ ] 主窗口、中英切换、dark/light、横版/竖版、always-on-top 与 Session Preview、Handoff Panel、Todo Panel、Performance Panel 同步一致（手动验收）。
+- [ ] 验证长 workspace 名、长按钮文案、滚动、窗口重叠/溢出在高 DPI（125%）下表现可用。
+- [x] 包含 `AgentWatcher.exe`、`vscode-agentwatcher-bridge/`、`agentwatcher-bridge-0.1.11.vsix` 的发布产物完整写入 `artifacts/AgentWatcher-v0.1.3-windows-x64.zip` 并记录 SHA。
+- [x] 将发布 SHA 更新到 `CHANGELOG.md` 与本文件。
 
 ## v0.1.2 热修验证清单
 
@@ -127,7 +138,7 @@
 - [ ] 中英切换、dark/light 切换同步到主窗口、Session Preview 和 Handoff Panel。
 - [ ] Session Preview 正文只通过运行时事件传递，不写入 localStorage 或项目目录临时文件。
 - [x] `npm run package:exe` 会清理旧 release zip / 解压目录，并重新生成 `AgentWatcher-v0.1.2-windows-x64.zip`。
-- [x] CHANGELOG 已更新 v0.1.2 热修发布包和 SHA256：`53874E575906A6701A9F609C258D9062744840581AAB7EE5BC88E18F4411F792`。
+- [x] CHANGELOG 已更新 v0.1.2 热修发布包和 SHA256：`93DAFE31A9CC95085226797BEE534E8C0C81624580E5C7CF29DA306313F647C1`。
 - [x] 发布包包含 `AgentWatcher.exe`、`vscode-agentwatcher-bridge/`、`agentwatcher-bridge-<version>.vsix`。
 - [ ] docs 是否进入 git 由用户在发布前确认，不作为当前实现默认假设。
 

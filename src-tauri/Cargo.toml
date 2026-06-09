@@ -1,7 +1,7 @@
 [package]
 name = "agentwatcher"
-version = "0.1.2"
-description = "Windows floating session watcher for Copilot and Claude Code"
+version = "0.1.3"
+description = "Windows floating session watcher for Copilot, Claude Code, and Codex sessions"
 authors = ["AgentWatcher"]
 edition = "2021"
 

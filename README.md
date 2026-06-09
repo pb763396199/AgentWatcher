@@ -1,8 +1,11 @@
 # AgentWatcher
 
-AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候选窗一样常驻在屏幕任意位置，监控 VS Code 中 Copilot 和 Claude Code 在所有 workspace 的 session 状态，并把 waiting / running / idle 会话以可跳转的方形卡片展示出来。
+AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候选窗一样常驻在屏幕任意位置，监控以下来源在所有 workspace 的会话状态，并把 waiting / running / idle 会话以可跳转的卡片展示出来：
+- VS Code Copilot 会话
+- VS Code Claude Code 会话
+- Codex 桌面会话
 
-当前发布版本：v0.1.2。仓库已切换到 Tauri 2 作为主应用壳方向，前端入口 [ui/index.html](ui/index.html) 是唯一 UI 源文件。仓库只保留源码和必要的源码内资产，release 产物通过打包脚本按需生成。
+当前发布版本：v0.1.3。仓库已切换到 Tauri 2 作为主应用壳方向，前端入口 [ui/index.html](ui/index.html) 是唯一 UI 源文件。仓库只保留源码和必要的源码内资产，release 产物通过打包脚本按需生成。
 
 ## 当前 UI 入口
 
@@ -28,6 +31,10 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - 右键 session 卡片可发起 handoff，并按目标路由到 Copilot、Copilot CLI 或 Claude。
 - Bridge handoff 会通过 ack 文件回报成功或失败，`launch_handoff` 等待确认时不阻塞主 UI。
 - 运行态页面移除了 VS Code 背景 mock 和 Windows taskbar mock，只保留透明悬浮工具 UI。
+- 支持主窗口整页缩放（Ctrl + / - / 0、Ctrl+滚轮），并持久化缩放比例（25%~500%）。
+- 新增 AgentTask / Todo 面板入口，任务流与会话卡片联动；任务状态变化可驱动会话归档策略。
+- 新增 performance-panel，支持 AgentWatcher、VS Code、Codex 进程采样、CPU 历史、列宽记忆和快照复制。
+- 接入 Codex 桌面会话扫描，支持与 Copilot / Claude 一起纳入 Watcher 和任务链路。
 
 ## 技术方向
 
@@ -40,13 +47,17 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - **一键跳转**：点击卡片直接打开对应的 VS Code session
 - **悬浮预览**：悬停卡片右下角展开按钮显示最近用户输入和 AI 正文摘要，预览窗口可 resize 并记忆尺寸
 - **Handoff**：右键 session 卡片可携带上下文接续到 Copilot、Copilot CLI 或 Claude，新会话由目标 provider 负责承接
+- **Codex 会话接入**：接入 Codex 桌面会话，支持与 Copilot、Claude 一起显示状态与跳转
 - **VS Code Bridge**：首次启动自动安装 VS Code bridge extension，实现精确 session 跳转、handoff 路由和 ack 成功确认
+- **AgentTask / Todo**：新增 AgentTask 与 Todo 面板入口，任务状态与会话状态联动
 - **悬浮窗口**：Windows 悬浮应用，四角 resize，可任意方向缩放
 - **置顶控制**：设置面板内可实时打开或关闭 always-on-top
 - **布局切换**：设置面板内支持 Horizontal / Vertical 两种窗口布局，并记忆偏好
 - **智能过滤**：workspace 过滤、状态过滤、full-path workspace grouping、自动隐藏归档 sessions
 - **多语言**：中英文切换
 - **明暗主题**：支持 Dark / Light 主题切换
+- **窗口缩放**：支持 Ctrl + / - / 0 与 Ctrl+滚轮缩放主窗口，并可在设置中配置缩放比例（默认 100%）
+- **性能诊断**：新增 performance panel，支持进程树采样与 CPU 历史（含 AgentWatcher / VS Code / Codex）
 
 ## 快速开始
 
@@ -208,7 +219,7 @@ code --install-extension .\vscode-agentwatcher-bridge\agentwatcher-bridge-*.vsix
 
 ## Known Issues
 
-- Prompt handoff 的提示词插入目前整体仍依赖 clipboard bridge：Copilot、Copilot CLI 和 Claude 都由 Bridge 读取 clipboard 后，再通过各自的目标命令填入。非剪贴板 prompt 通道列入 Future，不作为本次 v0.1.2 热修发布阻断。
+- Prompt handoff 的提示词插入目前整体仍依赖 clipboard bridge：Copilot、Copilot CLI 和 Claude 都由 Bridge 读取 clipboard 后，再通过各自的目标命令填入。非剪贴板 prompt 通道列入 Future，不作为本次 v0.1.3 发布阻断。
 - 未来如果引入 prompt 临时文件，禁止写入项目目录，只允许写入 AgentWatcher 自身运行时临时目录或系统临时目录，例如 `%TEMP%\AgentWatcher\...`，并需要 token、TTL 和读取后清理。
 - 历史 `safe1` / `safe2` / `safe3` / `safe4` Bridge 扩展可能残留在开发机上；当前发布只以稳定 ID 为准，install/update 会尝试清理旧 ID。
 - docs 是否进入 git 仍由发布前人工决定，当前文档仅记录准备状态，不默认改变仓库策略。
@@ -257,6 +268,11 @@ code --install-extension .\vscode-agentwatcher-bridge\agentwatcher-bridge-*.vsix
 - **idle**：超过近期活跃窗口后没有新的内容时间戳或文件修改。
 - 已完成的 Copilot 请求会通过 `result`、`followups`、`elapsedMs`、`modelState.completedAt` 等结束信号清理旧 waiting，skipped / skip / 跳过等回答不会被当作用户输入。
 
+### Codex Sessions
+
+- 通过 Codex app-server 获取当前桌面会话摘要与状态，并按会话时间与活跃度接入统一状态模型。
+- Codex 会话在主列表与 AgentTask 流程中与 Copilot/Claude 表现一致：支持筛选、跳转与 handoff 流程对齐。
+
 ### Session Preview
 
 - 卡片本身点击仍然用于跳转 session；右下角展开按钮只负责预览。
@@ -275,12 +291,14 @@ code --install-extension .\vscode-agentwatcher-bridge\agentwatcher-bridge-*.vsix
 - **Refresh interval (sec)**：刷新间隔秒数，默认 15 秒
 - **Hide archived**：隐藏已归档的 sessions
 - **Copilot sessions** / **Claude sessions**：是否包含对应 provider 的 sessions
+- **Codex sessions**：是否包含 Codex 会话来源
 
 ## 架构说明
 
 ### Rust Backend (src-tauri/src/lib.rs)
 
 - `scan_sessions`：扫描并返回所有符合条件的 sessions
+- `scan_app_server_sessions`：扫描 Codex app-server 会话并合并入统一会话列表
 - `open_session`：通过 VS Code CLI 或 deep link 打开指定 session
 - `get_bridge_status`：检查 bridge extension 状态
 - `install_bridge`：打包并安装 bridge extension
@@ -295,6 +313,7 @@ code --install-extension .\vscode-agentwatcher-bridge\agentwatcher-bridge-*.vsix
 - 管理横版 / 竖版窗口布局切换和设置持久化
 - 管理 Session Preview 的 DOM fallback 和 Tauri `session-preview` tooltip webview
 - 管理 Handoff Panel、跨 provider handoff 目标和 Bridge ack 状态提示
+- 管理 AgentTask / Todo / Performance 面板的子窗口事件、同步和持久化交互
 
 ### VS Code Bridge Extension (vscode-agentwatcher-bridge/)
 
