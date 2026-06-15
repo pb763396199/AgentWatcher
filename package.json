@@ -4,10 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tauri dev",
+    "dev": "node tools/tauri-dev.mjs",
     "build": "tauri build",
     "generate:icons": "node scripts/generate-icons.mjs",
     "dev:ui": "vite ui --host 127.0.0.1 --port 1420",
+    "test:tauri": "node tools/tauri-realtest/cli.mjs",
+    "test:tauri:smoke": "node tools/tauri-realtest/cli.mjs smoke",
+    "test:tauri:flow": "node tools/tauri-realtest/cli.mjs",
     "build:ui": "vite build ui --outDir ../ui-dist --emptyOutDir --base ./",
     "package:exe": "node scripts/package-exe.mjs"
   },
@@ -16,6 +19,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.2",
+    "playwright-core": "^1.60.0",
     "rcedit": "^5.0.2",
     "vite": "^8.0.14"
   }

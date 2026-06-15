@@ -188,6 +188,12 @@
       color: #15599f;
     }
 
+    body[data-theme="light"] .provider.oc {
+      border-color: #7a5f19;
+      background: #fff8df;
+      color: #6b4f00;
+    }
+
     body[data-theme="light"] .lane-header {
       background: rgba(248, 248, 248, 0.96);
     }
@@ -1258,6 +1264,7 @@
     .provider.gh { color: #4ec9b0; border-color: #4ec9b0; }
     .provider.cl { color: #ce9178; border-color: #ce9178; }
     .provider.cx { color: #75beff; border-color: #75beff; }
+    .provider.oc { color: #d7ba7d; border-color: #d7ba7d; }
     .time {
       min-width: 0;
       overflow: hidden;
@@ -2233,6 +2240,7 @@
 
     .perf-process-row.role-codex,
     .perf-process-row.role-codex-desktop { border-left: 2px solid #3794ff; }
+    .perf-process-row.role-opencode { border-left: 2px solid #d7ba7d; }
     .perf-process-row.role-vs-code,
     .perf-process-row.role-vs-code-insiders,
     .perf-process-row.role-vs-code-compatible { border-left: 2px solid #7a9cff; }
@@ -4839,6 +4847,10 @@
             <input class="setting-check" id="includeCodex" type="checkbox" checked />
           </div>
           <div class="setting-row">
+            <label for="includeOpenCode" data-i18n="includeOpenCode">OpenCode sessions</label>
+            <input class="setting-check" id="includeOpenCode" type="checkbox" checked />
+          </div>
+          <div class="setting-row">
             <label for="hideArchived" data-i18n="hideArchived">Hide archived</label>
             <input class="setting-check" id="hideArchived" type="checkbox" checked />
           </div>
@@ -5360,6 +5372,7 @@
     const includeCopilot = document.getElementById('includeCopilot');
     const includeClaude = document.getElementById('includeClaude');
     const includeCodex = document.getElementById('includeCodex');
+    const includeOpenCode = document.getElementById('includeOpenCode');
     const hideArchived = document.getElementById('hideArchived');
     const activeWindowDays = document.getElementById('activeWindowDays');
     const maxSessions = document.getElementById('maxSessions');
@@ -5511,6 +5524,8 @@
     let selectedWorkspaceKey = '';
     let handoffSourceCard = null;
     let handoffSourceSession = null;
+    let handoffSourceContext = null;
+    let handoffSourceContextRequestId = 0;
     let handoffTargetWorkspace = '';
     let handoffLaunchMode = 'agents';
     let handoffId = '';
@@ -5546,8 +5561,19 @@
     let lastSessionSignature = '';
     let refreshTimer = 0;
     let eventRefreshTimer = 0;
+    let runtimeSettingsEmitFrame = 0;
+    let runtimeSettingsFollowupFrame = 0;
+    let runtimeSettingsFollowupFlags = {
+      preview: false,
+      handoff: false,
+      todo: false,
+      performance: false
+    };
     let refreshInFlight = false;
     let refreshQueued = false;
+    let bridgeStatusCache = null;
+    let bridgeStatusCheckedAt = 0;
+    let bridgeStatusInFlight = null;
     let performanceTimer = 0;
     let performanceFrontendTimer = 0;
     let performanceFrameId = 0;
@@ -5608,6 +5634,7 @@
       includeCopilot: true,
       includeClaude: true,
       includeCodex: true,
+      includeOpenCode: true,
       hideArchived: true,
       activeWindowDays: 7,
       maxSessions: 80,
@@ -5718,11 +5745,19 @@
       Object.assign(i18n.en, {
         openWorkspace: 'Open workspace: ',
         includeCodex: 'Codex sessions',
+        includeOpenCode: 'OpenCode sessions',
         handoffCodexLabel: 'Codex Desktop',
         handoffCodexDescription: 'Create a Codex desktop thread in the selected workspace and send the handoff prompt',
+        handoffOpenCodeLabel: 'OpenCode CLI',
+        handoffOpenCodeDescription: 'Create an OpenCode session in the selected workspace and send the handoff prompt',
         handoffTargetAgentCodex: 'Codex desktop',
+        handoffTargetAgentOpenCode: 'OpenCode CLI',
         handoffProviderCodex: 'Codex desktop',
+        handoffProviderOpenCode: 'OpenCode',
+        handoffPortableSummaryLabel: 'Portable source summary',
+        handoffSourceExportPending: 'Exporting portable source file...',
         handoffParserHintCodex: 'Codex sessions are available through the Codex desktop app-server. Use the provider resource to open the source thread when needed, and rely on the snapshot if the source thread is not accessible.',
+        handoffParserHintOpenCode: 'OpenCode sessions are exported by AgentWatcher from the local SQLite database into the primary source file. Read that file first; the provider resource is only a navigation hint.',
         agentTaskTitle: 'AgentTask',
         watcherWindowLabel: 'AgentWatcher Windows app window',
         agentTaskFaceLabel: 'AgentTask workspace todo',
@@ -5865,11 +5900,19 @@
       Object.assign(i18n.zh, {
         openWorkspace: '打开工作区：',
         includeCodex: 'Codex 会话',
+        includeOpenCode: 'OpenCode 会话',
         handoffCodexLabel: 'Codex 桌面端',
         handoffCodexDescription: '在选中的工作区创建 Codex 桌面端会话，并发送接续提示词',
+        handoffOpenCodeLabel: 'OpenCode CLI',
+        handoffOpenCodeDescription: '在选中的工作区创建 OpenCode 会话，并发送接续提示词',
         handoffTargetAgentCodex: 'Codex 桌面端',
+        handoffTargetAgentOpenCode: 'OpenCode CLI',
         handoffProviderCodex: 'Codex 桌面端',
+        handoffProviderOpenCode: 'OpenCode',
+        handoffPortableSummaryLabel: '可移植来源摘要',
+        handoffSourceExportPending: '正在导出可移植来源文件...',
         handoffParserHintCodex: 'Codex 会话通过 Codex 桌面端 app-server 访问。需要时使用 provider resource 打开来源线程；若无法访问来源线程，则从快照继续。',
+        handoffParserHintOpenCode: 'OpenCode 会话由 AgentWatcher 从本机 SQLite 数据库导出为主要来源文件。先读取该文件；provider resource 只是导航提示。',
         agentTaskTitle: 'AgentTask',
         watcherWindowLabel: 'AgentWatcher 主窗口',
         agentTaskFaceLabel: 'AgentTask 工作区待办',
@@ -6014,7 +6057,8 @@
       { value: 'agents', labelKey: 'handoffAgentsLabel', descriptionKey: 'handoffAgentsDescription' },
       { value: 'code-chat', labelKey: 'handoffCodeChatLabel', descriptionKey: 'handoffCodeChatDescription' },
       { value: 'claude-panel', labelKey: 'handoffClaudeLabel', descriptionKey: 'handoffClaudeDescription' },
-      { value: 'codex-app', labelKey: 'handoffCodexLabel', descriptionKey: 'handoffCodexDescription' }
+      { value: 'codex-app', labelKey: 'handoffCodexLabel', descriptionKey: 'handoffCodexDescription' },
+      { value: 'opencode-cli', labelKey: 'handoffOpenCodeLabel', descriptionKey: 'handoffOpenCodeDescription' }
     ];
     let currentLang = settings.language;
     let previewCard = null;
@@ -6671,6 +6715,7 @@
     function todoProviderForMode(mode) {
       if (mode === 'claude-panel') return 'claude';
       if (mode === 'codex-app') return 'codex';
+      if (mode === 'opencode-cli') return 'opencode';
       return 'copilot';
     }
 
@@ -8444,9 +8489,11 @@
 
     function todoDispatchModeFromSession(session) {
       const text = [session?.lastUserMessage, session?.title, session?.branch].filter(Boolean).join('\n').toLowerCase();
+      if (text.includes('opencode cli') || text.includes('opencode 会话')) return 'opencode-cli';
       if (text.includes('codex desktop') || text.includes('codex 桌面端')) return 'codex-app';
       if (text.includes('claude code') || text.includes('claude code 编辑器')) return 'claude-panel';
       if (text.includes('copilot cli') || text.includes('copilot cli 编辑器')) return 'code-chat';
+      if (session?.provider === 'opencode') return 'opencode-cli';
       if (session?.provider === 'codex') return 'codex-app';
       if (session?.provider === 'claude') return 'claude-panel';
       return 'agents';
@@ -9048,6 +9095,7 @@
           includeCopilot: savedSettings.includeCopilot !== false,
           includeClaude: savedSettings.includeClaude !== false,
           includeCodex: savedSettings.includeCodex !== false,
+          includeOpenCode: savedSettings.includeOpenCode !== false,
           hideArchived: savedSettings.hideArchived !== false,
           activeWindowDays: clampNumber(savedSettings.activeWindowDays, 1, 30, defaultSettings.activeWindowDays),
           maxSessions: clampNumber(savedSettings.maxSessions, 1, 5000, defaultSettings.maxSessions),
@@ -9069,6 +9117,40 @@
 
     function saveSettings() {
       localStorage.setItem('agentwatcher.settings', JSON.stringify(settings));
+    }
+
+    function settingRequiresSessionRefresh(key) {
+      return [
+        'includeCopilot',
+        'includeClaude',
+        'includeCodex',
+        'includeOpenCode',
+        'hideArchived',
+        'activeWindowDays',
+        'maxSessions'
+      ].includes(key);
+    }
+
+    function settingRequiresRuntimeBroadcast(key) {
+      return [
+        'language',
+        'theme',
+        'layout',
+        'agentTaskFlipMs',
+        'agentTaskTitleSize',
+        'alwaysOnTop',
+        'performanceAgentProcesses',
+        'performanceUpdateSpeed'
+      ].includes(key);
+    }
+
+    function settingRequiresNativeSizeSync(key) {
+      return [
+        'layout',
+        'pageZoom',
+        'waitingAlertSize',
+        'maxCardsPerRow'
+      ].includes(key);
     }
 
     function htmlLang(language) {
@@ -9210,10 +9292,55 @@
       return payload;
     }
 
+    function scheduleRuntimeSettingsEmit(options = {}) {
+      if (isChildWindow()) return;
+      if (options.immediate) {
+        if (runtimeSettingsEmitFrame) {
+          window.clearTimeout(runtimeSettingsEmitFrame);
+          runtimeSettingsEmitFrame = 0;
+        }
+        emitRuntimeSettings();
+        return;
+      }
+      if (runtimeSettingsEmitFrame) return;
+      runtimeSettingsEmitFrame = window.setTimeout(() => {
+        runtimeSettingsEmitFrame = 0;
+        emitRuntimeSettings();
+      }, 0);
+    }
+
+    function scheduleRuntimeSettingsFollowup(flags) {
+      runtimeSettingsFollowupFlags = {
+        preview: runtimeSettingsFollowupFlags.preview || !!flags.preview,
+        handoff: runtimeSettingsFollowupFlags.handoff || !!flags.handoff,
+        todo: runtimeSettingsFollowupFlags.todo || !!flags.todo,
+        performance: runtimeSettingsFollowupFlags.performance || !!flags.performance
+      };
+      if (runtimeSettingsFollowupFrame) return;
+      runtimeSettingsFollowupFrame = window.setTimeout(() => {
+        runtimeSettingsFollowupFrame = 0;
+        const pending = runtimeSettingsFollowupFlags;
+        runtimeSettingsFollowupFlags = {
+          preview: false,
+          handoff: false,
+          todo: false,
+          performance: false
+        };
+        if (pending.preview && isPreviewWindow && latestSessionPreviewData) updatePreviewWindowContent(latestSessionPreviewData);
+        if (pending.handoff && isHandoffWindow) updateHandoffPrompt();
+        if (pending.todo && (isTodoWindow || isAgentTaskMode)) renderTodoEverywhere({ force: true });
+        if (pending.performance && isPerformanceWindow) renderPerformancePanel();
+      }, 0);
+    }
+
     function applyRuntimeSettings(payload) {
       if (!payload) return;
       const previousAgentScope = !!settings.performanceAgentProcesses;
       const previousUpdateSpeed = normalizePerformanceUpdateSpeed(settings.performanceUpdateSpeed);
+      const previousLanguage = settings.language;
+      const previousTheme = settings.theme;
+      const previousLayout = settings.layout;
+      const previousAlwaysOnTop = !!settings.alwaysOnTop;
       settings = {
         ...settings,
         language: ['en', 'zh'].includes(payload.language) ? payload.language : settings.language,
@@ -9225,11 +9352,18 @@
         performanceAgentProcesses: typeof payload.performanceAgentProcesses === 'boolean' ? payload.performanceAgentProcesses : settings.performanceAgentProcesses,
         performanceUpdateSpeed: normalizePerformanceUpdateSpeed(payload.performanceUpdateSpeed || settings.performanceUpdateSpeed)
       };
-      applySettingsControls();
-      applyAlwaysOnTopSetting();
-      applyLanguage();
-      if (isPreviewWindow && latestSessionPreviewData) updatePreviewWindowContent(latestSessionPreviewData);
-      if (isHandoffWindow) updateHandoffPrompt();
+      currentLang = settings.language;
+      applyDocumentSettings();
+      applyStaticI18n();
+      if (previousAlwaysOnTop !== !!settings.alwaysOnTop) applyAlwaysOnTopSetting();
+      updatePerformanceScopeControl();
+      updatePerformanceSpeedControl();
+      scheduleRuntimeSettingsFollowup({
+        preview: isPreviewWindow && latestSessionPreviewData,
+        handoff: isHandoffWindow,
+        todo: isTodoWindow || isAgentTaskMode,
+        performance: isPerformanceWindow && (previousLanguage !== settings.language || previousTheme !== settings.theme || previousLayout !== settings.layout)
+      });
       const updateSpeedChanged = previousUpdateSpeed !== normalizePerformanceUpdateSpeed(settings.performanceUpdateSpeed);
       if (settings.performanceDebug && (previousAgentScope !== !!settings.performanceAgentProcesses || updateSpeedChanged)) {
         performanceSnapshot = null;
@@ -9270,6 +9404,7 @@
         version: 1,
         updatedAt: Date.now(),
         sourceSession: handoffSourceSession,
+        sourceContext: handoffSourceContext,
         targetWorkspace: handoffTargetWorkspace,
         launchMode: handoffLaunchMode,
         handoffId,
@@ -9290,6 +9425,7 @@
         includeCopilot: settings.includeCopilot,
         includeClaude: settings.includeClaude,
         includeCodex: settings.includeCodex,
+        includeOpenCode: settings.includeOpenCode,
         hideArchived: settings.hideArchived,
         activeWindowDays: settings.activeWindowDays,
         maxSessions: settings.maxSessions
@@ -9307,6 +9443,7 @@
       includeCopilot.checked = settings.includeCopilot;
       includeClaude.checked = settings.includeClaude;
       includeCodex.checked = settings.includeCodex;
+      includeOpenCode.checked = settings.includeOpenCode;
       hideArchived.checked = settings.hideArchived;
       activeWindowDays.value = String(settings.activeWindowDays);
       maxSessions.value = String(settings.maxSessions);
@@ -9327,14 +9464,9 @@
       sizeRange.max = String(settings.maxCardsPerRow);
       settingsToggle.classList.toggle('is-active', !settingsPanel.hidden);
       settingsToggle.setAttribute('aria-label', t('settings'));
-      document.querySelectorAll('[data-i18n]').forEach(element => {
-        element.textContent = t(element.dataset.i18n);
-      });
       updatePerformanceScopeControl();
       updatePerformanceSpeedControl();
       applyWaitingAlertSize();
-      syncWaitingAlertLayout();
-      updatePerformanceDebugMode();
     }
 
     function updatePerformanceScopeControl() {
@@ -9396,16 +9528,39 @@
     function updateSetting(key, value, options = {}) {
       settings = { ...settings, [key]: value };
       saveSettings();
+      const immediateRuntimeBroadcast = ['language', 'theme', 'layout'].includes(key) && settingRequiresRuntimeBroadcast(key);
+      if (immediateRuntimeBroadcast) {
+        scheduleRuntimeSettingsEmit({ immediate: true });
+      }
       applySettingsControls();
-      applyLanguage();
-      emitRuntimeSettings();
-      setIconsPerRow(sizeRange.value, false);
-      requestAnimationFrame(syncCompactRail);
-      requestAnimationFrame(syncWaitingAlertLayout);
-      syncNativeSizeForWaitingAlerts();
-      if (key === 'language') checkBridgeStatus();
+      if (key === 'language') {
+        applyLanguage({ deferDynamic: true });
+        renderBridgeStatus();
+      }
+      if (key === 'maxCardsPerRow') {
+        setIconsPerRow(sizeRange.value, false);
+      }
+      if (key === 'alwaysOnTop') {
+        applyAlwaysOnTopSetting();
+      }
+      if (key === 'performanceDebug') {
+        updatePerformanceDebugMode();
+      }
+      if (key === 'performanceAgentProcesses' && settings.performanceDebug) {
+        performanceSnapshot = null;
+        renderPerformancePanel();
+        if (shouldSamplePerformanceSnapshotHere()) samplePerformanceSnapshot({ force: true });
+      }
+      if (settingRequiresRuntimeBroadcast(key) && !immediateRuntimeBroadcast) {
+        scheduleRuntimeSettingsEmit();
+      }
+      if (settingRequiresNativeSizeSync(key)) {
+        requestAnimationFrame(syncCompactRail);
+        requestAnimationFrame(syncWaitingAlertLayout);
+        syncNativeSizeForWaitingAlerts();
+      }
       if (options.reschedule) scheduleSessionRefresh();
-      if (options.refresh !== false) refreshSessions(true);
+      if (options.refresh !== false && settingRequiresSessionRefresh(key)) refreshSessions(true);
       if (options.announce) showToast(t('settingsSaved'));
     }
 
@@ -10076,11 +10231,11 @@
     function formatScanMetric(scan, counts) {
       const duration = Number.isFinite(Number(scan.durationMs)) ? scan.durationMs + 'ms' : '--';
       const total = Number.isFinite(Number(scan.totalSessions)) ? scan.totalSessions : 0;
-      return duration + ' / ' + total + ' | GH ' + (counts.copilot || 0) + ' C ' + (counts.claude || 0) + ' CX ' + (counts.codex || 0);
+      return duration + ' / ' + total + ' | GH ' + (counts.copilot || 0) + ' C ' + (counts.claude || 0) + ' CX ' + (counts.codex || 0) + ' OC ' + (counts.opencode || 0);
     }
 
     function scanExplainText(scan, counts) {
-      const providers = 'GH ' + (counts.copilot || 0) + ' · C ' + (counts.claude || 0) + ' · CX ' + (counts.codex || 0);
+      const providers = 'GH ' + (counts.copilot || 0) + ' · C ' + (counts.claude || 0) + ' · CX ' + (counts.codex || 0) + ' · OC ' + (counts.opencode || 0);
       const codexRpc = Number(scan.codexTurnRequests) || 0;
       const codexTurns = Number(scan.codexTurnsReturned) || 0;
       return t('perfScanExplain') + ' ' + providers + (codexRpc ? ' · Codex ' + codexRpc + ' rpc / ' + codexTurns + ' turns' : '');
@@ -10330,6 +10485,9 @@
       if (key === 'codex' || key === 'cx' || key === 'codex desktop') {
         return { provider: 'codex', label: 'CX', className: 'cx', nameKey: 'handoffProviderCodex' };
       }
+      if (key === 'opencode' || key === 'oc' || key === 'open code' || key === 'opencode cli') {
+        return { provider: 'opencode', label: 'OC', className: 'oc', nameKey: 'handoffProviderOpenCode' };
+      }
       if (key === 'claude' || key === 'cl' || key === 'c' || key === 'claude code') {
         return { provider: 'claude', label: 'C', className: 'cl', nameKey: 'handoffProviderClaude' };
       }
@@ -10487,12 +10645,18 @@
           ? cwd + '创建 Codex 桌面端会话；发送接续提示词'
           : cwd + 'create a Codex desktop thread; send "<handoff prompt>"';
       }
+      if (handoffLaunchMode === 'opencode-cli') {
+        return currentLang === 'zh'
+          ? cwd + '创建 OpenCode 会话；发送接续提示词'
+          : cwd + 'create an OpenCode session; send "<handoff prompt>"';
+      }
       return currentLang === 'zh'
         ? cwd + '在 VS Code 编辑器标签页打开 Claude Code；填入接续提示词'
         : cwd + 'open Claude Code in a VS Code editor tab; insert "<handoff prompt>"';
     }
 
     function handoffTargetAgentName() {
+      if (handoffLaunchMode === 'opencode-cli') return t('handoffTargetAgentOpenCode');
       if (handoffLaunchMode === 'codex-app') return t('handoffTargetAgentCodex');
       if (handoffLaunchMode === 'claude-panel') return t('handoffTargetAgentClaude');
       if (handoffLaunchMode === 'code-chat') return t('handoffTargetAgentCli');
@@ -10506,7 +10670,7 @@
 
     function buildSourceAccessGuide(source) {
       const provider = source.provider || 'unknown';
-      const sourceFile = source.sessionPath || t('handoffNone');
+      const sourceFile = handoffPortableSourceFile(source);
       const sourceResource = source.sessionResource || t('handoffNone');
       const sameProvider = provider !== 'unknown' && provider === todoProviderForMode(handoffLaunchMode);
       const portabilityNote = sameProvider
@@ -10518,7 +10682,9 @@
           ? t('handoffParserHintCopilot')
           : provider === 'codex'
             ? t('handoffParserHintCodex')
-            : t('handoffParserHintUnknown');
+            : provider === 'opencode'
+              ? t('handoffParserHintOpenCode')
+              : t('handoffParserHintUnknown');
       return [
         '',
         t('handoffSourceAccessTitle'),
@@ -10532,9 +10698,18 @@
       ].join('\n');
     }
 
+    function handoffPortableSourceFile(source) {
+      return handoffSourceContext?.primarySourceFile || source?.handoffSourceFile || source?.sessionPath || t('handoffNone');
+    }
+
+    function handoffPortableSourceSummary(source) {
+      return handoffSourceContext?.inlineSummary || source?.handoffSourceSummary || '';
+    }
+
     function buildHandoffPrompt() {
       const source = handoffSourceSession || {};
       const task = handoffTask.value.trim() || t('handoffDefaultTask');
+      const portableSummary = handoffPortableSourceSummary(source);
       const locator = handoffIncludeLocator
         ? [
           '',
@@ -10542,7 +10717,7 @@
           `${t('handoffSourceLocatorProviderLabel')}: ${handoffProviderName(source.provider)}`,
           `${t('handoffSourceLocatorSessionIdLabel')}: ${source.id || t('handoffUnknown')}`,
           `${t('handoffSourceLocatorWorkspaceLabel')}: ${source.workspacePath || source.workspaceLabel || t('handoffUnknown')}`,
-          `${t('handoffSourceLocatorSessionFileLabel')}: ${source.sessionPath || t('handoffNone')}`,
+          `${t('handoffSourceLocatorSessionFileLabel')}: ${handoffPortableSourceFile(source)}`,
           `${t('handoffSourceLocatorResourceLabel')}: ${source.sessionResource || t('handoffNone')}`,
           buildSourceAccessGuide(source)
         ].join('\n')
@@ -10553,6 +10728,13 @@
           t('handoffLatestSnapshot'),
           `${t('lastUser')}: ${source.lastUserMessage || t('noUserMessage')}`,
           `${t('lastAiMessage')}: ${source.lastAiMessage || t('noAiMessage')}`
+        ].join('\n')
+        : '';
+      const portableSummaryBlock = portableSummary
+        ? [
+          '',
+          `${t('handoffPortableSummaryLabel')}:`,
+          portableSummary
         ].join('\n')
         : '';
       const protocol = [
@@ -10573,6 +10755,7 @@
         '',
         locator || '',
         snapshot || '',
+        portableSummaryBlock || '',
         '',
         t('handoffTargetWorkspaceLabel'),
         handoffTargetWorkspace || t('handoffSelectWorkspace'),
@@ -10585,9 +10768,100 @@
       handoffCommandPreview.textContent = handoffLaunchPreview();
     }
 
+    async function prepareHandoffSourceContext() {
+      const source = handoffSourceSession || {};
+      const provider = providerMeta(source.provider || source.providerLabel).provider;
+      if (!tauriInvoke || provider !== 'opencode') {
+        handoffSourceContext = source.handoffSourceFile
+          ? {
+            provider,
+            sessionId: source.id || '',
+            primarySourceFile: source.handoffSourceFile,
+            inlineSummary: source.handoffSourceSummary || '',
+            messageCount: Number(source.handoffSourceMessageCount) || 0,
+            warning: ''
+          }
+          : null;
+        updateHandoffPrompt();
+        return;
+      }
+      if (handoffSourceContext?.primarySourceFile || source.handoffSourceFile) {
+        handoffSourceContext = handoffSourceContext || {
+          provider,
+          sessionId: source.id || '',
+          primarySourceFile: source.handoffSourceFile || '',
+          inlineSummary: source.handoffSourceSummary || '',
+          messageCount: Number(source.handoffSourceMessageCount) || 0,
+          warning: ''
+        };
+        updateHandoffPrompt();
+        return;
+      }
+
+      const requestId = ++handoffSourceContextRequestId;
+      handoffSourceContext = {
+        provider,
+        sessionId: source.id || '',
+        primarySourceFile: source.handoffSourceFile || '',
+        inlineSummary: source.handoffSourceSummary || t('handoffSourceExportPending'),
+        messageCount: Number(source.handoffSourceMessageCount) || 0,
+        warning: ''
+      };
+      updateHandoffPrompt();
+
+      try {
+        const context = await tauriInvoke('prepare_handoff_source_context', {
+          request: {
+            id: source.id || '',
+            provider,
+            workspacePath: source.workspacePath || '',
+            sessionPath: source.sessionPath || '',
+            sessionResource: source.sessionResource || '',
+            title: source.title || ''
+          }
+        });
+        if (requestId !== handoffSourceContextRequestId) return;
+        handoffSourceContext = context || null;
+        if (handoffSourceContext?.primarySourceFile) {
+          handoffSourceSession = {
+            ...handoffSourceSession,
+            handoffSourceFile: handoffSourceContext.primarySourceFile,
+            handoffSourceSummary: handoffSourceContext.inlineSummary || '',
+            handoffSourceMessageCount: handoffSourceContext.messageCount || 0
+          };
+        }
+        updateHandoffPrompt();
+        if (!isHandoffWindow) publishHandoffData();
+      } catch (error) {
+        if (requestId !== handoffSourceContextRequestId) return;
+        handoffSourceContext = {
+          provider,
+          sessionId: source.id || '',
+          primarySourceFile: source.handoffSourceFile || '',
+          inlineSummary: String(error || ''),
+          messageCount: 0,
+          warning: String(error || '')
+        };
+        updateHandoffPrompt();
+        if (!isHandoffWindow) publishHandoffData();
+      }
+    }
+
+    async function ensureHandoffSourceContextReady() {
+      const provider = providerMeta(handoffSourceSession?.provider || handoffSourceSession?.providerLabel).provider;
+      if (!tauriInvoke || provider !== 'opencode') return;
+      if (handoffSourceContext?.primarySourceFile) return;
+      await prepareHandoffSourceContext();
+    }
+
     function applyHandoffPayload(payload) {
       if (!payload) return;
-      handoffSourceSession = payload.sourceSession || handoffSourceSession || {};
+      const previousSourceKey = [handoffSourceSession?.id, handoffSourceSession?.sessionResource].filter(Boolean).join('|');
+      const nextSourceSession = payload.sourceSession || handoffSourceSession || {};
+      const nextSourceKey = [nextSourceSession?.id, nextSourceSession?.sessionResource].filter(Boolean).join('|');
+      const sourceChanged = previousSourceKey && nextSourceKey && previousSourceKey !== nextSourceKey;
+      handoffSourceSession = nextSourceSession;
+      handoffSourceContext = payload.sourceContext || handoffSourceSession.handoffSourceContext || (sourceChanged ? null : handoffSourceContext) || null;
       handoffTargetWorkspace = payload.targetWorkspace || handoffSourceSession.workspacePath || handoffSourceSession.workspaceLabel || handoffSourceSession.workspace || '';
       handoffLaunchMode = handoffLaunchModes.some(item => item.value === payload.launchMode) ? payload.launchMode : 'agents';
       handoffId = payload.handoffId || makeHandoffId();
@@ -10605,6 +10879,7 @@
       renderHandoffWorkspaceOptions();
       renderHandoffProviderOptions();
       updateHandoffPrompt();
+      prepareHandoffSourceContext();
     }
 
     function setHandoffSource(card) {
@@ -11125,6 +11400,7 @@
     }
 
     async function copyHandoffPrompt(message) {
+      await ensureHandoffSourceContextReady();
       updateHandoffPrompt();
 
       try {
@@ -11315,25 +11591,72 @@
       workspacePickerValue.textContent = selectedItem ? selectedItem.label : t('allWorkspaces');
     }
 
-    function applyLanguage() {
+    let i18nTextElements = null;
+    let i18nPlaceholderElements = null;
+    let i18nAriaElements = null;
+    let i18nTitleElements = null;
+
+    function staticI18nElements(kind) {
+      if (kind === 'text') {
+        if (!i18nTextElements) i18nTextElements = Array.from(document.querySelectorAll('[data-i18n]'));
+        return i18nTextElements;
+      }
+      if (kind === 'placeholder') {
+        if (!i18nPlaceholderElements) i18nPlaceholderElements = Array.from(document.querySelectorAll('[data-i18n-placeholder]'));
+        return i18nPlaceholderElements;
+      }
+      if (kind === 'aria') {
+        if (!i18nAriaElements) i18nAriaElements = Array.from(document.querySelectorAll('[data-i18n-aria]'));
+        return i18nAriaElements;
+      }
+      if (!i18nTitleElements) i18nTitleElements = Array.from(document.querySelectorAll('[data-i18n-title]'));
+      return i18nTitleElements;
+    }
+
+    function applyStaticI18n() {
+      staticI18nElements('text').forEach(element => {
+        element.textContent = t(element.dataset.i18n);
+      });
+      staticI18nElements('placeholder').forEach(element => {
+        if (typeof element.placeholder === 'string') element.placeholder = t(element.dataset.i18nPlaceholder);
+      });
+      staticI18nElements('aria').forEach(element => {
+        const key = element.dataset.i18nAria;
+        if (key) element.setAttribute('aria-label', t(key));
+      });
+      staticI18nElements('title').forEach(element => {
+        const key = element.dataset.i18nTitle;
+        if (key) element.title = t(key);
+      });
+    }
+
+    function shouldUpdateHandoffForLanguage() {
+      return isHandoffWindow || !handoffLayer?.hidden || handoffContextMenu?.classList.contains('open');
+    }
+
+    function shouldUpdateTodoForLanguage() {
+      return isTodoWindow || isAgentTaskMode;
+    }
+
+    function shouldUpdatePerformanceForLanguage() {
+      return isPerformanceWindow || (!!perfPanel && !perfPanel.hidden);
+    }
+
+    function applySessionCardLanguage() {
+      cards.forEach(card => {
+        const status = cardStatus(card);
+        const foot = card.querySelector('.card-foot span');
+        if (foot) foot.textContent = statusText(status);
+      });
+    }
+
+    function applyLanguage(options = {}) {
       root.lang = htmlLang(currentLang);
       document.body.dataset.lang = currentLang;
       urgentChip.textContent = waitingChipText();
       workspaceLabel.textContent = t('workspace');
       workspacePickerSearch.placeholder = t('workspaceSearchPlaceholder');
-      document.querySelectorAll('[data-i18n-placeholder]').forEach(element => {
-        if (typeof element.placeholder === 'string') element.placeholder = t(element.dataset.i18nPlaceholder);
-      });
-      document.querySelectorAll('[data-i18n-aria]').forEach(element => {
-        const key = element.dataset.i18nAria;
-        if (!key) return;
-        element.setAttribute('aria-label', t(key));
-      });
-      document.querySelectorAll('[data-i18n-title]').forEach(element => {
-        const key = element.dataset.i18nTitle;
-        if (!key) return;
-        element.title = t(key);
-      });
+      applyStaticI18n();
       handoffWorkspaceInput.placeholder = t('handoffWorkspacePlaceholder');
       handoffTask.placeholder = t('handoffTaskPlaceholder');
       todoWorkspacePath.placeholder = t('todoPathPlaceholder');
@@ -11402,20 +11725,33 @@
       sessionLabel.textContent = t('sessions');
       document.querySelectorAll('.lane-name').forEach(name => name.textContent = t(name.dataset.laneName));
       document.querySelectorAll('.lane-note').forEach(note => note.textContent = t(note.dataset.laneNote));
-      document.querySelectorAll('[data-i18n]').forEach(element => {
-        element.textContent = t(element.dataset.i18n);
-      });
       updateSegmentLabels();
       updateWorkspacePickerLabel();
-      ensureAgentTaskModeOptions();
-      renderWorkspaceOptions();
-      updateHandoffWorkspaceLabel();
-      updateHandoffProviderLabel();
-      renderHandoffProviderOptions();
-      updateHandoffPrompt();
-      renderTodoEverywhere();
-      updatePerformanceScopeControl();
-      updatePerformanceSpeedControl();
+      applySessionCardLanguage();
+      const updateDynamicLanguageSurfaces = () => {
+        if (!workspacePickerPopover.hidden) renderWorkspaceOptions();
+        if (shouldUpdateHandoffForLanguage()) {
+          updateHandoffWorkspaceLabel();
+          updateHandoffProviderLabel();
+          if (!handoffProviderPopover.hidden) renderHandoffProviderOptions();
+          if (!handoffWorkspacePopover.hidden) renderHandoffWorkspaceOptions();
+          updateHandoffPrompt();
+        }
+        if (shouldUpdateTodoForLanguage()) {
+          ensureAgentTaskModeOptions();
+          renderTodoEverywhere({ force: true });
+        } else if (agentTaskModePopover && !agentTaskModePopover.hidden) {
+          ensureAgentTaskModeOptions();
+        }
+        updatePerformanceScopeControl();
+        updatePerformanceSpeedControl();
+        if (shouldUpdatePerformanceForLanguage()) renderPerformancePanel();
+      };
+      if (options.deferDynamic) {
+        window.setTimeout(updateDynamicLanguageSurfaces, 0);
+      } else {
+        updateDynamicLanguageSurfaces();
+      }
     }
 
     function isHorizontalLayout() {
@@ -12049,36 +12385,73 @@
       }
     }
 
-    async function checkBridgeStatus() {
+    function renderBridgeStatus(status = bridgeStatusCache) {
       if (!tauriInvoke) {
         bridgeStatus.textContent = t('bridgePreviewOnly');
         bridgeAction.disabled = true;
         return;
       }
 
-      try {
+      if (!status) {
         bridgeStatus.textContent = t('bridgeChecking');
         bridgeAction.disabled = true;
-        const status = await tauriInvoke('get_bridge_status');
-        const installedVersion = status.installedVersion || '-';
-        const localVersion = status.localVersion || '-';
-        bridgeStatus.textContent = !status.installed
-          ? t('bridgeNotInstalled') + ' · local ' + localVersion
-          : status.needsUpdate
-            ? t('bridgeNeedsUpdate') + ' · ' + installedVersion + ' -> ' + localVersion
-            : t('bridgeInstalled') + ' · v' + installedVersion;
+        return;
+      }
 
-        if (!status.installed || status.needsUpdate) {
-          bridgeAction.textContent = status.installed ? t('bridgeUpdate') : t('bridgeInstall');
-          bridgeAction.disabled = false;
-        } else {
-          bridgeAction.textContent = t('bridgeInstalled');
-          bridgeAction.disabled = true;
-        }
-      } catch (error) {
+      if (status.error) {
         bridgeStatus.textContent = t('bridgeInstallFailed');
         bridgeAction.textContent = t('bridgeRetry');
         bridgeAction.disabled = false;
+        return;
+      }
+
+      const installedVersion = status.installedVersion || '-';
+      const localVersion = status.localVersion || '-';
+      bridgeStatus.textContent = !status.installed
+        ? t('bridgeNotInstalled') + ' · local ' + localVersion
+        : status.needsUpdate
+          ? t('bridgeNeedsUpdate') + ' · ' + installedVersion + ' -> ' + localVersion
+          : t('bridgeInstalled') + ' · v' + installedVersion;
+
+      if (!status.installed || status.needsUpdate) {
+        bridgeAction.textContent = status.installed ? t('bridgeUpdate') : t('bridgeInstall');
+        bridgeAction.disabled = false;
+      } else {
+        bridgeAction.textContent = t('bridgeInstalled');
+        bridgeAction.disabled = true;
+      }
+    }
+
+    async function checkBridgeStatus(options = {}) {
+      if (!tauriInvoke) {
+        renderBridgeStatus();
+        return;
+      }
+
+      const cacheTtlMs = Number(options.cacheTtlMs) || 60_000;
+      if (!options.force && bridgeStatusCache && Date.now() - bridgeStatusCheckedAt <= cacheTtlMs) {
+        renderBridgeStatus();
+        return;
+      }
+      if (bridgeStatusInFlight) {
+        await bridgeStatusInFlight;
+        renderBridgeStatus();
+        return;
+      }
+
+      try {
+        bridgeStatus.textContent = t('bridgeChecking');
+        bridgeAction.disabled = true;
+        bridgeStatusInFlight = tauriInvoke('get_bridge_status');
+        bridgeStatusCache = await bridgeStatusInFlight;
+        bridgeStatusCheckedAt = Date.now();
+        renderBridgeStatus();
+      } catch (error) {
+        bridgeStatusCache = { error: true };
+        bridgeStatusCheckedAt = Date.now();
+        renderBridgeStatus();
+      } finally {
+        bridgeStatusInFlight = null;
       }
     }
 
@@ -12092,7 +12465,8 @@
         bridgeStatus.textContent = t('bridgeInstalled');
         bridgeAction.textContent = t('bridgeInstalled');
         showToast(t('bridgeInstalled'));
-        checkBridgeStatus();
+        bridgeStatusCache = null;
+        checkBridgeStatus({ force: true });
       } catch (error) {
         bridgeStatus.textContent = t('bridgeInstallFailed');
         bridgeAction.textContent = t('bridgeRetry');
@@ -13249,11 +13623,11 @@
       });
       alwaysOnTop.addEventListener('change', () => {
         updateSetting('alwaysOnTop', alwaysOnTop.checked, { announce: true, refresh: false });
-        applyAlwaysOnTopSetting();
       });
       includeCopilot.addEventListener('change', () => updateSetting('includeCopilot', includeCopilot.checked, { announce: true }));
       includeClaude.addEventListener('change', () => updateSetting('includeClaude', includeClaude.checked, { announce: true }));
       includeCodex.addEventListener('change', () => updateSetting('includeCodex', includeCodex.checked, { announce: true }));
+      includeOpenCode.addEventListener('change', () => updateSetting('includeOpenCode', includeOpenCode.checked, { announce: true }));
       hideArchived.addEventListener('change', () => updateSetting('hideArchived', hideArchived.checked, { announce: true }));
       activeWindowDays.addEventListener('change', () => updateSetting('activeWindowDays', clampNumber(activeWindowDays.value, 1, 30, defaultSettings.activeWindowDays), { announce: true }));
       maxSessions.addEventListener('change', () => updateSetting('maxSessions', clampNumber(maxSessions.value, 1, 5000, defaultSettings.maxSessions), { announce: true }));
@@ -13313,6 +13687,7 @@
       zoomTransition = true;
       applySettingsControls();
       applyLanguage();
+      updatePerformanceDebugMode();
       applyAlwaysOnTopSetting();
       setIconsPerRow(sizeRange.value, false);
       applyFilters();

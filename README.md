@@ -70,6 +70,8 @@ npm install
 npm run dev
 ```
 
+`npm run dev` 默认会给 Windows WebView2 打开本地 CDP 调试端口，并把端口信息写到 `.tmp/tauri-dev-runtime.json`；真实交互测试会优先附着这条 dev 运行时。
+
 ### 打包发布版本
 
 构建 release 版本并打包为可分发的 exe：

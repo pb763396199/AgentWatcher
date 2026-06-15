@@ -9,9 +9,11 @@ AgentWatcher 是一个 Windows 桌面小工具，用 Tauri 2 写的。它盯着 
 所有命令都在仓库根目录、用 PowerShell 跑，必须是 Windows。
 
 - `npm install` —— 装依赖，只跑一次。
-- `npm run dev` —— `tauri dev`：会先打包 `ui/`，起 Vite 在 `http://127.0.0.1:1420`，然后拉起 Tauri 桌面壳。
+- `npm run dev` —— 唯一标准开发入口。会给 WebView2 自动打开 CDP 调试端口（默认从 `9222` 找可用端口），写入 `.tmp/tauri-dev-runtime.json`，再执行 `tauri dev`：起 Vite `http://127.0.0.1:1420`，并拉起真实 Tauri 桌面壳。后续 agent 不要让用户区分 dev/debug；`target/debug/agentwatcher.exe` 只是 Tauri dev 内部产物名。
 - `npm run dev:ui` —— 只起 Vite，纯浏览器预览在 `:1420`，没有 Tauri 接口。做纯 UI 时用这个。当 `window.__TAURI_INTERNALS__` 不存在时，页面会自动用 mock 数据兜底。
 - `npm run build:ui` —— 用 Vite 把 `ui/` 打到 `ui-dist/` 目录（这个目录是 git 忽略的）。
+- `npm run test:tauri:smoke` —— 真实 Tauri 桌面壳冒烟测试。脚本优先附着 `.tmp/tauri-dev-runtime.json` 里的 `npm run dev` CDP 运行时；如果没有可用 dev，才自己启动测试用真实 Tauri 壳。它会确认 `window.__TAURI_INTERNALS__ === true`，再做真实点击、窗口发现、console/pageerror 采集和截图。改 UI/窗口/交互时优先跑这个，不要用 `dev:ui` 的浏览器 mock 当验收。
+- `npm run test:tauri:flow -- 任务面板` / `性能面板` / `接续面板` / `opencode-session` —— 只跑指定真实交互流程。也接受英文别名 `agent-task`、`performance`、`handoff`、`opencode`。默认优先测当前 `npm run dev`；需要隔离临时窗口时才加 `--isolated-runtime`。
 - `npm run build` —— `tauri build`，跑 Rust + 打包。生成的 exe 在 `src-tauri/target/release/agentwatcher.exe`。
 - `npm run generate:icons` —— 重新生成 `src-tauri/icons/icon.ico` 和 `icon-runtime-256.rgba`。**只能在 Windows 上跑**，里面调了 `pwsh` 用 .NET 的 `System.Drawing` 画 Segoe UI 字体。其他系统会报错。
 - `npm run package:exe` —— 完整发布流水线：编译、用 `rcedit` 把图标塞进 exe、复制 `vscode-agentwatcher-bridge/`、用 `npx @vscode/vsce` 打 VSIX、最后输出 `artifacts/AgentWatcher/AgentWatcher.exe` + `vscode-agentwatcher-bridge/agentwatcher-bridge-0.1.11.vsix`，再压成 `artifacts/AgentWatcher-v<版本>-windows-x64.zip`。跑这个前会先把老的 `artifacts/AgentWatcher-v*-windows-x64{,.zip}` 清掉。
@@ -81,6 +83,11 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 ## AgentTask / Watcher UI 约束
 
 - 改 AgentTask 或 Watcher 的按钮、状态卡片、详情面板时，必须同时检查中文/英文、dark/light；按钮配色按功能角色和当前状态主题色统一分配，不能只给当前截图里的一种语言或主题打补丁。
+- 改任何 Tauri 窗口、真实点击、悬浮预览、handoff、性能面板、todo 面板、AgentTask/Watcher 切换、OpenCode 会话卡片、窗口尺寸或主题/语言交互时，必须跑 `npm run test:tauri:smoke`，或者至少跑对应的 `npm run test:tauri:flow -- <流程名>`。
+- `npm run dev:ui` 只能做浏览器预览，不算真实交互验收。真实验收必须通过 WebView2 CDP 连接到 Tauri dev 版，并确认 `window.__TAURI_INTERNALS__ === true`。
+- 不要问用户“要 dev 还是 debug”。本项目里对 agent 的默认动作是：先用 `npm run dev`，再跑 `npm run test:tauri:*`；测试脚本会自动附着当前 dev 的 CDP，或者在没有 dev 时拉起自己的真实 Tauri 壳。
+- 不要优先使用 Windows UI Automation、坐标点击或截图猜测。只有 WebView2 CDP 不可用时，才把这些当人工兜底，并在结果里写清楚。
+- 真实交互测试的输出在 `.tmp/tauri-realtest/<时间>/result.json`，最近一次结果在 `.tmp/tauri-realtest/latest-result.json`，截图也在同一目录。测试 CLI 的控制台输出和 JSON 字段面向本项目默认使用中文。
 
 ## 隐私和契约约束（代码里强制）
 
@@ -91,6 +98,8 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 ## 怎么测
 
 - Rust 单元测试在 `lib.rs:4333-4636`，覆盖了 Bridge 版本管理、状态转换、transcript 覆盖、工作区身份（UGA 分支、通用插件根、路径归一化）和预览文本提取。跑：`cargo test --manifest-path src-tauri/Cargo.toml`。
+- 真实 Tauri UI 冒烟测试：`npm run test:tauri:smoke`。它会优先附着 `npm run dev` 写出的 `.tmp/tauri-dev-runtime.json`，用 Playwright 通过 WebView2 CDP 操作真实桌面窗口，覆盖主窗口、AgentTask 切换、性能诊断窗口和接续面板识别；如果没有 dev，脚本会自己启动真实 Tauri 壳。
+- 指定真实 UI 流程：`npm run test:tauri:flow -- 任务面板`、`npm run test:tauri:flow -- 性能面板`、`npm run test:tauri:flow -- 接续面板`、`npm run test:tauri:flow -- opencode-session`。改 OpenCode provider、卡片打开、handoff/AgentTask 派发目标时，必须跑 `opencode-session` 流程，不能退回“手动点一下”。
 - `.tmp/bridge-handoff-routing-test.cjs` 是 Node 写的测试，伪造 `vscode` 模块，验证 Bridge 命令路由（`agents` / `code-chat` / `claude-panel` 三种），包括 `claude-vscode.editor.open` 走剪贴板那条路径和 `safe1` 风格的兜底。它还顺带测了 `AGENTWATCHER_TARGET_BOUND_SENTINEL` 这个 Copilot 目标的正常路径。
 - 人工验收清单在 `docs/retrospectives/`：VSIX 必须叫 `agentwatcher-bridge-0.1.11.vsix`；`code --list-extensions | findstr agentwatcher` 应该只显示稳定 ID，不准出现 `safe1..4`；每次发版的 SHA256 要写进 `CHANGELOG.md`。
 

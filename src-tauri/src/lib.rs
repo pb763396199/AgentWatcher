@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use rusqlite::{Connection, OpenFlags};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::{self, File};
@@ -29,6 +30,12 @@ const CODEX_APP_SERVER_RPC_TIMEOUT_MS: u64 = 20_000;
 const CODEX_APP_SERVER_START_ATTEMPTS: usize = 4;
 const CODEX_TURN_FETCH_LIMIT: usize = 8;
 const CODEX_SCAN_TURN_FETCH_BUDGET: usize = 3;
+const OPENCODE_SESSION_SCAN_LIMIT_MAX: usize = 240;
+const OPENCODE_PART_SCAN_LIMIT: usize = 24;
+const OPENCODE_SUMMARY_FETCH_BUDGET: usize = 4;
+const OPENCODE_SQLITE_BUSY_TIMEOUT_MS: u64 = 50;
+const OPENCODE_SCAN_CACHE_TTL_MS: u64 = 10_000;
+const OPENCODE_HANDOFF_PART_MAX_CHARS: usize = 64 * 1024;
 const STATUS_RUNNING_HINT_WINDOW_MS: u64 = 2 * 60 * 60_000;
 const STATUS_RECENT_CONTENT_WINDOW_MS: u64 = 10 * 60_000;
 const STATUS_RECENT_FILE_WINDOW_MS: u64 = 3 * 60_000;
@@ -96,6 +103,28 @@ struct HandoffLaunchRequest {
     mode: String,
     workspace_path: Option<String>,
     prompt: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HandoffSourceContextRequest {
+    id: Option<String>,
+    provider: Option<String>,
+    workspace_path: Option<String>,
+    session_path: Option<String>,
+    session_resource: Option<String>,
+    title: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HandoffSourceContext {
+    provider: String,
+    session_id: Option<String>,
+    primary_source_file: Option<String>,
+    inline_summary: Option<String>,
+    message_count: u32,
+    warning: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -168,6 +197,7 @@ struct ScanOptions {
     include_copilot: Option<bool>,
     include_claude: Option<bool>,
     include_codex: Option<bool>,
+    include_open_code: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -178,6 +208,7 @@ struct ResolvedScanOptions {
     include_copilot: bool,
     include_claude: bool,
     include_codex: bool,
+    include_open_code: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -186,6 +217,7 @@ struct PerformanceProviderCounts {
     copilot: usize,
     claude: usize,
     codex: usize,
+    opencode: usize,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -326,6 +358,11 @@ struct CodexAppServerProcess {
     child: Child,
 }
 
+struct OpenCodeWebServerProcess {
+    port: u16,
+    child: Child,
+}
+
 #[derive(Debug, Clone, Default)]
 struct CodexTurnSummary {
     thread_updated_ms: u64,
@@ -334,6 +371,61 @@ struct CodexTurnSummary {
     last_ai_message: Option<String>,
     message_count: u32,
     latest_turn_status: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct OpenCodeSessionSummary {
+    last_user_message: Option<String>,
+    last_ai_message: Option<String>,
+    message_count: u32,
+    latest_part_ms: u64,
+    status_hint: Option<SessionStatusHint>,
+    todo_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedOpenCodeSummary {
+    session_updated_ms: u64,
+    summary: OpenCodeSessionSummary,
+}
+
+#[derive(Debug, Clone)]
+struct CachedOpenCodeScan {
+    captured_ms: u64,
+    key: OpenCodeScanCacheKey,
+    sessions: Vec<AgentSession>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OpenCodeScanCacheKey {
+    max_sessions: usize,
+    active_window_ms: u64,
+    hide_archived: bool,
+}
+
+#[derive(Debug, Clone)]
+struct OpenCodeSessionRow {
+    id: String,
+    title: String,
+    directory: String,
+    path: Option<String>,
+    time_created: u64,
+    time_updated: u64,
+    time_archived: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct OpenCodeTranscriptMessage {
+    id: String,
+    role: String,
+    time_ms: u64,
+    parts: Vec<OpenCodeTranscriptPart>,
+}
+
+#[derive(Debug, Clone)]
+struct OpenCodeTranscriptPart {
+    label: String,
+    text: String,
 }
 
 static COPILOT_SESSION_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlSummary<CopilotSessionSummary>>>> =
@@ -345,6 +437,10 @@ static CLAUDE_SESSION_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlSummary<C
 static CODEX_TURN_SUMMARY_CACHE: OnceLock<Mutex<HashMap<String, CodexTurnSummary>>> =
     OnceLock::new();
 static CODEX_APP_SERVER: OnceLock<Mutex<Option<CodexAppServerProcess>>> = OnceLock::new();
+static OPENCODE_SESSION_SUMMARY_CACHE: OnceLock<Mutex<HashMap<String, CachedOpenCodeSummary>>> =
+    OnceLock::new();
+static OPENCODE_SCAN_CACHE: OnceLock<Mutex<Option<CachedOpenCodeScan>>> = OnceLock::new();
+static OPENCODE_WEB_SERVER: OnceLock<Mutex<Option<OpenCodeWebServerProcess>>> = OnceLock::new();
 
 fn start_session_file_watcher(app_handle: tauri::AppHandle) {
     std::thread::spawn(move || {
@@ -412,10 +508,12 @@ fn session_watch_roots() -> Vec<PathBuf> {
         }
     }
     if let Some(user_profile_path) = env::var_os("USERPROFILE") {
-        let codex_home = PathBuf::from(&user_profile_path).join(".codex");
+        let user_profile_path = PathBuf::from(user_profile_path);
+        let codex_home = user_profile_path.join(".codex");
+        let opencode_data = user_profile_path.join(".local").join("share").join("opencode");
         push_existing_path(
             &mut roots,
-            PathBuf::from(user_profile_path).join(".claude").join("projects"),
+            user_profile_path.join(".claude").join("projects"),
         );
         for codex_path in [
             codex_home.join("sessions"),
@@ -426,6 +524,7 @@ fn session_watch_roots() -> Vec<PathBuf> {
         ] {
             push_existing_path(&mut roots, codex_path);
         }
+        push_existing_path(&mut roots, opencode_data.join("opencode.db"));
     }
     roots
 }
@@ -444,10 +543,16 @@ fn is_session_file_event(event: &Event) -> bool {
     event.paths.iter().any(|path| {
         has_extension(path, "jsonl")
             || has_extension(path, "sqlite")
+            || has_extension(path, "db")
             || path
                 .extension()
                 .and_then(|extension| extension.to_str())
                 .map(|extension| extension.eq_ignore_ascii_case("sqlite-wal"))
+                .unwrap_or(false)
+            || path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .map(|extension| extension.eq_ignore_ascii_case("db-wal"))
                 .unwrap_or(false)
             || path
                 .file_name()
@@ -458,6 +563,7 @@ fn is_session_file_event(event: &Event) -> bool {
 }
 
 fn emit_sessions_changed(app_handle: &tauri::AppHandle, emitted_ms: u64) {
+    clear_opencode_scan_cache();
     let _ = app_handle.emit(SESSIONS_CHANGED_EVENT, emitted_ms);
 }
 
@@ -586,6 +692,9 @@ fn scan_sessions(options: Option<ScanOptions>) -> Vec<AgentSession> {
     if options.include_codex {
         sessions.extend(scan_codex_sessions(scan_time_ms, &options));
     }
+    if options.include_open_code {
+        sessions.extend(scan_opencode_sessions(scan_time_ms, &options));
+    }
 
     sessions.sort_by(|left_session, right_session| {
         status_rank(&left_session.status)
@@ -657,6 +766,7 @@ fn update_performance_scan_snapshot(sessions: &[AgentSession], duration: Duratio
             "copilot" => provider_counts.copilot += 1,
             "claude" => provider_counts.claude += 1,
             "codex" => provider_counts.codex += 1,
+            "opencode" => provider_counts.opencode += 1,
             _ => {}
         }
     }
@@ -949,6 +1059,12 @@ fn performance_agent_process_role(process_name: &str, image_path: &str) -> Optio
     if normalized_path.contains("\\openai\\codex\\") {
         return Some("Codex Desktop");
     }
+    if normalized_path.contains("\\opencode\\")
+        || normalized_path.contains("\\opencode-ai\\")
+        || normalized_path.contains("\\opencode-windows-")
+    {
+        return Some("OpenCode");
+    }
     if normalized_path.contains("\\anthropicclaude\\")
         || normalized_path.contains("\\claude\\")
     {
@@ -970,6 +1086,7 @@ fn performance_agent_process_role(process_name: &str, image_path: &str) -> Optio
         "code - exploration.exe" => Some("VS Code Exploration"),
         "vscodium.exe" | "codium.exe" => Some("VS Code Compatible"),
         "codex.exe" | "codex-cli.exe" | "openai-codex.exe" => Some("Codex"),
+        "opencode.exe" | "opencode.cmd" => Some("OpenCode"),
         "claude.exe" | "claude-code.exe" | "claude_desktop.exe" | "claude desktop.exe" => {
             Some("Claude")
         }
@@ -1039,6 +1156,9 @@ fn open_session(session: OpenSessionRequest) -> Result<(), String> {
     if clean_option(session.provider.as_deref()) == Some("codex") {
         return open_codex_session(&session);
     }
+    if clean_option(session.provider.as_deref()) == Some("opencode") {
+        return open_opencode_session(&session);
+    }
 
     if bridge_extension_installed() {
         if let Some(bridge_link) = session_bridge_link(&session) {
@@ -1092,6 +1212,37 @@ async fn launch_handoff(request: HandoffLaunchRequest) -> Result<(), String> {
         .map_err(|error| format!("Failed to wait for handoff launch task: {}", error))?
 }
 
+#[tauri::command]
+async fn prepare_handoff_source_context(
+    request: HandoffSourceContextRequest,
+) -> Result<HandoffSourceContext, String> {
+    tauri::async_runtime::spawn_blocking(move || prepare_handoff_source_context_blocking(request))
+        .await
+        .map_err(|error| format!("Failed to wait for handoff source context task: {}", error))?
+}
+
+fn prepare_handoff_source_context_blocking(
+    request: HandoffSourceContextRequest,
+) -> Result<HandoffSourceContext, String> {
+    let provider = clean_option(request.provider.as_deref()).unwrap_or("unknown");
+    if provider != "opencode" {
+        return Ok(HandoffSourceContext {
+            provider: provider.to_string(),
+            session_id: raw_request_session_id(request.id.as_deref()).map(str::to_string),
+            primary_source_file: request
+                .session_path
+                .as_deref()
+                .and_then(|path| clean_option(Some(path)))
+                .map(str::to_string),
+            inline_summary: None,
+            message_count: 0,
+            warning: None,
+        });
+    }
+
+    prepare_opencode_handoff_source_context(&request)
+}
+
 fn launch_handoff_blocking(request: HandoffLaunchRequest) -> Result<(), String> {
     let mode = clean_option(Some(request.mode.as_str()))
         .ok_or_else(|| "Missing handoff launch mode".to_string())?;
@@ -1119,6 +1270,11 @@ fn launch_handoff_blocking(request: HandoffLaunchRequest) -> Result<(), String> 
             let prompt = clean_option(request.prompt.as_deref())
                 .ok_or_else(|| "Missing handoff prompt".to_string())?;
             launch_codex_handoff(&target.argument_path, prompt).map(|_| ())
+        }
+        "opencode-cli" => {
+            let prompt = clean_option(request.prompt.as_deref())
+                .ok_or_else(|| "Missing handoff prompt".to_string())?;
+            launch_opencode_handoff(&target.argument_path, prompt).map(|_| ())
         }
         other => Err(format!("Unsupported handoff launch mode: {}", other)),
     }
@@ -1466,6 +1622,7 @@ fn session_resource_from_request(session: &OpenSessionRequest) -> Option<String>
     match provider {
         "copilot" => Some(copilot_session_resource(session_id)),
         "claude" => Some(provider_session_resource("claude-code", session_id)),
+        "opencode" => Some(opencode_session_resource(session_id)),
         _ => None,
     }
 }
@@ -2018,6 +2175,870 @@ fn codex_thread_resource(thread_id: &str) -> String {
     format!("codex://threads/{}", percent_encode_path_segment(thread_id))
 }
 
+fn scan_opencode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<AgentSession> {
+    let Some(db_path) = opencode_db_path() else {
+        return Vec::new();
+    };
+    if !db_path.exists() {
+        return Vec::new();
+    }
+    if let Some(cached_sessions) = cached_opencode_scan(scan_time_ms, options) {
+        return cached_sessions;
+    }
+
+    let Ok(connection) = Connection::open_with_flags(
+        &db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return Vec::new();
+    };
+    let _ = connection.busy_timeout(Duration::from_millis(OPENCODE_SQLITE_BUSY_TIMEOUT_MS));
+    let _ = connection.pragma_update(None, "query_only", "ON");
+    let _ = connection.pragma_update(None, "temp_store", "MEMORY");
+
+    let mut statement = match connection.prepare(
+        "select id, title, directory, path, time_created, time_updated, time_archived \
+         from session \
+         where (?2 = 0 or time_updated >= ?2 or time_created >= ?2) \
+           and (?3 = 0 or time_archived is null) \
+         order by time_updated desc \
+         limit ?1",
+    ) {
+        Ok(statement) => statement,
+        Err(_) => return Vec::new(),
+    };
+
+    let active_cutoff_ms = scan_time_ms.saturating_sub(options.active_window_ms) as i64;
+    let hide_archived = if options.hide_archived { 1_i64 } else { 0_i64 };
+    let rows = match statement.query_map(
+        rusqlite::params![
+            opencode_session_scan_limit(options) as i64,
+            active_cutoff_ms,
+            hide_archived
+        ],
+        |row| {
+            let time_archived: Option<i64> = row.get(6)?;
+            Ok(OpenCodeSessionRow {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                directory: row.get(2)?,
+                path: row.get(3)?,
+                time_created: sqlite_millis_to_u64(row.get::<_, i64>(4)?),
+                time_updated: sqlite_millis_to_u64(row.get::<_, i64>(5)?),
+                time_archived: time_archived.map(sqlite_millis_to_u64),
+            })
+        },
+    ) {
+        Ok(rows) => rows,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut sessions = Vec::new();
+    let mut summary_fetch_budget = OPENCODE_SUMMARY_FETCH_BUDGET.min(options.max_sessions);
+    for row in rows.filter_map(Result::ok) {
+        if options.hide_archived && row.time_archived.is_some() {
+            continue;
+        }
+        let row_updated_ms = row.time_updated.max(row.time_created);
+        if !is_active_session(row_updated_ms, scan_time_ms, options) {
+            continue;
+        }
+        let summary = cached_or_read_opencode_session_summary(
+            &connection,
+            &row,
+            &mut summary_fetch_budget,
+        );
+        if let Some(session) = read_opencode_session_row(&row, summary, scan_time_ms, options) {
+            sessions.push(session);
+            if sessions.len() >= options.max_sessions {
+                break;
+            }
+        }
+    }
+
+    cache_opencode_scan(scan_time_ms, options, &sessions);
+    sessions
+}
+
+fn opencode_db_path() -> Option<PathBuf> {
+    env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .map(|user_profile| user_profile.join(".local").join("share").join("opencode").join("opencode.db"))
+}
+
+fn opencode_session_scan_limit(options: &ResolvedScanOptions) -> usize {
+    options
+        .max_sessions
+        .saturating_mul(3)
+        .max(options.max_sessions + 20)
+        .clamp(40, OPENCODE_SESSION_SCAN_LIMIT_MAX)
+}
+
+fn sqlite_millis_to_u64(value: i64) -> u64 {
+    if value > 0 {
+        value as u64
+    } else {
+        0
+    }
+}
+
+fn cached_opencode_scan(
+    scan_time_ms: u64,
+    options: &ResolvedScanOptions,
+) -> Option<Vec<AgentSession>> {
+    let key = opencode_scan_cache_key(options);
+    OPENCODE_SCAN_CACHE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|cache| cache.clone())
+        .filter(|cached| {
+            cached.key == key
+                && scan_time_ms.saturating_sub(cached.captured_ms) <= OPENCODE_SCAN_CACHE_TTL_MS
+        })
+        .map(|cached| refresh_cached_session_time_labels(&cached.sessions, scan_time_ms))
+}
+
+fn cache_opencode_scan(
+    scan_time_ms: u64,
+    options: &ResolvedScanOptions,
+    sessions: &[AgentSession],
+) {
+    if let Ok(mut cache) = OPENCODE_SCAN_CACHE.get_or_init(|| Mutex::new(None)).lock() {
+        *cache = Some(CachedOpenCodeScan {
+            captured_ms: scan_time_ms,
+            key: opencode_scan_cache_key(options),
+            sessions: sessions.to_vec(),
+        });
+    }
+}
+
+fn opencode_scan_cache_key(options: &ResolvedScanOptions) -> OpenCodeScanCacheKey {
+    OpenCodeScanCacheKey {
+        max_sessions: options.max_sessions,
+        active_window_ms: options.active_window_ms,
+        hide_archived: options.hide_archived,
+    }
+}
+
+fn clear_opencode_scan_cache() {
+    if let Ok(mut cache) = OPENCODE_SCAN_CACHE.get_or_init(|| Mutex::new(None)).lock() {
+        *cache = None;
+    }
+}
+
+fn refresh_cached_session_time_labels(
+    sessions: &[AgentSession],
+    scan_time_ms: u64,
+) -> Vec<AgentSession> {
+    sessions
+        .iter()
+        .cloned()
+        .map(|mut session| {
+            session.time_label = time_label(session.updated_ms, scan_time_ms);
+            session
+        })
+        .collect()
+}
+
+fn cached_or_read_opencode_session_summary(
+    connection: &Connection,
+    row: &OpenCodeSessionRow,
+    summary_fetch_budget: &mut usize,
+) -> OpenCodeSessionSummary {
+    if let Some(summary) = cached_opencode_session_summary(&row.id, row.time_updated) {
+        return summary;
+    }
+
+    if *summary_fetch_budget == 0 {
+        return lightweight_opencode_session_summary(row);
+    }
+    *summary_fetch_budget = summary_fetch_budget.saturating_sub(1);
+
+    let summary = opencode_session_summary(connection, &row.id);
+    cache_opencode_session_summary(&row.id, row.time_updated, summary.clone());
+    summary
+}
+
+fn lightweight_opencode_session_summary(row: &OpenCodeSessionRow) -> OpenCodeSessionSummary {
+    OpenCodeSessionSummary {
+        latest_part_ms: row.time_updated.max(row.time_created),
+        ..OpenCodeSessionSummary::default()
+    }
+}
+
+fn cached_opencode_session_summary(
+    session_id: &str,
+    session_updated_ms: u64,
+) -> Option<OpenCodeSessionSummary> {
+    OPENCODE_SESSION_SUMMARY_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(session_id).cloned())
+        .filter(|cached| cached.session_updated_ms == session_updated_ms)
+        .map(|cached| cached.summary)
+}
+
+fn cache_opencode_session_summary(
+    session_id: &str,
+    session_updated_ms: u64,
+    summary: OpenCodeSessionSummary,
+) {
+    if let Ok(mut cache) = OPENCODE_SESSION_SUMMARY_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        cache.insert(
+            session_id.to_string(),
+            CachedOpenCodeSummary {
+                session_updated_ms,
+                summary,
+            },
+        );
+        if cache.len() > 512 {
+            let mut entries: Vec<(String, u64)> = cache
+                .iter()
+                .map(|(cached_session_id, cached)| {
+                    (cached_session_id.clone(), cached.session_updated_ms)
+                })
+                .collect();
+            entries.sort_by_key(|(_, updated_ms)| *updated_ms);
+            let prune_count = cache.len().saturating_sub(512);
+            for (cached_session_id, _) in entries.into_iter().take(prune_count) {
+                cache.remove(&cached_session_id);
+            }
+        }
+    }
+}
+
+fn read_opencode_session_row(
+    row: &OpenCodeSessionRow,
+    summary: OpenCodeSessionSummary,
+    scan_time_ms: u64,
+    options: &ResolvedScanOptions,
+) -> Option<AgentSession> {
+    let updated_ms = row
+        .time_updated
+        .max(row.time_created)
+        .max(summary.latest_part_ms);
+    if !is_active_session(updated_ms, scan_time_ms, options) {
+        return None;
+    }
+
+    let workspace_path = clean_option(Some(row.directory.as_str())).map(str::to_string);
+    let session_path = row
+        .path
+        .as_deref()
+        .and_then(|path_text| clean_option(Some(path_text)))
+        .map(str::to_string);
+    let session_resource = opencode_session_resource(&row.id);
+    let workspace_hint = workspace_path
+        .as_deref()
+        .and_then(|path_text| path_segments_basename(&workspace_path_segments(path_text)))
+        .or_else(|| {
+            session_path
+                .as_deref()
+                .and_then(|path_text| path_segments_basename(&workspace_path_segments(path_text)))
+        })
+        .unwrap_or_else(|| "OpenCode".to_string());
+    let title = clean_option(Some(row.title.as_str()))
+        .and_then(title_candidate_from_text)
+        .or_else(|| summary.last_user_message.as_deref().and_then(title_candidate_from_text))
+        .unwrap_or_else(|| fallback_session_title("OpenCode", &workspace_hint, &row.id));
+    let status = status_from_activity(
+        updated_ms,
+        scan_time_ms,
+        ActivitySource::ContentTimestamp,
+        summary.status_hint,
+    );
+    let workspace_identity = build_workspace_identity(
+        "opencode",
+        &row.id,
+        &workspace_hint,
+        workspace_path.as_deref(),
+        session_path.as_deref(),
+        Some(&session_resource),
+    );
+    let mut todo_ids = summary.todo_ids;
+    collect_todo_ids_from_text(&title, &mut todo_ids);
+    let (last_user_message, last_user_message_truncated) =
+        apply_user_preview_budget(summary.last_user_message);
+    let (last_ai_message, last_ai_message_truncated, last_ai_message_excerpt_kind) =
+        apply_ai_preview_budget(summary.last_ai_message);
+
+    Some(AgentSession {
+        id: format!("opencode:{}", row.id),
+        provider: "opencode".to_string(),
+        provider_label: "OC".to_string(),
+        title,
+        workspace: workspace_identity.name.clone(),
+        workspace_path,
+        workspace_key: workspace_identity.key,
+        workspace_name: workspace_identity.name,
+        workspace_label: workspace_identity.label,
+        workspace_group: workspace_identity.group,
+        workspace_discriminator: workspace_identity.discriminator,
+        session_path,
+        session_resource: Some(session_resource),
+        status,
+        time_label: time_label(updated_ms, scan_time_ms),
+        updated_ms,
+        message_count: summary.message_count,
+        last_user_message,
+        last_user_message_truncated,
+        last_ai_message,
+        last_ai_message_truncated,
+        last_ai_message_excerpt_kind,
+        branch: None,
+        todo_ids,
+    })
+}
+
+fn opencode_session_summary(connection: &Connection, session_id: &str) -> OpenCodeSessionSummary {
+    let mut summary = OpenCodeSessionSummary::default();
+    let mut message_json_by_id: HashMap<String, Value> = HashMap::new();
+
+    if let Ok(mut statement) = connection.prepare(
+        "select id, time_updated, data \
+         from message \
+         where session_id = ?1 \
+         order by time_updated desc \
+         limit ?2",
+    ) {
+        if let Ok(rows) = statement.query_map(
+            rusqlite::params![session_id, OPENCODE_PART_SCAN_LIMIT as i64],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    sqlite_millis_to_u64(row.get::<_, i64>(1)?),
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        ) {
+            for (message_id, time_updated, message_data) in rows.filter_map(Result::ok) {
+                summary.latest_part_ms = summary.latest_part_ms.max(time_updated);
+                summary.message_count = summary.message_count.saturating_add(1);
+                if let Ok(message_json) = serde_json::from_str::<Value>(&message_data) {
+                    merge_session_status_hint(
+                        &mut summary.status_hint,
+                        opencode_message_status_hint(&message_json),
+                    );
+                    message_json_by_id.insert(message_id, message_json);
+                }
+            }
+        }
+    }
+
+    if let Ok(mut statement) = connection.prepare(
+        "select message_id, time_updated, data \
+         from part \
+         where session_id = ?1 \
+         order by time_updated desc \
+         limit ?2",
+    ) {
+        if let Ok(rows) = statement.query_map(
+            rusqlite::params![session_id, OPENCODE_PART_SCAN_LIMIT as i64],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    sqlite_millis_to_u64(row.get::<_, i64>(1)?),
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        ) {
+            for (message_id, time_updated, part_data) in rows.filter_map(Result::ok) {
+                summary.latest_part_ms = summary.latest_part_ms.max(time_updated);
+                let Ok(part_json) = serde_json::from_str::<Value>(&part_data) else {
+                    continue;
+                };
+                let message_json = message_json_by_id.get(&message_id);
+                merge_session_status_hint(
+                    &mut summary.status_hint,
+                    opencode_part_status_hint(&part_json),
+                );
+
+                if let Some(text) = string_at(&part_json, &["/text"]) {
+                    collect_todo_ids_from_text(text, &mut summary.todo_ids);
+                }
+
+                if string_at(&part_json, &["/type"]) != Some("text") {
+                    continue;
+                }
+                let Some(text) = string_at(&part_json, &["/text"]).and_then(clean_preview_text) else {
+                    continue;
+                };
+                match message_json.and_then(|message| string_at(message, &["/role"])) {
+                    Some("user") if summary.last_user_message.is_none() => {
+                        summary.last_user_message = Some(text);
+                    }
+                    Some("assistant") if summary.last_ai_message.is_none() && !is_ai_model_noise_text(&text) => {
+                        summary.last_ai_message = Some(text);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    summary
+}
+
+fn prepare_opencode_handoff_source_context(
+    request: &HandoffSourceContextRequest,
+) -> Result<HandoffSourceContext, String> {
+    let session_id = raw_request_session_id(request.id.as_deref())
+        .map(str::to_string)
+        .or_else(|| {
+            request
+                .session_resource
+                .as_deref()
+                .and_then(opencode_session_id_from_resource)
+        })
+        .ok_or_else(|| "Missing OpenCode source session id".to_string())?;
+    let db_path = opencode_db_path()
+        .filter(|path| path.exists())
+        .ok_or_else(|| "OpenCode database not found".to_string())?;
+    let connection = Connection::open_with_flags(
+        &db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|error| format!("Failed to open OpenCode database: {}", error))?;
+    let _ = connection.busy_timeout(Duration::from_millis(OPENCODE_SQLITE_BUSY_TIMEOUT_MS));
+    let _ = connection.pragma_update(None, "query_only", "ON");
+    let row = read_opencode_session_metadata(&connection, &session_id, request)?;
+    let messages = read_opencode_transcript_messages(&connection, &session_id)?;
+    let markdown = render_opencode_handoff_source_markdown(&row, &messages);
+    let path = write_opencode_handoff_source_markdown(&row, &markdown)?;
+    let inline_summary = opencode_handoff_inline_summary(&row, &messages);
+
+    Ok(HandoffSourceContext {
+        provider: "opencode".to_string(),
+        session_id: Some(session_id),
+        primary_source_file: Some(path_to_cli_string(&path)),
+        inline_summary,
+        message_count: messages.len() as u32,
+        warning: None,
+    })
+}
+
+fn read_opencode_session_metadata(
+    connection: &Connection,
+    session_id: &str,
+    request: &HandoffSourceContextRequest,
+) -> Result<OpenCodeSessionRow, String> {
+    let mut statement = connection
+        .prepare(
+            "select id, title, directory, path, time_created, time_updated, time_archived \
+             from session \
+             where id = ?1 \
+             limit 1",
+        )
+        .map_err(|error| format!("Failed to prepare OpenCode session query: {}", error))?;
+
+    let result = statement.query_row(rusqlite::params![session_id], |row| {
+        let time_archived: Option<i64> = row.get(6)?;
+        Ok(OpenCodeSessionRow {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            directory: row.get(2)?,
+            path: row.get(3)?,
+            time_created: sqlite_millis_to_u64(row.get::<_, i64>(4)?),
+            time_updated: sqlite_millis_to_u64(row.get::<_, i64>(5)?),
+            time_archived: time_archived.map(sqlite_millis_to_u64),
+        })
+    });
+
+    match result {
+        Ok(row) => Ok(row),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(OpenCodeSessionRow {
+            id: session_id.to_string(),
+            title: request
+                .title
+                .as_deref()
+                .and_then(|title| clean_option(Some(title)))
+                .unwrap_or("OpenCode source session")
+                .to_string(),
+            directory: request
+                .workspace_path
+                .as_deref()
+                .and_then(|path| clean_option(Some(path)))
+                .unwrap_or("")
+                .to_string(),
+            path: request
+                .session_path
+                .as_deref()
+                .and_then(|path| clean_option(Some(path)))
+                .map(str::to_string),
+            time_created: current_time_ms(),
+            time_updated: current_time_ms(),
+            time_archived: None,
+        }),
+        Err(error) => Err(format!("Failed to read OpenCode session metadata: {}", error)),
+    }
+}
+
+fn read_opencode_transcript_messages(
+    connection: &Connection,
+    session_id: &str,
+) -> Result<Vec<OpenCodeTranscriptMessage>, String> {
+    let mut messages = Vec::new();
+    let mut message_index_by_id = HashMap::new();
+    let mut statement = connection
+        .prepare(
+            "select id, time_created, time_updated, data \
+             from message \
+             where session_id = ?1 \
+             order by time_created asc, time_updated asc, id asc",
+        )
+        .map_err(|error| format!("Failed to prepare OpenCode message query: {}", error))?;
+    let rows = statement
+        .query_map(rusqlite::params![session_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                sqlite_millis_to_u64(row.get::<_, i64>(1)?),
+                sqlite_millis_to_u64(row.get::<_, i64>(2)?),
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|error| format!("Failed to read OpenCode messages: {}", error))?;
+
+    for (message_id, time_created, time_updated, message_data) in rows.filter_map(Result::ok) {
+        let role = serde_json::from_str::<Value>(&message_data)
+            .ok()
+            .and_then(|json| string_at(&json, &["/role"]).map(str::to_string))
+            .unwrap_or_else(|| "unknown".to_string());
+        message_index_by_id.insert(message_id.clone(), messages.len());
+        messages.push(OpenCodeTranscriptMessage {
+            id: message_id,
+            role,
+            time_ms: time_updated.max(time_created),
+            parts: Vec::new(),
+        });
+    }
+
+    let mut part_statement = connection
+        .prepare(
+            "select message_id, time_created, time_updated, data \
+             from part \
+             where session_id = ?1 \
+             order by time_created asc, time_updated asc, id asc",
+        )
+        .map_err(|error| format!("Failed to prepare OpenCode part query: {}", error))?;
+    let part_rows = part_statement
+        .query_map(rusqlite::params![session_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                sqlite_millis_to_u64(row.get::<_, i64>(1)?),
+                sqlite_millis_to_u64(row.get::<_, i64>(2)?),
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|error| format!("Failed to read OpenCode parts: {}", error))?;
+
+    for (message_id, time_created, time_updated, part_data) in part_rows.filter_map(Result::ok) {
+        let Some(part) = opencode_transcript_part_from_data(&part_data) else {
+            continue;
+        };
+        if let Some(index) = message_index_by_id.get(&message_id).copied() {
+            messages[index].time_ms = messages[index].time_ms.max(time_updated.max(time_created));
+            messages[index].parts.push(part);
+        }
+    }
+
+    Ok(messages)
+}
+
+fn opencode_transcript_part_from_data(part_data: &str) -> Option<OpenCodeTranscriptPart> {
+    let part_json = serde_json::from_str::<Value>(part_data).ok()?;
+    let part_type = string_at(&part_json, &["/type"]).unwrap_or("unknown");
+    match part_type {
+        "text" => string_at(&part_json, &["/text"])
+            .and_then(clean_handoff_part_text)
+            .map(|text| OpenCodeTranscriptPart {
+                label: "text".to_string(),
+                text,
+            }),
+        "tool" => opencode_tool_part_handoff_text(&part_json).map(|text| OpenCodeTranscriptPart {
+            label: "tool".to_string(),
+            text,
+        }),
+        "reasoning" => Some(OpenCodeTranscriptPart {
+            label: "reasoning".to_string(),
+            text: "[reasoning omitted from portable handoff context]".to_string(),
+        }),
+        "step-start" | "step-finish" => Some(OpenCodeTranscriptPart {
+            label: part_type.to_string(),
+            text: opencode_compact_json_for_handoff(&part_json, 2_000),
+        }),
+        _ => Some(OpenCodeTranscriptPart {
+            label: part_type.to_string(),
+            text: opencode_compact_json_for_handoff(&part_json, 8_000),
+        }),
+    }
+}
+
+fn opencode_tool_part_handoff_text(part_json: &Value) -> Option<String> {
+    let tool = string_at(part_json, &["/tool"]).unwrap_or("unknown");
+    let status = string_at(part_json, &["/state/status"]).unwrap_or("unknown");
+    let call_id = string_at(part_json, &["/callID"]).unwrap_or("");
+    let mut lines = vec![format!("[tool: {} status={} callID={}]", tool, status, call_id)];
+
+    if let Some(input) = part_json.pointer("/state/input") {
+        if !input.is_null() {
+            lines.push("input:".to_string());
+            lines.push(opencode_compact_json_for_handoff(input, 12_000));
+        }
+    }
+    if let Some(error) = string_at(part_json, &["/state/error"]).and_then(clean_handoff_part_text) {
+        lines.push("error:".to_string());
+        lines.push(error);
+    }
+    if let Some(raw) = string_at(part_json, &["/state/raw"]).and_then(clean_handoff_part_text) {
+        lines.push("raw output:".to_string());
+        lines.push(raw);
+    }
+
+    clean_handoff_part_text(&lines.join("\n"))
+}
+
+fn clean_handoff_part_text(raw_text: &str) -> Option<String> {
+    let cleaned = clean_preview_text(raw_text)?;
+    Some(limit_chars(&cleaned, OPENCODE_HANDOFF_PART_MAX_CHARS))
+}
+
+fn opencode_compact_json_for_handoff(value: &Value, max_chars: usize) -> String {
+    let text = serde_json::to_string(value).unwrap_or_else(|_| value.to_string());
+    limit_chars(&text, max_chars)
+}
+
+fn limit_chars(text: &str, max_chars: usize) -> String {
+    let mut output = String::new();
+    let mut truncated = false;
+    for (index, character) in text.chars().enumerate() {
+        if index >= max_chars {
+            truncated = true;
+            break;
+        }
+        output.push(character);
+    }
+    if truncated {
+        output.push_str("\n[truncated]");
+    }
+    output
+}
+
+fn render_opencode_handoff_source_markdown(
+    row: &OpenCodeSessionRow,
+    messages: &[OpenCodeTranscriptMessage],
+) -> String {
+    let mut output = String::new();
+    output.push_str("# AgentWatcher OpenCode Source Session\n\n");
+    output.push_str("This file is generated by AgentWatcher for cross-provider handoff. Source session A is reference context only; the new task in session B has priority.\n\n");
+    output.push_str("## Metadata\n\n");
+    output.push_str(&format!("- Provider: OpenCode\n"));
+    output.push_str(&format!("- Session ID: {}\n", row.id));
+    output.push_str(&format!("- Title: {}\n", row.title));
+    output.push_str(&format!("- Workspace: {}\n", row.directory));
+    output.push_str(&format!("- Session resource: {}\n", opencode_session_resource(&row.id)));
+    output.push_str(&format!("- Message count: {}\n", messages.len()));
+    output.push_str("\n## Transcript\n\n");
+
+    if messages.is_empty() {
+        output.push_str("_No OpenCode message/part rows were readable from the local SQLite database._\n");
+        return output;
+    }
+
+    for message in messages {
+        output.push_str(&format!(
+            "### {} · {} · {}\n\n",
+            message.role,
+            message.id,
+            message.time_ms
+        ));
+        if message.parts.is_empty() {
+            output.push_str("_No readable parts._\n\n");
+            continue;
+        }
+        for part in &message.parts {
+            output.push_str(&format!("#### {}\n\n", part.label));
+            output.push_str(&part.text);
+            output.push_str("\n\n");
+        }
+    }
+
+    output
+}
+
+fn write_opencode_handoff_source_markdown(
+    row: &OpenCodeSessionRow,
+    markdown: &str,
+) -> Result<PathBuf, String> {
+    let dir = env::temp_dir()
+        .join("AgentWatcher")
+        .join("handoff-sources")
+        .join("opencode");
+    fs::create_dir_all(&dir)
+        .map_err(|error| format!("Failed to prepare handoff source directory: {}", error))?;
+    let file_name = format!(
+        "{}-{}.md",
+        safe_file_name_token(&row.id),
+        row.time_updated.max(row.time_created)
+    );
+    let path = dir.join(file_name);
+    let temp_path = path.with_extension("md.tmp");
+    fs::write(&temp_path, markdown)
+        .map_err(|error| format!("Failed to write OpenCode handoff source: {}", error))?;
+    if path.exists() {
+        fs::remove_file(&path)
+            .map_err(|error| format!("Failed to replace OpenCode handoff source: {}", error))?;
+    }
+    fs::rename(&temp_path, &path)
+        .map_err(|error| format!("Failed to finalize OpenCode handoff source: {}", error))?;
+    Ok(path)
+}
+
+fn opencode_handoff_inline_summary(
+    row: &OpenCodeSessionRow,
+    messages: &[OpenCodeTranscriptMessage],
+) -> Option<String> {
+    let last_user = messages
+        .iter()
+        .rev()
+        .find(|message| message.role == "user")
+        .and_then(|message| message.parts.iter().find(|part| part.label == "text"))
+        .map(|part| limit_chars(&part.text, 700));
+    let last_assistant = messages
+        .iter()
+        .rev()
+        .find(|message| message.role == "assistant")
+        .and_then(|message| message.parts.iter().find(|part| part.label == "text"))
+        .map(|part| limit_chars(&part.text, 1_200));
+    let mut lines = vec![
+        format!("OpenCode source file was exported from SQLite for session {}.", row.id),
+        format!("Exported message count: {}.", messages.len()),
+    ];
+    if let Some(last_user) = last_user {
+        lines.push(format!("Latest user text in export: {}", last_user));
+    }
+    if let Some(last_assistant) = last_assistant {
+        lines.push(format!("Latest assistant text in export: {}", last_assistant));
+    }
+    clean_preview_text(&lines.join("\n"))
+}
+
+fn merge_session_status_hint(
+    current_hint: &mut Option<SessionStatusHint>,
+    candidate_hint: Option<SessionStatusHint>,
+) {
+    match candidate_hint {
+        Some(SessionStatusHint::Waiting) => *current_hint = Some(SessionStatusHint::Waiting),
+        Some(SessionStatusHint::Running) if current_hint.is_none() => {
+            *current_hint = Some(SessionStatusHint::Running)
+        }
+        _ => {}
+    }
+}
+
+fn opencode_message_status_hint(message_json: &Value) -> Option<SessionStatusHint> {
+    if string_at(message_json, &["/role"]) == Some("assistant")
+        && !opencode_assistant_message_finished(message_json)
+    {
+        Some(SessionStatusHint::Running)
+    } else {
+        None
+    }
+}
+
+fn opencode_assistant_message_finished(message_json: &Value) -> bool {
+    message_json.pointer("/time/completed").is_some()
+        || clean_option(string_at(message_json, &["/finish"])).is_some()
+        || message_json.pointer("/error").is_some()
+}
+
+fn opencode_part_status_hint(part_json: &Value) -> Option<SessionStatusHint> {
+    let part_type = string_at(part_json, &["/type"])
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let state_status = string_at(part_json, &["/state/status", "/status"])
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if opencode_is_waiting_status(&state_status) {
+        return Some(SessionStatusHint::Waiting);
+    }
+    if opencode_is_running_status(&state_status) {
+        return if opencode_part_mentions_user_control(part_json) {
+            Some(SessionStatusHint::Waiting)
+        } else {
+            Some(SessionStatusHint::Running)
+        };
+    }
+
+    if part_type == "tool" && !opencode_tool_part_finished(part_json) {
+        if opencode_part_mentions_user_control(part_json) {
+            Some(SessionStatusHint::Waiting)
+        } else {
+            Some(SessionStatusHint::Running)
+        }
+    } else {
+        None
+    }
+}
+
+fn opencode_is_waiting_status(status_text: &str) -> bool {
+    matches!(
+        status_text,
+        "waiting" | "blocked" | "needs_user_input" | "requires_action" | "requires_approval"
+    )
+}
+
+fn opencode_is_running_status(status_text: &str) -> bool {
+    matches!(
+        status_text,
+        "pending" | "queued" | "running" | "started" | "in_progress" | "submitted"
+    )
+}
+
+fn opencode_tool_part_finished(part_json: &Value) -> bool {
+    let status = string_at(part_json, &["/state/status", "/status"])
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        status.as_str(),
+        "completed" | "success" | "failed" | "error" | "cancelled" | "canceled" | "skipped"
+    ) || part_json.pointer("/state/time/end").is_some()
+        || part_json.pointer("/time/end").is_some()
+}
+
+fn opencode_part_mentions_user_control(part_json: &Value) -> bool {
+    for text in [
+        string_at(part_json, &["/type"]),
+        string_at(part_json, &["/tool"]),
+        string_at(part_json, &["/state/title", "/title"]),
+        string_at(part_json, &["/permission"]),
+        string_at(part_json, &["/state/permission"]),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let lower_text = text.to_ascii_lowercase();
+        if lower_text.contains("permission")
+            || lower_text.contains("approval")
+            || lower_text.contains("question")
+            || lower_text.contains("ask")
+            || lower_text.contains("control")
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn opencode_session_resource(session_id: &str) -> String {
+    format!("opencode://sessions/{}", percent_encode_path_segment(session_id))
+}
+
 fn open_codex_session(session: &OpenSessionRequest) -> Result<(), String> {
     if let Some(resource) = clean_option(session.session_resource.as_deref()) {
         if resource.starts_with("codex://") {
@@ -2090,6 +3111,390 @@ fn launch_codex_handoff(workspace_path: &str, prompt: &str) -> Result<String, St
 
     let _ = open_windows_url(&codex_thread_resource(&thread_id));
     Ok(thread_id)
+}
+
+fn open_opencode_session(session: &OpenSessionRequest) -> Result<(), String> {
+    let workspace_path = clean_option(session.workspace_path.as_deref())
+        .ok_or_else(|| "Missing OpenCode workspace path".to_string())?;
+    let session_id = raw_request_session_id(session.id.as_deref())
+        .map(str::to_string)
+        .or_else(|| {
+            clean_option(session.session_resource.as_deref()).and_then(opencode_session_id_from_resource)
+        })
+        .ok_or_else(|| "Missing OpenCode session id".to_string())?;
+
+    let port = ensure_opencode_web_server()?;
+    open_windows_url(&opencode_web_session_url(port, workspace_path, &session_id))
+        .map_err(|error| format!("Failed to open OpenCode Web session: {}", error))
+}
+
+fn opencode_session_id_from_resource(resource: &str) -> Option<String> {
+    let encoded_id = resource.strip_prefix("opencode://sessions/")?;
+    clean_option(Some(&percent_decode(encoded_id))).map(str::to_string)
+}
+
+fn opencode_web_session_url(port: u16, workspace_path: &str, session_id: &str) -> String {
+    format!(
+        "http://127.0.0.1:{}/{}/session/{}",
+        port,
+        opencode_web_directory_slug(workspace_path),
+        percent_encode_path_segment(session_id)
+    )
+}
+
+fn opencode_web_directory_slug(workspace_path: &str) -> String {
+    base64_url_no_padding(workspace_path.as_bytes())
+}
+
+fn ensure_opencode_web_server() -> Result<u16, String> {
+    if let Some(port) = current_owned_opencode_web_server_port() {
+        return Ok(port);
+    }
+
+    for port in discover_opencode_web_server_ports() {
+        if probe_opencode_web_server(port) {
+            return Ok(port);
+        }
+    }
+
+    start_owned_opencode_web_server()
+}
+
+fn current_owned_opencode_web_server_port() -> Option<u16> {
+    let mut server_guard = OPENCODE_WEB_SERVER
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()?;
+    let server = server_guard.as_mut()?;
+    if server.child.try_wait().ok().flatten().is_some() {
+        *server_guard = None;
+        return None;
+    }
+    if probe_opencode_web_server(server.port) {
+        Some(server.port)
+    } else {
+        None
+    }
+}
+
+fn start_owned_opencode_web_server() -> Result<u16, String> {
+    let opencode_cli = find_opencode_cli_path().ok_or_else(|| "OpenCode CLI not found".to_string())?;
+    let port = reserve_localhost_port()?;
+    let mut command = Command::new(opencode_cli);
+    command.args(["serve", "--hostname", "127.0.0.1", "--port", &port.to_string()]);
+    command.stdin(Stdio::null());
+    command.stdout(Stdio::null());
+    command.stderr(Stdio::null());
+    let mut child = spawn_hidden(command).map_err(|error| format!("Failed to start OpenCode Web server: {}", error))?;
+
+    let start = Instant::now();
+    while start.elapsed() <= Duration::from_millis(6_000) {
+        if probe_opencode_web_server(port) {
+            if let Ok(mut server_guard) = OPENCODE_WEB_SERVER.get_or_init(|| Mutex::new(None)).lock() {
+                *server_guard = Some(OpenCodeWebServerProcess { port, child });
+            }
+            return Ok(port);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+    Err(format!("OpenCode Web server did not become ready on port {}", port))
+}
+
+fn reserve_localhost_port() -> Result<u16, String> {
+    TcpListener::bind(("127.0.0.1", 0))
+        .and_then(|listener| listener.local_addr())
+        .map(|addr| addr.port())
+        .map_err(|error| format!("Failed to reserve local port: {}", error))
+}
+
+fn probe_opencode_web_server(port: u16) -> bool {
+    let Ok(addr) = format!("127.0.0.1:{}", port).parse() else {
+        return false;
+    };
+    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(180)) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(220)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(120)));
+    if stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .is_err()
+    {
+        return false;
+    }
+
+    let mut buffer = [0u8; 4096];
+    let Ok(read_len) = stream.read(&mut buffer) else {
+        return false;
+    };
+    if read_len == 0 {
+        return false;
+    }
+    let response = String::from_utf8_lossy(&buffer[..read_len]);
+    response.contains(" 200 ") && response.contains("OpenCode")
+}
+
+fn discover_opencode_web_server_ports() -> Vec<u16> {
+    let opencode_process_ids = opencode_process_ids();
+    if opencode_process_ids.is_empty() {
+        return Vec::new();
+    }
+    let mut command = Command::new("netstat.exe");
+    command.args(["-ano", "-p", "tcp"]);
+    let Ok(output) = spawn_hidden_with_output(command) else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    opencode_web_server_ports_from_netstat_output(
+        &String::from_utf8_lossy(&output.stdout),
+        &opencode_process_ids,
+    )
+}
+
+fn opencode_web_server_ports_from_netstat_output(
+    output: &str,
+    opencode_process_ids: &HashSet<u32>,
+) -> Vec<u16> {
+    let mut ports = Vec::new();
+    for line in output.lines() {
+        let columns: Vec<&str> = line.split_whitespace().collect();
+        if columns.len() < 5
+            || !columns[0].eq_ignore_ascii_case("TCP")
+            || !columns[3].eq_ignore_ascii_case("LISTENING")
+        {
+            continue;
+        }
+        let Some(pid) = columns[4].parse::<u32>().ok() else {
+            continue;
+        };
+        if !opencode_process_ids.contains(&pid) {
+            continue;
+        }
+        let Some(port) = port_from_netstat_endpoint(columns[1]) else {
+            continue;
+        };
+        if !ports.contains(&port) {
+            ports.push(port);
+        }
+    }
+    ports.sort_unstable();
+    ports
+}
+
+fn port_from_netstat_endpoint(endpoint: &str) -> Option<u16> {
+    endpoint
+        .rsplit_once(':')
+        .and_then(|(_, port)| port.trim_matches(']').parse::<u16>().ok())
+}
+
+#[cfg(target_os = "windows")]
+fn opencode_process_ids() -> HashSet<u32> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+
+    let snapshot_handle = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot_handle == INVALID_HANDLE_VALUE {
+        return HashSet::new();
+    }
+
+    let mut ids = HashSet::new();
+    let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+
+    if unsafe { Process32FirstW(snapshot_handle, &mut entry) } != 0 {
+        loop {
+            if wide_null_string(&entry.szExeFile).eq_ignore_ascii_case("opencode.exe") {
+                ids.insert(entry.th32ProcessID);
+            }
+
+            entry = unsafe { std::mem::zeroed() };
+            entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+            if unsafe { Process32NextW(snapshot_handle, &mut entry) } == 0 {
+                break;
+            }
+        }
+    }
+
+    unsafe {
+        CloseHandle(snapshot_handle);
+    }
+    ids
+}
+
+#[cfg(not(target_os = "windows"))]
+fn opencode_process_ids() -> HashSet<u32> {
+    HashSet::new()
+}
+
+fn opencode_desktop_is_running() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        let mut command = Command::new("tasklist.exe");
+        command.args(["/FI", "IMAGENAME eq OpenCode.exe", "/NH"]);
+        return spawn_hidden_with_output(command)
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).to_ascii_lowercase().contains("opencode.exe"))
+            .unwrap_or(false);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
+#[cfg(test)]
+fn opencode_open_project_deep_link(workspace_path: &str) -> String {
+    format!(
+        "opencode://open-project?directory={}",
+        percent_encode_query_component(workspace_path)
+    )
+}
+
+fn opencode_new_session_deep_link(workspace_path: &str, prompt: &str) -> String {
+    let mut link = format!(
+        "opencode://new-session?directory={}",
+        percent_encode_query_component(workspace_path)
+    );
+    if let Some(prompt_text) = clean_option(Some(prompt)) {
+        link.push_str("&prompt=");
+        link.push_str(&percent_encode_query_component(prompt_text));
+    }
+    link
+}
+
+fn spawn_visible_terminal(title: &str, executable: &str, arguments: &[&str]) -> std::io::Result<Child> {
+    let mut command = Command::new("cmd.exe");
+    command.args(["/C", "start", title, executable]);
+    command.args(arguments);
+    command.spawn()
+}
+
+fn opencode_cli_run_supports_interactive(opencode_cli: &str) -> bool {
+    let mut command = Command::new(opencode_cli);
+    command.args(["run", "--help"]);
+    spawn_hidden_with_output(command)
+        .ok()
+        .map(|output| {
+            let mut help_text = String::from_utf8_lossy(&output.stdout).into_owned();
+            help_text.push_str(&String::from_utf8_lossy(&output.stderr));
+            help_text.contains("--interactive")
+        })
+        .unwrap_or(false)
+}
+
+fn launch_opencode_cli_handoff(workspace_path: &str, prompt: &str) -> Result<String, String> {
+    let opencode_cli = find_opencode_cli_path().ok_or_else(|| "OpenCode CLI not found".to_string())?;
+    if opencode_cli_run_supports_interactive(&opencode_cli) {
+        spawn_visible_terminal(
+            "AgentWatcher OpenCode",
+            &opencode_cli,
+            &[
+                "run",
+                "--dir",
+                workspace_path,
+                "--title",
+                "AgentWatcher Handoff",
+                "--interactive",
+                prompt,
+            ],
+        )
+        .map(|_| "opencode-cli".to_string())
+        .map_err(|error| format!("Failed to launch OpenCode run: {}", error))
+    } else {
+        spawn_visible_terminal(
+            "AgentWatcher OpenCode",
+            &opencode_cli,
+            &[
+                "run",
+                "--dir",
+                workspace_path,
+                "--title",
+                "AgentWatcher Handoff",
+                prompt,
+            ],
+        )
+        .map(|_| "opencode-cli".to_string())
+        .map_err(|error| format!("Failed to launch OpenCode run: {}", error))
+    }
+}
+
+fn launch_opencode_handoff(workspace_path: &str, prompt: &str) -> Result<String, String> {
+    if opencode_desktop_is_running() {
+        let link = opencode_new_session_deep_link(workspace_path, prompt);
+        return open_windows_url(&link)
+            .map(|_| "opencode-desktop".to_string())
+            .or_else(|desktop_error| {
+                launch_opencode_cli_handoff(workspace_path, prompt).map_err(|cli_error| {
+                    format!(
+                        "OpenCode Desktop handoff failed ({}); CLI fallback failed ({})",
+                        desktop_error, cli_error
+                    )
+                })
+            });
+    }
+
+    launch_opencode_cli_handoff(workspace_path, prompt)
+}
+
+fn find_opencode_cli_path() -> Option<String> {
+    let mut candidates = Vec::new();
+    if let Some(appdata_path) = env::var_os("APPDATA") {
+        let npm_root = PathBuf::from(appdata_path).join("npm");
+        candidates.push(path_to_string(
+            &npm_root
+                .join("node_modules")
+                .join("opencode-ai")
+                .join("bin")
+                .join("opencode.exe"),
+        ));
+        candidates.push(path_to_string(&npm_root.join("opencode.cmd")));
+        candidates.push(path_to_string(&npm_root.join("opencode.ps1")));
+        candidates.push(path_to_string(
+            &npm_root
+                .join("node_modules")
+                .join("opencode-ai")
+                .join("node_modules")
+                .join("opencode-windows-x64")
+                .join("bin")
+                .join("opencode.exe"),
+        ));
+        candidates.push(path_to_string(
+            &npm_root
+                .join("node_modules")
+                .join("opencode-ai")
+                .join("node_modules")
+                .join("opencode-windows-x64-baseline")
+                .join("bin")
+                .join("opencode.exe"),
+        ));
+    }
+    candidates.extend(
+        ["opencode.exe", "opencode.cmd", "opencode.ps1", "opencode"]
+            .iter()
+            .map(|candidate| candidate.to_string()),
+    );
+
+    for candidate in candidates {
+        let mut command = Command::new(&candidate);
+        command.arg("--version");
+        if spawn_hidden_with_output(command)
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+        {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 fn with_codex_app_server_client<F, T>(operation: F) -> Result<T, String>
@@ -4464,6 +5869,7 @@ fn resolve_scan_options(options: Option<ScanOptions>) -> ResolvedScanOptions {
         include_copilot: None,
         include_claude: None,
         include_codex: None,
+        include_open_code: None,
     });
     let active_days = options
         .active_window_days
@@ -4480,6 +5886,7 @@ fn resolve_scan_options(options: Option<ScanOptions>) -> ResolvedScanOptions {
         include_copilot: options.include_copilot.unwrap_or(true),
         include_claude: options.include_claude.unwrap_or(true),
         include_codex: options.include_codex.unwrap_or(true),
+        include_open_code: options.include_open_code.unwrap_or(true),
     }
 }
 
@@ -6412,9 +7819,27 @@ mod tests {
             include_copilot: None,
             include_claude: None,
             include_codex: Some(false),
+            include_open_code: None,
         }));
 
         assert!(!options.include_codex);
+    }
+
+    #[test]
+    fn scan_options_include_opencode_by_default_and_can_disable_it() {
+        assert!(resolve_scan_options(None).include_open_code);
+
+        let options = resolve_scan_options(Some(ScanOptions {
+            max_sessions: None,
+            active_window_days: None,
+            hide_archived: None,
+            include_copilot: None,
+            include_claude: None,
+            include_codex: None,
+            include_open_code: Some(false),
+        }));
+
+        assert!(!options.include_open_code);
     }
 
     #[test]
@@ -6467,6 +7892,370 @@ mod tests {
     }
 
     #[test]
+    fn opencode_session_resource_percent_encodes_session_id() {
+        assert_eq!(
+            opencode_session_resource("session/with space"),
+            "opencode://sessions/session%2Fwith%20space"
+        );
+        assert_eq!(
+            opencode_session_id_from_resource("opencode://sessions/session%2Fwith%20space").as_deref(),
+            Some("session/with space")
+        );
+    }
+
+    #[test]
+    fn opencode_desktop_deep_links_match_supported_routes() {
+        assert_eq!(
+            opencode_open_project_deep_link(r"F:\AiProject\AgentWatcher"),
+            "opencode://open-project?directory=F%3A%5CAiProject%5CAgentWatcher"
+        );
+        assert_eq!(
+            opencode_new_session_deep_link(r"F:\AiProject\AgentWatcher", "hello todo-awoc-abc123"),
+            "opencode://new-session?directory=F%3A%5CAiProject%5CAgentWatcher&prompt=hello%20todo-awoc-abc123"
+        );
+    }
+
+    #[test]
+    fn opencode_web_session_url_matches_renderer_route_slug() {
+        assert_eq!(
+            opencode_web_directory_slug(r"F:\AiProject\UnrealDevFlow"),
+            "RjpcQWlQcm9qZWN0XFVucmVhbERldkZsb3c"
+        );
+        assert_eq!(
+            opencode_web_session_url(49348, r"F:\AiProject\UnrealDevFlow", "ses_test"),
+            "http://127.0.0.1:49348/RjpcQWlQcm9qZWN0XFVucmVhbERldkZsb3c/session/ses_test"
+        );
+    }
+
+    #[test]
+    fn opencode_netstat_parser_keeps_only_listening_opencode_ports() {
+        let mut opencode_process_ids = HashSet::new();
+        opencode_process_ids.insert(2040);
+        opencode_process_ids.insert(72592);
+        let output = r#"
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    127.0.0.1:49348        0.0.0.0:0              LISTENING       2040
+  TCP    127.0.0.1:60670        0.0.0.0:0              LISTENING       28660
+  TCP    [::1]:51511            [::]:0                 LISTENING       72592
+  TCP    127.0.0.1:49348        127.0.0.1:50000        ESTABLISHED     2040
+"#;
+
+        assert_eq!(
+            opencode_web_server_ports_from_netstat_output(output, &opencode_process_ids),
+            vec![49348, 51511]
+        );
+    }
+
+    #[test]
+    fn opencode_handoff_source_markdown_contains_portable_transcript() {
+        let row = OpenCodeSessionRow {
+            id: "ses_test".to_string(),
+            title: "Test handoff".to_string(),
+            directory: r"F:\AiProject\AgentWatcher".to_string(),
+            path: None,
+            time_created: 1000,
+            time_updated: 2000,
+            time_archived: None,
+        };
+        let messages = vec![
+            OpenCodeTranscriptMessage {
+                id: "msg_user".to_string(),
+                role: "user".to_string(),
+                time_ms: 1100,
+                parts: vec![OpenCodeTranscriptPart {
+                    label: "text".to_string(),
+                    text: "Please continue todo-awoc-123456".to_string(),
+                }],
+            },
+            OpenCodeTranscriptMessage {
+                id: "msg_assistant".to_string(),
+                role: "assistant".to_string(),
+                time_ms: 1200,
+                parts: vec![
+                    OpenCodeTranscriptPart {
+                        label: "tool".to_string(),
+                        text: "[tool: shell status=completed callID=call_1]\nraw output:\npassed".to_string(),
+                    },
+                    OpenCodeTranscriptPart {
+                        label: "text".to_string(),
+                        text: "Done and verified.".to_string(),
+                    },
+                ],
+            },
+        ];
+
+        let markdown = render_opencode_handoff_source_markdown(&row, &messages);
+
+        assert!(markdown.contains("Session ID: ses_test"));
+        assert!(markdown.contains("Please continue todo-awoc-123456"));
+        assert!(markdown.contains("[tool: shell status=completed callID=call_1]"));
+        assert!(markdown.contains("Done and verified."));
+        assert!(opencode_handoff_inline_summary(&row, &messages)
+            .unwrap()
+            .contains("Exported message count: 2."));
+    }
+
+    #[test]
+    fn opencode_handoff_part_renderer_omits_reasoning_text() {
+        let part = opencode_transcript_part_from_data(
+            r#"{"type":"reasoning","text":"private chain of thought"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(part.label, "reasoning");
+        assert!(!part.text.contains("private chain of thought"));
+        assert!(part.text.contains("reasoning omitted"));
+    }
+
+    #[test]
+    fn opencode_session_row_maps_to_agent_session() {
+        let scan_time_ms = 1_780_651_255_000;
+        let row = OpenCodeSessionRow {
+            id: "ses_test".to_string(),
+            title: "Implement OpenCode provider".to_string(),
+            directory: r"F:\AiProject\AgentWatcher".to_string(),
+            path: Some("AiProject/AgentWatcher".to_string()),
+            time_created: scan_time_ms - 600_000,
+            time_updated: scan_time_ms - 120_000,
+            time_archived: None,
+        };
+        let summary = OpenCodeSessionSummary {
+            last_user_message: Some("Please wire OpenCode todo-awoc-abc123".to_string()),
+            last_ai_message: Some("OpenCode scanner is ready.".to_string()),
+            message_count: 2,
+            latest_part_ms: scan_time_ms - 60_000,
+            status_hint: None,
+            todo_ids: vec!["todo-awoc-abc123".to_string()],
+        };
+        let options = resolve_scan_options(Some(ScanOptions {
+            max_sessions: Some(80),
+            active_window_days: Some(7),
+            hide_archived: Some(true),
+            include_copilot: Some(false),
+            include_claude: Some(false),
+            include_codex: Some(false),
+            include_open_code: Some(true),
+        }));
+
+        let session = read_opencode_session_row(&row, summary, scan_time_ms, &options).unwrap();
+
+        assert_eq!(session.provider, "opencode");
+        assert_eq!(session.provider_label, "OC");
+        assert_eq!(session.title, "Implement OpenCode provider");
+        assert_eq!(session.workspace_name, "AgentWatcher");
+        assert_eq!(session.status, "running");
+        assert_eq!(session.session_resource.as_deref(), Some("opencode://sessions/ses_test"));
+        assert_eq!(session.todo_ids, vec!["todo-awoc-abc123".to_string()]);
+    }
+
+    #[test]
+    fn opencode_summary_reads_user_ai_text_and_todo_id() {
+        let connection = opencode_memory_connection();
+        connection
+            .execute(
+                "insert into message (id, session_id, time_created, time_updated, data) values (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    "msg_user",
+                    "ses_1",
+                    1_000_i64,
+                    1_000_i64,
+                    json!({ "role": "user", "time": { "created": 1_000 } }).to_string()
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into message (id, session_id, time_created, time_updated, data) values (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    "msg_assistant",
+                    "ses_1",
+                    2_000_i64,
+                    2_000_i64,
+                    json!({ "role": "assistant", "time": { "created": 2_000, "completed": 2_500 }, "finish": "stop" }).to_string()
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into part (id, message_id, session_id, time_created, time_updated, data) values (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    "part_user",
+                    "msg_user",
+                    "ses_1",
+                    1_000_i64,
+                    1_100_i64,
+                    json!({ "type": "text", "text": "Start OpenCode task todo-awoc-abc123" }).to_string()
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into part (id, message_id, session_id, time_created, time_updated, data) values (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    "part_assistant",
+                    "msg_assistant",
+                    "ses_1",
+                    2_000_i64,
+                    2_100_i64,
+                    json!({ "type": "text", "text": "OpenCode reply is visible." }).to_string()
+                ],
+            )
+            .unwrap();
+
+        let summary = opencode_session_summary(&connection, "ses_1");
+
+        assert_eq!(summary.message_count, 2);
+        assert_eq!(summary.latest_part_ms, 2_100);
+        assert_eq!(
+            summary.last_user_message.as_deref(),
+            Some("Start OpenCode task todo-awoc-abc123")
+        );
+        assert_eq!(summary.last_ai_message.as_deref(), Some("OpenCode reply is visible."));
+        assert_eq!(summary.todo_ids, vec!["todo-awoc-abc123".to_string()]);
+    }
+
+    #[test]
+    fn opencode_summary_budget_uses_lightweight_fallback_then_cache() {
+        let connection = opencode_memory_connection();
+        let session_id = "ses_budget_test";
+        connection
+            .execute(
+                "insert into message (id, session_id, time_created, time_updated, data) values (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    "msg_budget_user",
+                    session_id,
+                    1_000_i64,
+                    1_000_i64,
+                    json!({ "role": "user", "time": { "created": 1_000 } }).to_string()
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into part (id, message_id, session_id, time_created, time_updated, data) values (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    "part_budget_user",
+                    "msg_budget_user",
+                    session_id,
+                    1_000_i64,
+                    1_100_i64,
+                    json!({ "type": "text", "text": "Budgeted OpenCode detail" }).to_string()
+                ],
+            )
+            .unwrap();
+        let row = OpenCodeSessionRow {
+            id: session_id.to_string(),
+            title: "Budget session".to_string(),
+            directory: r"F:\AiProject\AgentWatcher".to_string(),
+            path: None,
+            time_created: 900,
+            time_updated: 1_000,
+            time_archived: None,
+        };
+
+        let mut no_budget = 0usize;
+        let lightweight =
+            cached_or_read_opencode_session_summary(&connection, &row, &mut no_budget);
+        assert_eq!(lightweight.message_count, 0);
+        assert_eq!(lightweight.latest_part_ms, 1_000);
+
+        let mut one_fetch = 1usize;
+        let full = cached_or_read_opencode_session_summary(&connection, &row, &mut one_fetch);
+        assert_eq!(one_fetch, 0);
+        assert_eq!(full.message_count, 1);
+        assert_eq!(full.last_user_message.as_deref(), Some("Budgeted OpenCode detail"));
+
+        let mut no_budget_after_cache = 0usize;
+        let cached =
+            cached_or_read_opencode_session_summary(&connection, &row, &mut no_budget_after_cache);
+        assert_eq!(cached.message_count, 1);
+        assert_eq!(no_budget_after_cache, 0);
+    }
+
+    #[test]
+    fn opencode_live_scan_perf_when_enabled() {
+        if env::var("AGENTWATCHER_OPENCODE_LIVE_PERF").ok().as_deref() != Some("1") {
+            return;
+        }
+
+        clear_opencode_scan_cache();
+        let options = resolve_scan_options(Some(ScanOptions {
+            max_sessions: Some(80),
+            active_window_days: Some(7),
+            hide_archived: Some(true),
+            include_copilot: Some(false),
+            include_claude: Some(false),
+            include_codex: Some(false),
+            include_open_code: Some(true),
+        }));
+        let start = Instant::now();
+        let first_scan = scan_opencode_sessions(current_time_ms(), &options);
+        let first_ms = start.elapsed().as_millis();
+        let start = Instant::now();
+        let cached_scan = scan_opencode_sessions(current_time_ms(), &options);
+        let cached_ms = start.elapsed().as_millis();
+
+        println!(
+            "OpenCode live scan: first={}ms cached={}ms sessions={} cached_sessions={}",
+            first_ms,
+            cached_ms,
+            first_scan.len(),
+            cached_scan.len()
+        );
+        assert_eq!(first_scan.len(), cached_scan.len());
+    }
+
+    #[test]
+    fn opencode_status_maps_running_tool_and_permission_waiting() {
+        assert_eq!(
+            opencode_part_status_hint(&json!({
+                "type": "tool",
+                "tool": "bash",
+                "state": { "status": "running" }
+            })),
+            Some(SessionStatusHint::Running)
+        );
+        assert_eq!(
+            opencode_part_status_hint(&json!({
+                "type": "tool",
+                "tool": "permission",
+                "state": { "status": "pending", "title": "Permission request" }
+            })),
+            Some(SessionStatusHint::Waiting)
+        );
+    }
+
+    fn opencode_memory_connection() -> Connection {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute(
+                "create table message (
+                    id text primary key,
+                    session_id text not null,
+                    time_created integer not null,
+                    time_updated integer not null,
+                    data text not null
+                )",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "create table part (
+                    id text primary key,
+                    message_id text not null,
+                    session_id text not null,
+                    time_created integer not null,
+                    time_updated integer not null,
+                    data text not null
+                )",
+                [],
+            )
+            .unwrap();
+        connection
+    }
+
+    #[test]
     fn codex_thread_summary_reads_app_server_thread_json() {
         let scan_time_ms = 1_780_651_255_000;
         let updated_ms = scan_time_ms - STATUS_RECENT_CONTENT_WINDOW_MS - 1;
@@ -6477,6 +8266,7 @@ mod tests {
             include_copilot: Some(false),
             include_claude: Some(false),
             include_codex: Some(true),
+            include_open_code: Some(false),
         }));
         let thread = json!({
             "id": "019e9715-ea58-74f2-af8f-feca74ba9d08",
@@ -6556,6 +8346,7 @@ mod tests {
             include_copilot: Some(false),
             include_claude: Some(false),
             include_codex: Some(true),
+            include_open_code: Some(false),
         }));
         let thread = json!({
             "id": "thread-preview-only",
@@ -6584,6 +8375,7 @@ mod tests {
             include_copilot: Some(false),
             include_claude: Some(false),
             include_codex: Some(true),
+            include_open_code: Some(false),
         }));
         let thread = json!({
             "id": "thread-cached-summary",
@@ -6643,6 +8435,7 @@ mod tests {
             include_copilot: Some(false),
             include_claude: Some(false),
             include_codex: Some(true),
+            include_open_code: Some(false),
         }));
 
         assert_eq!(codex_scan_turn_fetch_budget(&options), CODEX_SCAN_TURN_FETCH_BUDGET);
@@ -6682,6 +8475,7 @@ mod tests {
             include_copilot: Some(false),
             include_claude: Some(false),
             include_codex: Some(true),
+            include_open_code: Some(false),
         }));
 
         let session = wait_for_live_codex_session(&thread_id, &token, &options)
@@ -6819,6 +8613,7 @@ pub fn run() {
             get_performance_snapshot,
             open_session,
             launch_handoff,
+            prepare_handoff_source_context,
             get_todo_state,
             save_todo_state,
             get_bridge_status,
