@@ -56,6 +56,10 @@ const aliasToFlow = new Map([
   ['settings-perf', 'settings-performance'],
   ['设置性能', 'settings-performance'],
   ['设置卡顿', 'settings-performance'],
+  ['filtering', 'filtering'],
+  ['filters', 'filtering'],
+  ['筛选', 'filtering'],
+  ['主面板筛选', 'filtering'],
 ]);
 
 const flowDisplay = {
@@ -66,6 +70,7 @@ const flowDisplay = {
   'opencode-session': 'OpenCode 会话卡片流程',
   'opencode-handoff-context': 'OpenCode 接续上下文流程',
   'settings-performance': '设置切换性能流程',
+  filtering: '主面板筛选流程',
 };
 
 const args = parseArgs(process.argv.slice(2));
@@ -166,6 +171,8 @@ try {
       await runStep('验证 OpenCode 接续 Prompt 可读取来源文件', () => runOpenCodeHandoffContextFlow());
     } else if (flow === 'settings-performance') {
       await runStep('打开子面板后测量设置切换延迟', () => runSettingsPerformanceFlow());
+    } else if (flow === 'filtering') {
+      await runStep('验证主面板 provider、搜索、空状态和 todo workspace 过滤', () => runFilteringFlow());
     }
   }
 
@@ -227,7 +234,7 @@ function normalizeFlows(rawFlows) {
   const flows = rawFlows.map(flow => {
     const normalized = aliasToFlow.get(String(flow).trim().toLowerCase());
     if (!normalized) {
-      throw new Error(`未知流程：${flow}。可用流程：冒烟、任务面板、性能面板、接续面板、opencode-session、opencode-handoff-context、settings-performance。`);
+      throw new Error(`未知流程：${flow}。可用流程：冒烟、任务面板、性能面板、接续面板、opencode-session、opencode-handoff-context、settings-performance、filtering。`);
     }
     return normalized;
   });
@@ -342,12 +349,21 @@ async function ensureChineseUi() {
   await page.waitForFunction(() => document.documentElement.lang === 'zh-CN' && document.body.dataset.lang === 'zh', null, { timeout: 10000 });
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => document.documentElement.lang === 'zh-CN' && document.body.dataset.lang === 'zh', null, { timeout: 10000 });
-  await page.waitForFunction(() => document.body.innerText.includes('全部 Agent 会话'), null, { timeout: 15000 });
+  await page.waitForFunction(() => {
+    const workspaceLabel = document.querySelector('#workspacePickerValue')?.textContent || '';
+    const statusText = [...document.querySelectorAll('.segment[data-status]')]
+      .map(segment => segment.textContent || '')
+      .join(' ');
+    return workspaceLabel.includes('全部工作区') && statusText.includes('全部');
+  }, null, { timeout: 15000 });
 
   const after = await page.evaluate(() => ({
     htmlLang: document.documentElement.lang,
     bodyLang: document.body.dataset.lang || '',
-    主标题: document.querySelector('[data-i18n="allSessions"]')?.textContent || document.body.innerText.slice(0, 80),
+    工作区筛选: document.querySelector('#workspacePickerValue')?.textContent || '',
+    状态筛选: [...document.querySelectorAll('.segment[data-status]')]
+      .map(segment => segment.textContent?.trim() || '')
+      .join(' / '),
   }));
 
   return { 操作: '通过设置面板切换到中文界面', 切换前: before, 切换后: after };
@@ -452,6 +468,123 @@ async function runHandoffFlow() {
   return {
     ...info,
     可见文本片段: text.slice(0, 180),
+    截图: screenshot,
+  };
+}
+
+async function runFilteringFlow() {
+  const page = await getMainPage();
+  await assertTauriPage(page, '主窗口');
+  await ensureWatcherSurface(page);
+  await waitForSessionSurface(page);
+  await resetMainFilters(page);
+
+  const initial = await collectFilteringSnapshot(page);
+  const layout = await measureMainFilterLayout(page);
+  if (!layout.dropdownSameWidth || !layout.searchAligned || !layout.perRowAligned || !layout.providerPopoverWideEnough || !layout.workspacePopoverWideEnough) {
+    throw new Error(`主面板筛选控件布局不符合预期：${JSON.stringify(layout)}`);
+  }
+
+  const providerOrder = ['codex', 'opencode', 'copilot', 'claude'];
+  const targetProvider = providerOrder.find(provider => (initial.providerCounts[provider] || 0) > 0)
+    || Object.entries(initial.providerCounts).find(([, count]) => count > 0)?.[0]
+    || '';
+  const providerResult = {
+    跳过: '',
+    provider: targetProvider,
+  };
+
+  if (!targetProvider) {
+    providerResult.跳过 = '当前真实数据没有可用于 provider 筛选的会话卡片。';
+  } else {
+    await selectProviderFilter(page, targetProvider);
+    await page.locator('.segment[data-status="all"]').click();
+    await page.waitForFunction((provider) => {
+      const visible = Array.from(document.querySelectorAll('.lane .session-card:not([hidden])'));
+      return visible.length > 0 && visible.every(card => card.dataset.provider === provider);
+    }, targetProvider, { timeout: 10000 });
+
+    const afterProvider = await collectFilteringSnapshot(page);
+    const expectedProviderTotal = initial.providerCounts[targetProvider] || 0;
+    if (afterProvider.sessionTotal !== expectedProviderTotal) {
+      throw new Error(`provider 筛选计数不一致：expected ${expectedProviderTotal}, actual ${afterProvider.sessionTotal}`);
+    }
+    providerResult.providerLabel = afterProvider.providerLabel;
+    providerResult.total = afterProvider.sessionTotal;
+    providerResult.visibleProviders = afterProvider.visibleProviders;
+
+    const searchableTitle = afterProvider.visibleCards.find(card => card.title.length >= 3)?.title || afterProvider.visibleCards[0]?.title || '';
+    const searchQuery = searchToken(searchableTitle);
+    if (!searchQuery) {
+      providerResult.搜索 = { 跳过: '目标 provider 下没有可搜索标题。' };
+    } else {
+      await page.locator('#sessionSearch').fill(searchQuery);
+      await page.waitForFunction(([provider, query]) => {
+        const normalizedQuery = String(query).toLowerCase();
+        const visible = Array.from(document.querySelectorAll('.lane .session-card:not([hidden])'));
+        return visible.length > 0
+          && visible.every(card => card.dataset.provider === provider)
+          && visible.every(card => ((card.dataset.sessionTitle || card.querySelector('.session-title')?.textContent || '').toLowerCase()).includes(normalizedQuery));
+      }, [targetProvider, searchQuery], { timeout: 10000 });
+      const afterSearch = await collectFilteringSnapshot(page);
+      const expectedSearchTotal = initial.cards
+        .filter(card => card.provider === targetProvider && card.title.toLowerCase().includes(searchQuery.toLowerCase()))
+        .length;
+      if (afterSearch.sessionTotal !== expectedSearchTotal) {
+        throw new Error(`标题搜索计数不一致：expected ${expectedSearchTotal}, actual ${afterSearch.sessionTotal}`);
+      }
+
+      const emptyQuery = `aw-no-match-${Date.now()}`;
+      await page.locator('#sessionSearch').fill(emptyQuery);
+      await page.waitForFunction(() => {
+        const emptyState = document.querySelector('#sessionEmptyState');
+        return emptyState && !emptyState.hidden && document.querySelector('#sessionTotal')?.textContent.trim() === '0';
+      }, null, { timeout: 10000 });
+      const emptyState = await page.evaluate(() => ({
+        title: document.querySelector('#sessionEmptyTitle')?.textContent || '',
+        text: document.querySelector('#sessionEmptyText')?.textContent || '',
+        clear: document.querySelector('#clearSessionFilters')?.textContent || '',
+      }));
+
+      await page.locator('#clearSessionFilters').click();
+      await page.waitForFunction(() => {
+        const activeStatus = document.querySelector('.segment[data-status].active')?.dataset.status || '';
+        return activeStatus === 'all'
+          && !document.querySelector('#sessionSearch')?.value
+          && document.querySelector('#providerPickerValue')?.textContent.trim();
+      }, null, { timeout: 10000 });
+      const afterClear = await collectFilteringSnapshot(page);
+      if (afterClear.sessionTotal !== initial.sessionTotal) {
+        throw new Error(`清除筛选后总数未恢复：expected ${initial.sessionTotal}, actual ${afterClear.sessionTotal}`);
+      }
+
+      providerResult.搜索 = {
+        query: searchQuery,
+        total: afterSearch.sessionTotal,
+        空状态: emptyState,
+        清除后: {
+          providerLabel: afterClear.providerLabel,
+          activeStatus: afterClear.activeStatus,
+          searchValue: afterClear.searchValue,
+          total: afterClear.sessionTotal,
+        },
+      };
+    }
+  }
+
+  await resetMainFilters(page);
+  const todoScope = await verifyTodoWorkspaceScope(page);
+  const screenshot = await saveScreenshot(page, 'filtering-main-panel.png');
+
+  return {
+    初始: {
+      total: initial.sessionTotal,
+      providerCounts: initial.providerCounts,
+      workspaceLabel: initial.workspaceLabel,
+    },
+    布局: layout,
+    Provider与搜索: providerResult,
+    Todo按Workspace过滤: todoScope,
     截图: screenshot,
   };
 }
@@ -641,6 +774,402 @@ async function runSettingsPerformanceFlow() {
     阈值毫秒: 2000,
     截图: screenshot,
   };
+}
+
+async function ensureWatcherSurface(page) {
+  const inAgentTaskMode = await page.evaluate(() => document.body.classList.contains('is-agent-task-mode')).catch(() => false);
+  if (inAgentTaskMode) {
+    await page.locator('#todoToggle').click();
+    await page.waitForFunction(() => !document.body.classList.contains('is-agent-task-mode'), null, { timeout: 10000 });
+  }
+
+  const perfPressed = await page.locator('#performanceToggle').getAttribute('aria-pressed').catch(() => 'false');
+  const perfVisible = await page.locator('#perfPanel').evaluate(element => {
+    if (!element || element.hidden) return false;
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+  }).catch(() => false);
+  if (perfPressed === 'true' || perfVisible) {
+    await page.locator('#performanceToggle').click();
+    await page.waitForFunction(() => {
+      const panel = document.querySelector('#perfPanel');
+      return document.querySelector('#performanceToggle')?.getAttribute('aria-pressed') === 'false'
+        && (!panel || panel.hidden || window.getComputedStyle(panel).display === 'none');
+    }, null, { timeout: 10000 });
+  }
+
+  const settingsVisible = await page.locator('#settingsPanel').evaluate(element => {
+    if (!element || element.hidden) return false;
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+  }).catch(() => false);
+  if (settingsVisible) {
+    await page.locator('#settingsToggle').click();
+    await page.waitForFunction(() => document.querySelector('#settingsPanel')?.hidden === true, null, { timeout: 10000 });
+  }
+}
+
+async function waitForSessionSurface(page) {
+  await page.waitForFunction(() => {
+    return document.querySelector('#workspacePickerButton')
+      && document.querySelector('#providerPickerButton')
+      && document.querySelector('#sessionSearch')
+      && document.querySelector('#sessionTotal')
+      && document.querySelector('.segment[data-status="all"]');
+  }, null, { timeout: 20000 });
+}
+
+async function resetMainFilters(page) {
+  await ensureWatcherSurface(page);
+  await waitForSessionSurface(page);
+  await page.locator('.segment[data-status="all"]').click();
+  await page.locator('#sessionSearch').fill('');
+
+  const providerLabel = await page.locator('#providerPickerValue').textContent().catch(() => '');
+  if (!/全部提供方|All providers/i.test(providerLabel || '')) {
+    await selectProviderFilter(page, 'all');
+  }
+
+  const workspaceLabel = await page.locator('#workspacePickerValue').textContent().catch(() => '');
+  if (!/全部工作区|All workspaces/i.test(workspaceLabel || '')) {
+    await selectWorkspaceFilter(page, '');
+  }
+
+  await page.waitForFunction(() => {
+    const activeStatus = document.querySelector('.segment[data-status].active')?.dataset.status || '';
+    const provider = document.querySelector('#providerPickerValue')?.textContent || '';
+    const workspace = document.querySelector('#workspacePickerValue')?.textContent || '';
+    return activeStatus === 'all'
+      && !document.querySelector('#sessionSearch')?.value
+      && /全部提供方|All providers/i.test(provider)
+      && /全部工作区|All workspaces/i.test(workspace);
+  }, null, { timeout: 10000 });
+}
+
+async function selectProviderFilter(page, provider) {
+  await domClick(page, '#providerPickerButton');
+  const selector = `#providerPickerOptions .provider-picker-option[data-provider="${cssAttr(provider)}"]`;
+  await page.waitForFunction((nextSelector) => Boolean(document.querySelector(nextSelector)), selector, { timeout: 5000 });
+  await page.evaluate((nextSelector) => document.querySelector(nextSelector)?.click(), selector);
+}
+
+async function selectWorkspaceFilter(page, workspaceKey) {
+  await domClick(page, '#workspacePickerButton');
+  const selector = `#workspacePickerOptions .workspace-picker-option[data-workspace-key="${cssAttr(workspaceKey)}"]`;
+  await page.waitForFunction((nextSelector) => Boolean(document.querySelector(nextSelector)), selector, { timeout: 5000 });
+  await page.evaluate((nextSelector) => {
+    const option = document.querySelector(nextSelector);
+    option?.scrollIntoView({ block: 'nearest' });
+    option?.click();
+  }, selector);
+}
+
+async function domClick(page, selector) {
+  await page.waitForFunction((nextSelector) => {
+    const element = document.querySelector(nextSelector);
+    return element && !element.disabled;
+  }, selector, { timeout: 5000 });
+  await page.evaluate((nextSelector) => document.querySelector(nextSelector)?.click(), selector);
+}
+
+function cssAttr(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function searchToken(title) {
+  const trimmed = String(title || '').trim();
+  const word = trimmed.split(/\s+/).find(part => part.replace(/[^\p{L}\p{N}_-]/gu, '').length >= 3);
+  return (word || trimmed).slice(0, 18);
+}
+
+async function collectFilteringSnapshot(page) {
+  return page.evaluate(() => {
+    const cards = Array.from(document.querySelectorAll('.lane .session-card')).map(card => ({
+      provider: card.dataset.provider || '',
+      status: card.dataset.status || '',
+      title: (card.dataset.sessionTitle || card.querySelector('.session-title')?.textContent || '').trim(),
+      workspaceKey: card.dataset.workspaceKey || '',
+      workspaceLabel: card.dataset.workspaceLabel || card.dataset.workspace || '',
+      hidden: card.hidden,
+    }));
+    const providerCounts = {};
+    for (const card of cards) {
+      if (!card.provider) continue;
+      providerCounts[card.provider] = (providerCounts[card.provider] || 0) + 1;
+    }
+    const visibleCards = cards.filter(card => !card.hidden);
+    return {
+      cards,
+      visibleCards,
+      providerCounts,
+      visibleProviders: [...new Set(visibleCards.map(card => card.provider).filter(Boolean))],
+      sessionTotal: Number(document.querySelector('#sessionTotal')?.textContent?.trim() || '0'),
+      visibleNow: Number(document.querySelector('#visibleNow')?.textContent?.trim() || '0'),
+      queueNow: Number(document.querySelector('#queueNow')?.textContent?.trim() || '0'),
+      activeStatus: document.querySelector('.segment[data-status].active')?.dataset.status || '',
+      providerLabel: document.querySelector('#providerPickerValue')?.textContent?.trim() || '',
+      workspaceLabel: document.querySelector('#workspacePickerValue')?.textContent?.trim() || '',
+      searchValue: document.querySelector('#sessionSearch')?.value || '',
+      statusLabels: [...document.querySelectorAll('.segment[data-status]')].map(segment => ({
+        status: segment.dataset.status,
+        text: segment.textContent.trim().replace(/\s+/g, ' '),
+      })),
+    };
+  });
+}
+
+async function measureMainFilterLayout(page) {
+  const workspacePopoverWidth = await measurePopoverWidth(page, '#workspacePickerButton', '#workspacePickerPopover');
+  const providerPopoverWidth = await measurePopoverWidth(page, '#providerPickerButton', '#providerPickerPopover');
+  return page.evaluate(([workspacePopoverWidth, providerPopoverWidth]) => {
+    const rect = (selector) => {
+      const element = document.querySelector(selector);
+      if (!element) return null;
+      const box = element.getBoundingClientRect();
+      return {
+        left: Math.round(box.left),
+        right: Math.round(box.right),
+        width: Math.round(box.width),
+      };
+    };
+    const workspace = rect('#workspacePickerButton');
+    const provider = rect('#providerPickerButton');
+    const search = rect('#sessionSearch');
+    const perRow = rect('#sizePreset');
+    const controlStrip = document.querySelector('.control-strip');
+    const watcher = document.querySelector('.watcher-window');
+    return {
+      workspaceButtonWidth: workspace?.width || 0,
+      providerButtonWidth: provider?.width || 0,
+      workspacePopoverWidth,
+      providerPopoverWidth,
+      dropdownSameWidth: Math.abs((workspace?.width || 0) - (provider?.width || 0)) <= 1,
+      searchAligned: Math.abs((search?.left || 0) - (workspace?.left || 0)) <= 1,
+      perRowAligned: Math.abs((perRow?.left || 0) - (workspace?.left || 0)) <= 1,
+      providerPopoverWideEnough: providerPopoverWidth >= 220,
+      workspacePopoverWideEnough: workspacePopoverWidth >= 280,
+      controlStripFits: !controlStrip || controlStrip.scrollWidth <= controlStrip.clientWidth + 1,
+      watcherFits: !watcher || watcher.scrollWidth <= watcher.clientWidth + 1,
+    };
+  }, [workspacePopoverWidth, providerPopoverWidth]);
+}
+
+async function measurePopoverWidth(page, buttonSelector, popoverSelector) {
+  if (!(await page.locator(popoverSelector).evaluate(element => element && !element.hidden).catch(() => false))) {
+    await domClick(page, buttonSelector);
+  }
+  await page.locator(popoverSelector).waitFor({ state: 'visible', timeout: 5000 });
+  const width = await page.locator(popoverSelector).evaluate(element => Math.round(element.getBoundingClientRect().width));
+  await domClick(page, buttonSelector);
+  await page.waitForFunction((selector) => document.querySelector(selector)?.hidden === true, popoverSelector, { timeout: 5000 }).catch(() => {});
+  return width;
+}
+
+async function verifyTodoWorkspaceScope(page) {
+  await resetMainFilters(page);
+  await waitForReadyTodoNudge(page);
+  let allWorkspaceTodo = await readTodoNudge(page);
+  let fixture = null;
+  if (allWorkspaceTodo.hidden || !allWorkspaceTodo.workspaceKey) {
+    fixture = await installTodoScopeFixture(page);
+    if (!fixture) {
+      return {
+        跳过: '当前真实 todo 队列没有 ready nudge，且没有足够 workspace 生成临时可恢复 fixture。',
+        AllWorkspaces: allWorkspaceTodo,
+      };
+    }
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => document.body.dataset.lang === 'zh', null, { timeout: 10000 }).catch(() => {});
+    await resetMainFilters(page);
+    await waitForReadyTodoNudge(page, 'Realtest workspace-scoped ready todo', 10000);
+    allWorkspaceTodo = await readTodoNudge(page);
+  }
+
+  if (allWorkspaceTodo.hidden || !allWorkspaceTodo.workspaceKey) {
+    if (fixture) restoreTodoScopeFixture(fixture);
+    throw new Error('临时 todo fixture 写入后仍未显示 ready nudge。');
+  }
+
+  try {
+    await domClick(page, '#workspacePickerButton');
+    const workspaceKeys = await page.evaluate(() => Array.from(document.querySelectorAll('#workspacePickerOptions .workspace-picker-option'))
+      .map(option => option.dataset.workspaceKey || '')
+      .filter(Boolean));
+    await domClick(page, '#workspacePickerButton');
+
+    const todoWorkspaceSelectable = workspaceKeys.includes(allWorkspaceTodo.workspaceKey);
+    const otherWorkspaceKey = workspaceKeys.find(key => key !== allWorkspaceTodo.workspaceKey && key !== fixture?.targetKey)
+      || fixture?.otherKey
+      || workspaceKeys.find(key => key !== allWorkspaceTodo.workspaceKey);
+    if (!otherWorkspaceKey) {
+      return {
+        跳过: '当前只有 ready todo 所属 workspace，没有可对照的其它 workspace。',
+        AllWorkspaces: allWorkspaceTodo,
+        临时Fixture: fixture ? { 已使用: true, targetKey: fixture.targetKey } : { 已使用: false },
+      };
+    }
+
+    await selectWorkspaceFilter(page, otherWorkspaceKey);
+    await page.waitForFunction(() => document.querySelector('#todoNudge')?.hidden === true, null, { timeout: 10000 });
+    const otherWorkspaceTodo = await page.evaluate(() => ({
+      workspace: document.querySelector('#workspacePickerValue')?.textContent?.trim() || '',
+      hidden: document.querySelector('#todoNudge')?.hidden ?? false,
+    }));
+
+    let scopedWorkspaceTodo = {
+      跳过: 'ready todo 所属 workspace 当前不在主面板 workspace 下拉中，无法直接切回该 workspace。',
+      workspaceKey: allWorkspaceTodo.workspaceKey,
+    };
+    let selectedTodoWorkspace = '';
+    if (todoWorkspaceSelectable) {
+      await selectWorkspaceFilter(page, allWorkspaceTodo.workspaceKey);
+      await page.waitForFunction((workspaceKey) => {
+        const nudge = document.querySelector('#todoNudge');
+        const key = document.querySelector('#todoNudgeOpen')?.dataset.workspaceKey || '';
+        return nudge && !nudge.hidden && key === workspaceKey;
+      }, allWorkspaceTodo.workspaceKey, { timeout: 10000 });
+      scopedWorkspaceTodo = await readTodoNudge(page);
+      selectedTodoWorkspace = await page.locator('#workspacePickerValue').textContent().catch(() => '');
+    }
+
+    await selectWorkspaceFilter(page, '');
+    return {
+      AllWorkspaces: allWorkspaceTodo,
+      OtherWorkspace: otherWorkspaceTodo,
+      TodoWorkspace: {
+        ...scopedWorkspaceTodo,
+        workspace: selectedTodoWorkspace.trim(),
+      },
+      TodoWorkspaceSelectable: todoWorkspaceSelectable,
+      临时Fixture: fixture ? { 已使用: true, targetKey: fixture.targetKey, otherKey: fixture.otherKey } : { 已使用: false },
+    };
+  } finally {
+    if (fixture) {
+      restoreTodoScopeFixture(fixture);
+      await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+    }
+  }
+}
+
+async function readTodoNudge(page) {
+  return page.evaluate(() => ({
+    hidden: document.querySelector('#todoNudge')?.hidden ?? true,
+    title: document.querySelector('#todoNudgeTitle')?.textContent?.trim() || '',
+    task: document.querySelector('#todoNudgeTask')?.textContent?.trim() || '',
+    workspaceKey: document.querySelector('#todoNudgeOpen')?.dataset.workspaceKey || '',
+  }));
+}
+
+async function waitForReadyTodoNudge(page, taskTitle = '', timeout = 5000) {
+  await page.waitForFunction((expectedTitle) => {
+    const nudge = document.querySelector('#todoNudge');
+    const task = document.querySelector('#todoNudgeTask')?.textContent || '';
+    return nudge && !nudge.hidden && (!expectedTitle || task.includes(expectedTitle));
+  }, taskTitle, { timeout }).catch(() => {});
+}
+
+async function installTodoScopeFixture(page) {
+  const appData = process.env.APPDATA;
+  if (!appData) return null;
+  const todoFile = path.join(appData, 'AgentWatcher', 'todos.v1.json');
+  const backup = {
+    path: todoFile,
+    existed: fs.existsSync(todoFile),
+    text: fs.existsSync(todoFile) ? fs.readFileSync(todoFile, 'utf8') : '',
+  };
+  const original = backup.existed ? safeJsonParse(backup.text, { version: 1, workspaces: {} }) : { version: 1, workspaces: {} };
+  const state = JSON.parse(JSON.stringify(original && typeof original === 'object' ? original : { version: 1, workspaces: {} }));
+  state.version = 1;
+  state.workspaces = state.workspaces && typeof state.workspaces === 'object' ? state.workspaces : {};
+
+  const workspaces = await page.evaluate(() => {
+    const byKey = new Map();
+    document.querySelectorAll('.lane .session-card').forEach(card => {
+      const key = card.dataset.workspaceKey || '';
+      if (!key) return;
+      const existing = byKey.get(key) || {
+        key,
+        label: card.dataset.workspaceLabel || card.dataset.workspace || key,
+        path: card.dataset.workspacePath || '',
+        hasActiveSession: false,
+      };
+      existing.label = existing.label || card.dataset.workspaceLabel || card.dataset.workspace || key;
+      existing.path = existing.path || card.dataset.workspacePath || '';
+      existing.hasActiveSession = existing.hasActiveSession || ['waiting', 'running'].includes(card.dataset.status || '');
+      byKey.set(key, existing);
+    });
+    return [...byKey.values()];
+  });
+  const hasReady = (workspaceKey) => {
+    const tasks = state.workspaces?.[workspaceKey]?.tasks;
+    return Array.isArray(tasks) && tasks.some(task => task?.status === 'ready');
+  };
+  const canShowNudge = (workspace) => !workspace.hasActiveSession;
+  const target = workspaces.find(workspace => canShowNudge(workspace) && workspace.path && workspaces.some(other => other.key !== workspace.key && !hasReady(other.key)))
+    || workspaces.find(workspace => canShowNudge(workspace) && workspaces.some(other => other.key !== workspace.key && !hasReady(other.key)));
+  if (!target) return null;
+  const other = workspaces.find(workspace => workspace.key !== target.key && !hasReady(workspace.key))
+    || workspaces.find(workspace => workspace.key !== target.key);
+  if (!other) return null;
+
+  const fixtureTaskId = `realtest-filtering-ready-${runId}`;
+  for (const workspace of Object.values(state.workspaces)) {
+    if (Array.isArray(workspace?.tasks)) {
+      workspace.tasks = workspace.tasks.filter(task => task?.id !== fixtureTaskId);
+    }
+  }
+  const workspaceState = state.workspaces[target.key] || {
+    key: target.key,
+    label: target.label,
+    path: target.path,
+    tasks: [],
+  };
+  workspaceState.key = target.key;
+  workspaceState.label = target.label || workspaceState.label || target.key;
+  workspaceState.path = target.path || workspaceState.path || '';
+  workspaceState.tasks = Array.isArray(workspaceState.tasks) ? workspaceState.tasks : [];
+  workspaceState.tasks.unshift({
+    id: fixtureTaskId,
+    title: 'Realtest workspace-scoped ready todo',
+    description: 'Temporary task inserted by tauri-realtest filtering flow.',
+    acceptance: 'Todo nudge appears only for all workspaces or this workspace.',
+    status: 'ready',
+    order: 0,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    dispatches: [],
+  });
+  workspaceState.tasks.forEach((task, index) => { task.order = index; });
+  state.workspaces[target.key] = workspaceState;
+
+  fs.mkdirSync(path.dirname(todoFile), { recursive: true });
+  fs.writeFileSync(todoFile, JSON.stringify(state, null, 2), 'utf8');
+  return {
+    ...backup,
+    targetKey: target.key,
+    otherKey: other.key,
+    taskId: fixtureTaskId,
+  };
+}
+
+function restoreTodoScopeFixture(fixture) {
+  if (!fixture?.path) return;
+  if (fixture.existed) {
+    fs.mkdirSync(path.dirname(fixture.path), { recursive: true });
+    fs.writeFileSync(fixture.path, fixture.text, 'utf8');
+  } else if (fs.existsSync(fixture.path)) {
+    fs.rmSync(fixture.path, { force: true });
+  }
+}
+
+function safeJsonParse(text, fallback) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return fallback;
+  }
 }
 
 async function ensureFirstOpenCodeHandoffOpen(page) {

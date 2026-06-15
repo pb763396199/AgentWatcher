@@ -99,6 +99,7 @@
     body[data-theme="light"] .workspace-select,
     body[data-theme="light"] .workspace-picker-button,
     body[data-theme="light"] .workspace-picker-search input,
+    body[data-theme="light"] .session-search,
     body[data-theme="light"] .workspace-picker-option,
     body[data-theme="light"] .preset-btn,
     body[data-theme="light"] .title-tool,
@@ -587,16 +588,15 @@
     .watcher-body {
       height: calc(100% - 32px);
       display: grid;
-      grid-template-rows: 76px auto 40px 58px minmax(0, 1fr) 30px;
+      grid-template-rows: auto 40px minmax(0, 1fr) 30px;
       min-height: 0;
     }
 
-    .watcher-body > .app-header { grid-row: 1; }
-    .watcher-body > .todo-nudge { grid-row: 2; }
-    .watcher-body > .segmented { grid-row: 3; }
-    .watcher-body > .control-strip { grid-row: 4; }
-    .watcher-body > .queue-shell { grid-row: 5; }
-    .watcher-body > .status-row { grid-row: 6; }
+    .watcher-body > .app-header { display: none; }
+    .watcher-body > .control-strip { grid-row: 1; }
+    .watcher-body > .segmented { grid-row: 2; }
+    .watcher-body > .queue-shell { grid-row: 3; }
+    .watcher-body > .status-row { grid-row: 4; }
 
     body[data-layout="horizontal"] .watcher-window {
       left: 8px;
@@ -757,25 +757,62 @@
     }
 
     .control-strip {
+      --filter-label-width: 64px;
+      --filter-control-gap: 6px;
+      --filter-group-gap: 18px;
+      --filter-provider-label-width: 48px;
+      --workspace-popover-min-width: 280px;
+      --provider-popover-min-width: 220px;
       display: grid;
-      grid-template-rows: 27px 30px;
-      gap: 0;
-      padding: 4px 8px 6px;
+      grid-template-rows: 27px 27px 30px auto;
+      gap: 6px;
+      padding: 6px 8px;
       border-bottom: 1px solid var(--border);
       background: #202020;
     }
 
     .workspace-row,
-    .size-row {
+    .size-row,
+    .search-row {
       display: grid;
-      grid-template-columns: minmax(54px, 64px) minmax(0, 1fr);
+      grid-template-columns: var(--filter-label-width) var(--filter-control-gap) minmax(0, 1fr);
       align-items: center;
-      gap: 6px;
+      gap: 0;
       min-width: 0;
     }
 
     .workspace-row {
       position: relative;
+    }
+
+    .scope-row {
+      display: grid;
+      grid-template-columns:
+        var(--filter-label-width)
+        var(--filter-control-gap)
+        minmax(0, 1fr)
+        var(--filter-group-gap)
+        var(--filter-provider-label-width)
+        var(--filter-control-gap)
+        minmax(0, 1fr);
+      align-items: center;
+      gap: 0;
+      min-width: 0;
+    }
+
+    .scope-row #workspaceLabel { grid-column: 1; }
+    .scope-row #workspacePicker { grid-column: 3; }
+    .scope-row #providerFilterLabel { grid-column: 5; }
+    .scope-row #providerPicker { grid-column: 7; }
+    .search-row .control-label,
+    .size-row .control-label { grid-column: 1; }
+    .search-row .session-search,
+    .size-row .size-tools { grid-column: 3; }
+
+    .provider-label {
+      justify-self: end;
+      width: var(--filter-provider-label-width);
+      text-align: right;
     }
 
     .control-label {
@@ -788,7 +825,8 @@
 
     .workspace-select,
     .workspace-picker-button,
-    .workspace-picker-search input {
+    .workspace-picker-search input,
+    .session-search {
       width: 100%;
       height: 23px;
       min-width: 0;
@@ -798,6 +836,89 @@
       color: #dcdcdc;
       font: inherit;
       font-size: 11px;
+    }
+
+    .session-search {
+      padding: 0 7px;
+    }
+
+    .session-search:focus {
+      outline: none;
+      border-color: var(--focus);
+      background: rgba(14, 99, 156, 0.18);
+    }
+
+    .provider-picker .workspace-picker-popover { right: 0; left: auto; }
+
+    .provider-picker-option {
+      grid-template-columns: auto minmax(0, 1fr);
+      min-height: 34px;
+    }
+
+    .provider-picker-option > span:not(.provider-option-badge) {
+      min-width: 0;
+    }
+
+    .provider-option-badge {
+      width: 23px;
+      height: 23px;
+      border: 1px solid currentColor;
+      border-radius: 50%;
+      display: inline-grid;
+      place-items: center;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .provider-option-badge.all {
+      color: var(--muted);
+    }
+
+    .provider-option-badge.gh { color: #4ec9b0; }
+    .provider-option-badge.cl { color: #ce9178; }
+    .provider-option-badge.cx { color: #75beff; }
+    .provider-option-badge.oc { color: #d7ba7d; }
+
+    .session-empty-state {
+      min-height: 132px;
+      margin: 8px;
+      border: 1px dashed var(--border);
+      border-radius: 7px;
+      color: var(--muted);
+      display: grid;
+      place-items: center;
+      text-align: center;
+      padding: 14px;
+      font-size: 12px;
+    }
+
+    .session-empty-state[hidden] { display: none; }
+
+    .session-empty-state strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--text);
+      font-size: 13px;
+    }
+
+    .session-clear-filters {
+      height: 24px;
+      margin-top: 10px;
+      padding: 0 9px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: #252526;
+      color: var(--text);
+      cursor: pointer;
+      font: inherit;
+      font-size: 11px;
+    }
+
+    .session-clear-filters:hover,
+    .session-clear-filters:focus-visible {
+      outline: none;
+      border-color: var(--focus);
+      background: rgba(14, 99, 156, 0.25);
     }
 
     .workspace-picker {
@@ -842,12 +963,19 @@
       left: 0;
       right: 0;
       top: calc(100% + 4px);
+      width: max(100%, min(var(--workspace-popover-min-width), calc(100vw - 24px)));
+      min-width: min(var(--workspace-popover-min-width), calc(100vw - 24px));
       max-height: var(--workspace-picker-max-height, min(340px, calc(100vh - 180px)));
       overflow: hidden;
       border: 1px solid var(--border);
       border-radius: 6px;
       background: #1f1f1f;
       box-shadow: var(--shadow);
+    }
+
+    .provider-picker .workspace-picker-popover {
+      width: max(100%, min(var(--provider-popover-min-width), calc(100vw - 24px)));
+      min-width: min(var(--provider-popover-min-width), calc(100vw - 24px));
     }
 
     .workspace-picker-popover[hidden] {
@@ -2830,30 +2958,33 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 8px;
-      margin: 0 10px 8px;
-      padding: 8px 9px;
-      border: 1px solid var(--border);
-      border-radius: 7px;
-      background: var(--surface);
+      gap: 7px;
+      min-width: 0;
+      min-height: 28px;
+      margin: 0;
+      padding: 4px 7px 4px 9px;
+      border: 1px solid rgba(55, 148, 255, 0.35);
+      border-left: 2px solid var(--running);
+      border-radius: 5px;
+      background: rgba(55, 148, 255, 0.08);
     }
 
     .todo-nudge[hidden] { display: none; }
     .todo-nudge-text { min-width: 0; display: grid; gap: 1px; }
     .todo-nudge-title,
     .todo-nudge-task { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .todo-nudge-title { color: var(--muted); font-size: 11px; }
-    .todo-nudge-task { color: var(--text); font-size: 12px; font-weight: 700; }
+    .todo-nudge-title { color: var(--muted); font-size: 10px; line-height: 13px; }
+    .todo-nudge-task { color: var(--text); font-size: 11px; font-weight: 700; line-height: 14px; }
     .todo-nudge button {
-      height: 28px;
+      height: 22px;
       border: 1px solid var(--accent);
       border-radius: 5px;
       background: var(--focus);
       color: #ffffff;
-      padding: 0 9px;
+      padding: 0 7px;
       cursor: pointer;
       white-space: nowrap;
-      font-size: 11px;
+      font-size: 10px;
     }
 
     .todo-window {
@@ -3108,6 +3239,12 @@
     body[data-theme="light"] .todo-form,
     body[data-theme="light"] .todo-drag {
       background: #f8f8f8;
+    }
+
+    body[data-theme="light"] .todo-nudge {
+      border-color: rgba(0, 120, 212, 0.28);
+      border-left-color: #0078d4;
+      background: rgba(0, 120, 212, 0.08);
     }
 
     body[data-theme="light"] .todo-preview { color: #5c4f00; }
@@ -4888,23 +5025,8 @@
           <div class="urgent-chip" id="urgentChip">8 waiting</div>
         </section>
 
-        <section class="todo-nudge" id="todoNudge" hidden>
-          <div class="todo-nudge-text">
-            <span class="todo-nudge-title" id="todoNudgeTitle">Ready todo</span>
-            <span class="todo-nudge-task" id="todoNudgeTask"></span>
-          </div>
-          <button id="todoNudgeOpen" type="button" data-i18n="todoOpen">Open</button>
-        </section>
-
-        <nav class="segmented" aria-label="Session filters">
-          <button class="segment active" type="button" data-status="all">All 51</button>
-          <button class="segment" type="button" data-status="waiting">Wait 8</button>
-          <button class="segment" type="button" data-status="running">Run 12</button>
-          <button class="segment" type="button" data-status="idle">Idle 31</button>
-        </nav>
-
         <section class="control-strip" aria-label="Display controls">
-          <div class="workspace-row">
+          <div class="scope-row">
             <span class="control-label" id="workspaceLabel">Workspace</span>
             <div class="workspace-picker" id="workspacePicker">
               <button class="workspace-picker-button" id="workspacePickerButton" type="button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="workspaceLabel workspacePickerValue">
@@ -4916,6 +5038,20 @@
                 <div class="workspace-picker-options" id="workspacePickerOptions" role="listbox" aria-label="Workspace options"></div>
               </div>
             </div>
+            <span class="control-label provider-label" id="providerFilterLabel">Provider</span>
+            <div class="workspace-picker provider-picker" id="providerPicker">
+              <button class="workspace-picker-button" id="providerPickerButton" type="button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="providerFilterLabel providerPickerValue">
+                <span class="workspace-picker-value" id="providerPickerValue">All</span>
+                <span class="workspace-picker-caret" aria-hidden="true">v</span>
+              </button>
+              <div class="workspace-picker-popover provider-picker-popover" id="providerPickerPopover" hidden>
+                <div class="workspace-picker-options" id="providerPickerOptions" role="listbox" aria-label="Provider options"></div>
+              </div>
+            </div>
+          </div>
+          <div class="search-row">
+            <span class="control-label" id="sessionSearchLabel">Search</span>
+            <input class="session-search" id="sessionSearch" type="search" autocomplete="off" spellcheck="false" />
           </div>
           <div class="size-row">
             <span class="control-label" id="perRowLabel">Per row</span>
@@ -4925,7 +5061,21 @@
               <span class="size-value" id="sizeValue">2 cols</span>
             </div>
           </div>
+          <section class="todo-nudge" id="todoNudge" hidden>
+            <div class="todo-nudge-text">
+              <span class="todo-nudge-title" id="todoNudgeTitle">Ready todo</span>
+              <span class="todo-nudge-task" id="todoNudgeTask"></span>
+            </div>
+            <button id="todoNudgeOpen" type="button" data-i18n="todoOpen">Open</button>
+          </section>
         </section>
+
+        <nav class="segmented" aria-label="Session filters">
+          <button class="segment active" type="button" data-status="all">All 51</button>
+          <button class="segment" type="button" data-status="waiting">Wait 8</button>
+          <button class="segment" type="button" data-status="running">Run 12</button>
+          <button class="segment" type="button" data-status="idle">Idle 31</button>
+        </nav>
 
         <section class="queue-shell">
           <div class="queue-meta"><span><strong id="visibleNow">9</strong> <span id="visibleLabel">visible now</span></span><span><strong id="queueNow">42</strong> <span id="queueLabel">in scroll queue</span></span></div>
@@ -4971,6 +5121,13 @@
                 <button class="session-card idle" type="button" data-open="Buildings"><div class="card-head"><span class="provider gh">GH</span><span class="time">44m</span></div><div class="workspace">Buildings</div><div class="session-title">Archived</div><div class="card-foot"><span>Idle</span></div></button>
                 <button class="session-card idle" type="button" data-open="Traffic"><div class="card-head"><span class="provider cl">C</span><span class="time">52m</span></div><div class="workspace">Traffic</div><div class="session-title">Idle</div><div class="card-foot"><span>Idle</span></div></button>
                 <button class="session-card idle" type="button" data-open="Import"><div class="card-head"><span class="provider gh">GH</span><span class="time">1h</span></div><div class="workspace">Import</div><div class="session-title">No activity</div><div class="card-foot"><span>Idle</span></div></button>
+              </div>
+            </section>
+            <section class="session-empty-state" id="sessionEmptyState" hidden>
+              <div>
+                <strong id="sessionEmptyTitle">No sessions match these filters</strong>
+                <div id="sessionEmptyText">Clear provider, status, and search while keeping the workspace.</div>
+                <button class="session-clear-filters" id="clearSessionFilters" type="button">Clear filters</button>
               </div>
             </section>
           </div>
@@ -5350,6 +5507,18 @@
     const workspacePickerPopover = document.getElementById('workspacePickerPopover');
     const workspacePickerSearch = document.getElementById('workspacePickerSearch');
     const workspacePickerOptions = document.getElementById('workspacePickerOptions');
+    const providerFilterLabel = document.getElementById('providerFilterLabel');
+    const providerPicker = document.getElementById('providerPicker');
+    const providerPickerButton = document.getElementById('providerPickerButton');
+    const providerPickerValue = document.getElementById('providerPickerValue');
+    const providerPickerPopover = document.getElementById('providerPickerPopover');
+    const providerPickerOptions = document.getElementById('providerPickerOptions');
+    const sessionSearchLabel = document.getElementById('sessionSearchLabel');
+    const sessionSearch = document.getElementById('sessionSearch');
+    const sessionEmptyState = document.getElementById('sessionEmptyState');
+    const sessionEmptyTitle = document.getElementById('sessionEmptyTitle');
+    const sessionEmptyText = document.getElementById('sessionEmptyText');
+    const clearSessionFilters = document.getElementById('clearSessionFilters');
     const sizePreset = document.getElementById('sizePreset');
     const sizeRange = document.getElementById('sizeRange');
     const sizeValue = document.getElementById('sizeValue');
@@ -5522,6 +5691,9 @@
     const lanes = Array.from(document.querySelectorAll('.lane'));
     let logicalTotals = { all: 51, waiting: 8, running: 12, idle: 31 };
     let selectedWorkspaceKey = '';
+    let selectedProviderFilter = 'all';
+    let sessionSearchQuery = '';
+    let providerPointerToggleAt = 0;
     let handoffSourceCard = null;
     let handoffSourceSession = null;
     let handoffSourceContext = null;
@@ -5744,6 +5916,14 @@
     };
       Object.assign(i18n.en, {
         openWorkspace: 'Open workspace: ',
+        providerFilterLabel: 'Provider',
+        allProviders: 'All providers',
+        providerOptionsLabel: 'Provider options',
+        sessionSearchLabel: 'Search',
+        sessionSearchPlaceholder: 'Search task or session',
+        noFilteredSessionsTitle: 'No sessions match these filters',
+        noFilteredSessionsText: 'Clear provider, status, and search while keeping the workspace.',
+        clearFilters: 'Clear filters',
         includeCodex: 'Codex sessions',
         includeOpenCode: 'OpenCode sessions',
         handoffCodexLabel: 'Codex Desktop',
@@ -5899,6 +6079,14 @@
       });
       Object.assign(i18n.zh, {
         openWorkspace: '打开工作区：',
+        providerFilterLabel: '提供方',
+        allProviders: '全部提供方',
+        providerOptionsLabel: '提供方选项',
+        sessionSearchLabel: '搜索',
+        sessionSearchPlaceholder: '搜索任务或会话',
+        noFilteredSessionsTitle: '没有匹配当前筛选的会话',
+        noFilteredSessionsText: '清除提供方、状态和搜索，保留当前工作区。',
+        clearFilters: '清除筛选',
         includeCodex: 'Codex 会话',
         includeOpenCode: 'OpenCode 会话',
         handoffCodexLabel: 'Codex 桌面端',
@@ -6554,6 +6742,25 @@
         changed = true;
       }
       renumberTodoTasks(workspace.tasks);
+      const quietWorkspace = ensureTodoWorkspace(todoWorkspaceFromPath('C:/AgentWatcherMock/Nanite', 'Nanite'));
+      if (quietWorkspace) {
+        quietWorkspace.tasks = Array.isArray(quietWorkspace.tasks) ? quietWorkspace.tasks : [];
+        if (!quietWorkspace.tasks.some(task => task.id === 'demo-quiet-ready')) {
+          quietWorkspace.tasks.push({
+            id: 'demo-quiet-ready',
+            title: 'Prepare release checklist',
+            description: 'Demo todo for validating workspace-scoped nudge behavior.',
+            acceptance: 'The nudge appears only for All workspaces or the Nanite workspace.',
+            status: 'ready',
+            order: quietWorkspace.tasks.length,
+            createdAt: Date.now() - 15 * 60_000,
+            updatedAt: Date.now() - 12 * 60_000,
+            dispatches: []
+          });
+          renumberTodoTasks(quietWorkspace.tasks);
+          changed = true;
+        }
+      }
       return changed;
     }
 
@@ -8814,8 +9021,8 @@
 
     function todoNudgeCandidate() {
       const items = todoWorkspaceItems();
-      const selectedFirst = selectedWorkspaceKey ? items.filter(item => item.key === selectedWorkspaceKey) : [];
-      for (const item of [...selectedFirst, ...items]) {
+      const scopedItems = selectedWorkspaceKey ? items.filter(item => item.key === selectedWorkspaceKey) : items;
+      for (const item of scopedItems) {
         const task = nextReadyTodo(item.key);
         if (task && !workspaceHasActiveSession(item.key)) return { workspace: item, task };
       }
@@ -10953,37 +11160,15 @@
     }
 
     async function nativeHandoffWindowPosition() {
-      if (!tauriWindow) return { x: 80, y: 80 };
-      const [windowPosition, windowSize, scaleFactor] = await Promise.all([
-        tauriWindow.outerPosition(),
-        tauriWindow.outerSize(),
-        tauriWindow.scaleFactor()
-      ]);
+      return nativeSidePanelWindowPosition(HANDOFF_WINDOW_DEFAULT_SIZE.width, HANDOFF_WINDOW_DEFAULT_SIZE.height);
+    }
 
-      const monitor = await tauriCurrentMonitor?.().catch(() => null);
-      const scale = monitor?.scaleFactor || scaleFactor || window.devicePixelRatio || 1;
-      const screenLeft = (monitor?.position?.x ?? Math.round((window.screen.availLeft || 0) * scale)) / scale;
-      const screenTop = (monitor?.position?.y ?? Math.round((window.screen.availTop || 0) * scale)) / scale;
-      const screenWidth = (monitor?.size?.width ?? Math.round((window.screen.availWidth || window.innerWidth || HANDOFF_WINDOW_DEFAULT_SIZE.width) * scale)) / scale;
-      const screenHeight = (monitor?.size?.height ?? Math.round((window.screen.availHeight || window.innerHeight || HANDOFF_WINDOW_DEFAULT_SIZE.height) * scale)) / scale;
-      const margin = 8;
-      const gap = 12;
-      const panelWidth = HANDOFF_WINDOW_DEFAULT_SIZE.width;
-      const panelHeight = HANDOFF_WINDOW_DEFAULT_SIZE.height;
-      const mainLeft = windowPosition.x / scaleFactor;
-      const mainTop = windowPosition.y / scaleFactor;
-      const mainWidth = windowSize.width / scaleFactor;
-      const maxX = Math.max(screenLeft + margin, screenLeft + screenWidth - panelWidth - margin);
-      const maxY = Math.max(screenTop + margin, screenTop + screenHeight - panelHeight - margin);
-
-      let x = mainLeft + mainWidth + gap;
-      if (x > maxX) x = mainLeft - panelWidth - gap;
-      if (x < screenLeft + margin || x > maxX) x = mainLeft + 24;
-
-      return {
-        x: Math.round(Math.max(screenLeft + margin, Math.min(x, maxX))),
-        y: Math.round(Math.max(screenTop + margin, Math.min(mainTop + 24, maxY)))
-      };
+    function scheduleNativeRevealFallback(revealFn, delays = [650, 1400]) {
+      delays.forEach(delay => {
+        window.setTimeout(() => {
+          revealFn().catch(() => {});
+        }, delay);
+      });
     }
 
     async function showNativeHandoffPanel() {
@@ -10993,19 +11178,14 @@
         const position = await nativeHandoffWindowPosition();
         const payload = publishHandoffData();
         handoffWindowDesiredVisible = true;
-        const existing = nativeHandoffWindow || await WebviewWindowClass.getByLabel('handoff-panel');
+        const existing = await usableNativeWindow('handoff-panel', nativeHandoffWindow);
         if (existing) {
-          nativeHandoffWindow = existing;
-          await existing.setSize(new LogicalSizeClass(HANDOFF_WINDOW_DEFAULT_SIZE.width, HANDOFF_WINDOW_DEFAULT_SIZE.height)).catch(() => {});
-          await existing.setPosition(new LogicalPositionClass(position.x, position.y)).catch(() => {});
-          emitRuntimeSettings('handoff-panel');
-          await tauriEmitTo?.('handoff-panel', 'agentwatcher-handoff-data', payload).catch(() => {});
-          await existing.show().catch(() => {});
-          await existing.setFocus().catch(() => {});
+          await revealNativeHandoffWindow(existing);
           return true;
         }
 
         createNativeHandoffWindow(position, true);
+        scheduleNativeRevealFallback(() => revealNativeHandoffWindow(), [700, 1600]);
         return true;
       } catch (error) {
         showToast(String(error));
@@ -11022,40 +11202,67 @@
       }
     }
 
-    async function nativeTodoWindowPosition() {
-      if (!tauriWindow) return { x: 80, y: 80 };
-      const [windowPosition, windowSize, scaleFactor] = await Promise.all([
-        tauriWindow.outerPosition(),
-        tauriWindow.outerSize(),
-        tauriWindow.scaleFactor()
-      ]);
-
-      const monitor = await tauriCurrentMonitor?.().catch(() => null);
-      const scale = monitor?.scaleFactor || scaleFactor || window.devicePixelRatio || 1;
-      const screenLeft = (monitor?.position?.x ?? Math.round((window.screen.availLeft || 0) * scale)) / scale;
-      const screenTop = (monitor?.position?.y ?? Math.round((window.screen.availTop || 0) * scale)) / scale;
-      const screenWidth = (monitor?.size?.width ?? Math.round((window.screen.availWidth || window.innerWidth || TODO_WINDOW_DEFAULT_SIZE.width) * scale)) / scale;
-      const screenHeight = (monitor?.size?.height ?? Math.round((window.screen.availHeight || window.innerHeight || TODO_WINDOW_DEFAULT_SIZE.height) * scale)) / scale;
-      const margin = 8;
-      const gap = 12;
-      const panelWidth = TODO_WINDOW_DEFAULT_SIZE.width;
-      const panelHeight = TODO_WINDOW_DEFAULT_SIZE.height;
-      const mainLeft = windowPosition.x / scaleFactor;
-      const mainTop = windowPosition.y / scaleFactor;
-      const mainWidth = windowSize.width / scaleFactor;
-      const maxX = Math.max(screenLeft + margin, screenLeft + screenWidth - panelWidth - margin);
-      const maxY = Math.max(screenTop + margin, screenTop + screenHeight - panelHeight - margin);
-      let x = mainLeft + mainWidth + gap;
-      if (x > maxX) x = mainLeft - panelWidth - gap;
-      if (x < screenLeft + margin || x > maxX) x = mainLeft + 24;
+    function childWindowPositionFromPhysical(physicalX, physicalY, scale) {
+      const safeScale = Number(scale) > 0 ? Number(scale) : 1;
+      const roundedPhysicalX = Math.round(Number(physicalX) || 0);
+      const roundedPhysicalY = Math.round(Number(physicalY) || 0);
       return {
-        x: Math.round(Math.max(screenLeft + margin, Math.min(x, maxX))),
-        y: Math.round(Math.max(screenTop + margin, Math.min(mainTop + 24, maxY)))
+        x: Math.round(roundedPhysicalX / safeScale),
+        y: Math.round(roundedPhysicalY / safeScale),
+        physicalX: roundedPhysicalX,
+        physicalY: roundedPhysicalY,
+        scale: safeScale
       };
     }
 
-    async function nativePerformanceWindowPosition() {
-      if (!tauriWindow) return { x: 96, y: 96 };
+    function fallbackMonitorWorkAreaPhysical(scale, width, height) {
+      const safeScale = Number(scale) > 0 ? Number(scale) : 1;
+      return {
+        x: Math.round((window.screen.availLeft || 0) * safeScale),
+        y: Math.round((window.screen.availTop || 0) * safeScale),
+        width: Math.round((window.screen.availWidth || window.innerWidth || width) * safeScale),
+        height: Math.round((window.screen.availHeight || window.innerHeight || height) * safeScale)
+      };
+    }
+
+    function monitorWorkAreaPhysical(monitor, scale, fallbackWidth, fallbackHeight) {
+      if (!monitor) return fallbackMonitorWorkAreaPhysical(scale, fallbackWidth, fallbackHeight);
+      const area = monitor.workArea || monitor;
+      const position = area.position || monitor.position || {};
+      const size = area.size || monitor.size || {};
+      return {
+        x: Math.round(Number(position.x) || 0),
+        y: Math.round(Number(position.y) || 0),
+        width: Math.round(Number(size.width) || fallbackWidth * scale),
+        height: Math.round(Number(size.height) || fallbackHeight * scale)
+      };
+    }
+
+    async function setNativeWindowPhysicalPosition(windowRef, position) {
+      if (!windowRef || !position) return;
+      if (PhysicalPositionClass && Number.isFinite(position.physicalX) && Number.isFinite(position.physicalY)) {
+        await windowRef.setPosition(new PhysicalPositionClass(position.physicalX, position.physicalY)).catch(() => {});
+        return;
+      }
+      if (LogicalPositionClass) {
+        await windowRef.setPosition(new LogicalPositionClass(position.x, position.y)).catch(() => {});
+      }
+    }
+
+    async function usableNativeWindow(label, candidate = null) {
+      if (candidate) {
+        try {
+          await candidate.outerPosition();
+          return candidate;
+        } catch (error) {
+          // Native child windows can be closed outside this page while the JS handle survives.
+        }
+      }
+      return WebviewWindowClass ? await WebviewWindowClass.getByLabel(label).catch(() => null) : null;
+    }
+
+    async function nativeSidePanelWindowPosition(panelWidth, panelHeight, fallback = { x: 80, y: 80 }) {
+      if (!tauriWindow) return childWindowPositionFromPhysical(fallback.x, fallback.y, 1);
       const [windowPosition, windowSize, scaleFactor] = await Promise.all([
         tauriWindow.outerPosition(),
         tauriWindow.outerSize(),
@@ -11064,38 +11271,111 @@
 
       const monitor = await tauriCurrentMonitor?.().catch(() => null);
       const scale = monitor?.scaleFactor || scaleFactor || window.devicePixelRatio || 1;
-      const screenLeft = (monitor?.position?.x ?? Math.round((window.screen.availLeft || 0) * scale)) / scale;
-      const screenTop = (monitor?.position?.y ?? Math.round((window.screen.availTop || 0) * scale)) / scale;
-      const screenWidth = (monitor?.size?.width ?? Math.round((window.screen.availWidth || window.innerWidth || PERFORMANCE_PANEL_DEFAULT_SIZE.width) * scale)) / scale;
-      const screenHeight = (monitor?.size?.height ?? Math.round((window.screen.availHeight || window.innerHeight || PERFORMANCE_PANEL_DEFAULT_SIZE.height) * scale)) / scale;
-      const margin = 8;
-      const gap = 12;
-      const panelWidth = PERFORMANCE_PANEL_DEFAULT_SIZE.width;
-      const panelHeight = PERFORMANCE_PANEL_DEFAULT_SIZE.height;
-      const mainLeft = windowPosition.x / scaleFactor;
-      const mainTop = windowPosition.y / scaleFactor;
-      const mainWidth = windowSize.width / scaleFactor;
-      const maxX = Math.max(screenLeft + margin, screenLeft + screenWidth - panelWidth - margin);
-      const maxY = Math.max(screenTop + margin, screenTop + screenHeight - panelHeight - margin);
+      const workArea = monitorWorkAreaPhysical(monitor, scale, panelWidth, panelHeight);
+      const margin = Math.round(8 * scale);
+      const gap = Math.round(12 * scale);
+      const panelPhysicalWidth = Math.round(panelWidth * scale);
+      const panelPhysicalHeight = Math.round(panelHeight * scale);
+      const mainLeft = Math.round(Number(windowPosition.x) || 0);
+      const mainTop = Math.round(Number(windowPosition.y) || 0);
+      const mainWidth = Math.round(Number(windowSize.width) || 0);
+      const maxX = Math.max(workArea.x + margin, workArea.x + workArea.width - panelPhysicalWidth - margin);
+      const maxY = Math.max(workArea.y + margin, workArea.y + workArea.height - panelPhysicalHeight - margin);
       let x = mainLeft + mainWidth + gap;
-      if (x > maxX) x = mainLeft - panelWidth - gap;
-      if (x < screenLeft + margin || x > maxX) x = mainLeft + 24;
-      return {
-        x: Math.round(Math.max(screenLeft + margin, Math.min(x, maxX))),
-        y: Math.round(Math.max(screenTop + margin, Math.min(mainTop + 24, maxY)))
-      };
+      if (x > maxX) x = mainLeft - panelPhysicalWidth - gap;
+      if (x < workArea.x + margin || x > maxX) x = mainLeft + Math.round(24 * scale);
+      const y = mainTop + Math.round(24 * scale);
+      return childWindowPositionFromPhysical(
+        Math.max(workArea.x + margin, Math.min(x, maxX)),
+        Math.max(workArea.y + margin, Math.min(y, maxY)),
+        scale
+      );
+    }
+
+    async function nativeTodoWindowPosition() {
+      return nativeSidePanelWindowPosition(TODO_WINDOW_DEFAULT_SIZE.width, TODO_WINDOW_DEFAULT_SIZE.height);
+    }
+
+    async function nativePerformanceWindowPosition() {
+      return nativeSidePanelWindowPosition(PERFORMANCE_PANEL_DEFAULT_SIZE.width, PERFORMANCE_PANEL_DEFAULT_SIZE.height, { x: 96, y: 96 });
+    }
+
+    async function revealNativeHandoffWindow(existing = null) {
+      if (!WebviewWindowClass || !handoffWindowDesiredVisible) return false;
+      const windowRef = await usableNativeWindow('handoff-panel', existing || nativeHandoffWindow);
+      if (!windowRef) return false;
+      nativeHandoffWindow = windowRef;
+      const position = await nativeHandoffWindowPosition().catch(() => null);
+      if (LogicalSizeClass) await windowRef.setSize(new LogicalSizeClass(HANDOFF_WINDOW_DEFAULT_SIZE.width, HANDOFF_WINDOW_DEFAULT_SIZE.height)).catch(() => {});
+      if (position) await setNativeWindowPhysicalPosition(windowRef, position);
+      emitRuntimeSettings('handoff-panel');
+      if (latestHandoffPayload) {
+        await tauriEmitTo?.('handoff-panel', 'agentwatcher-handoff-data', latestHandoffPayload).catch(() => {});
+      }
+      await windowRef.show().catch(() => {});
+      await windowRef.setFocus().catch(() => {});
+      return true;
+    }
+
+    async function revealNativePerformanceWindow(existing = null) {
+      if (!WebviewWindowClass || !performanceWindowDesiredVisible) return false;
+      const windowRef = await usableNativeWindow('performance-panel', existing || nativePerformanceWindow);
+      if (!windowRef) return false;
+      nativePerformanceWindow = windowRef;
+      const position = await nativePerformanceWindowPosition().catch(() => null);
+      if (LogicalSizeClass) await windowRef.setSize(new LogicalSizeClass(PERFORMANCE_PANEL_DEFAULT_SIZE.width, PERFORMANCE_PANEL_DEFAULT_SIZE.height)).catch(() => {});
+      if (position) await setNativeWindowPhysicalPosition(windowRef, position);
+      emitRuntimeSettings('performance-panel');
+      publishPerformanceFrontendData('performance-panel');
+      await windowRef.show().catch(() => {});
+      await windowRef.setFocus().catch(() => {});
+      return true;
+    }
+
+    async function revealNativeTodoWindow(existing = null) {
+      if (!WebviewWindowClass || !todoWindowDesiredVisible) return false;
+      const windowRef = await usableNativeWindow('todo-panel', existing || nativeTodoWindow);
+      if (!windowRef) return false;
+      nativeTodoWindow = windowRef;
+      const position = await nativeTodoWindowPosition().catch(() => null);
+      if (LogicalSizeClass) await windowRef.setSize(new LogicalSizeClass(TODO_WINDOW_DEFAULT_SIZE.width, TODO_WINDOW_DEFAULT_SIZE.height)).catch(() => {});
+      if (position) await setNativeWindowPhysicalPosition(windowRef, position);
+      emitRuntimeSettings('todo-panel');
+      await tauriEmitTo?.('todo-panel', 'agentwatcher-todo-state-data', todoState).catch(() => {});
+      if (selectedTodoWorkspaceKey) {
+        await tauriEmitTo?.('todo-panel', 'agentwatcher-todo-select-workspace', { workspaceKey: selectedTodoWorkspaceKey }).catch(() => {});
+      }
+      await windowRef.show().catch(() => {});
+      await windowRef.setFocus().catch(() => {});
+      return true;
+    }
+
+    async function revealNativeSessionPreviewWindow(existing = null, requestId = sessionPreviewRequestId) {
+      if (!WebviewWindowClass || !sessionPreviewDesiredVisible || requestId !== sessionPreviewRequestId) return false;
+      const windowRef = await usableNativeWindow('session-preview', existing || nativePreviewWindow);
+      if (!windowRef) return false;
+      nativePreviewWindow = windowRef;
+      await placeNativeSessionPreview(windowRef).catch(() => {});
+      emitRuntimeSettings('session-preview');
+      if (latestSessionPreviewData) {
+        await tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', latestSessionPreviewData).catch(() => {});
+      }
+      if (!sessionPreviewDesiredVisible || requestId !== sessionPreviewRequestId) {
+        await windowRef.hide().catch(() => {});
+        return true;
+      }
+      await windowRef.show().catch(() => {});
+      scheduleNativeSessionPreviewSettle(requestId);
+      return true;
     }
 
     async function showNativePerformanceWindow() {
       if (!WebviewWindowClass || isPerformanceWindow) return false;
       performanceWindowDesiredVisible = true;
       const position = await nativePerformanceWindowPosition();
-      const existing = nativePerformanceWindow || await WebviewWindowClass.getByLabel('performance-panel');
+      const existing = await usableNativeWindow('performance-panel', nativePerformanceWindow);
       if (existing) {
-        nativePerformanceWindow = existing;
-        emitRuntimeSettings('performance-panel');
-        await existing.show().catch(() => {});
-        await existing.setFocus().catch(() => {});
+        await revealNativePerformanceWindow(existing);
         return true;
       }
 
@@ -11121,7 +11401,8 @@
       nativePerformanceWindow.once('tauri://destroyed', () => { nativePerformanceWindow = null; });
       nativePerformanceWindow.once('tauri://error', () => { nativePerformanceWindow = null; });
       nativePerformanceWindow.once('tauri://created', () => {
-        nativePerformanceWindow?.setPosition(new LogicalPositionClass(position.x, position.y)).catch(() => {});
+        setNativeWindowPhysicalPosition(nativePerformanceWindow, position);
+        scheduleNativeRevealFallback(() => revealNativePerformanceWindow(), [420, 1200]);
       });
       return true;
     }
@@ -11139,18 +11420,9 @@
       try {
         const position = await nativeTodoWindowPosition();
         todoWindowDesiredVisible = true;
-        const existing = nativeTodoWindow || await WebviewWindowClass.getByLabel('todo-panel');
+        const existing = await usableNativeWindow('todo-panel', nativeTodoWindow);
         if (existing) {
-          nativeTodoWindow = existing;
-          await existing.setSize(new LogicalSizeClass(TODO_WINDOW_DEFAULT_SIZE.width, TODO_WINDOW_DEFAULT_SIZE.height)).catch(() => {});
-          await existing.setPosition(new LogicalPositionClass(position.x, position.y)).catch(() => {});
-          emitRuntimeSettings('todo-panel');
-          await tauriEmitTo?.('todo-panel', 'agentwatcher-todo-state-data', todoState).catch(() => {});
-          if (selectedTodoWorkspaceKey) {
-            await tauriEmitTo?.('todo-panel', 'agentwatcher-todo-select-workspace', { workspaceKey: selectedTodoWorkspaceKey }).catch(() => {});
-          }
-          await existing.show().catch(() => {});
-          await existing.setFocus().catch(() => {});
+          await revealNativeTodoWindow(existing);
           return true;
         }
 
@@ -11176,7 +11448,8 @@
         nativeTodoWindow.once('tauri://destroyed', () => { nativeTodoWindow = null; });
         nativeTodoWindow.once('tauri://error', () => { nativeTodoWindow = null; });
         nativeTodoWindow.once('tauri://created', () => {
-          nativeTodoWindow?.setPosition(new LogicalPositionClass(position.x, position.y)).catch(() => {});
+          setNativeWindowPhysicalPosition(nativeTodoWindow, position);
+          scheduleNativeRevealFallback(() => revealNativeTodoWindow(), [500, 1300]);
         });
         return true;
       } catch (error) {
@@ -11340,15 +11613,16 @@
       nativeHandoffWindow.once('tauri://destroyed', () => { nativeHandoffWindow = null; });
       nativeHandoffWindow.once('tauri://error', () => { nativeHandoffWindow = null; });
       nativeHandoffWindow.once('tauri://created', () => {
-        nativeHandoffWindow?.setPosition(new LogicalPositionClass(position.x, position.y)).catch(() => {});
+        setNativeWindowPhysicalPosition(nativeHandoffWindow, position);
+        if (focus) scheduleNativeRevealFallback(() => revealNativeHandoffWindow(), [700, 1600]);
       });
     }
 
     async function prewarmNativeHandoffWindow() {
-      if (!WebviewWindowClass || isHandoffWindow || nativeHandoffWindow) return;
+      if (!WebviewWindowClass || isHandoffWindow) return;
 
       try {
-        const existing = await WebviewWindowClass.getByLabel('handoff-panel');
+        const existing = await usableNativeWindow('handoff-panel', nativeHandoffWindow);
         if (existing) {
           nativeHandoffWindow = existing;
           return;
@@ -11568,10 +11842,30 @@
       window.addEventListener('pointercancel', stopResize);
     }
 
+    function normalizedSessionSearchQuery() {
+      return sessionSearchQuery.trim().toLowerCase();
+    }
+
+    function cardProvider(card) {
+      return card.dataset.provider || providerMeta(cardText(card, '.provider')).provider;
+    }
+
+    function cardMatchesBaseFilters(card, workspaceKey = selectedWorkspaceKey) {
+      if (workspaceKey && card.dataset.workspaceKey !== workspaceKey) return false;
+      if (selectedProviderFilter !== 'all' && cardProvider(card) !== selectedProviderFilter) return false;
+      const query = normalizedSessionSearchQuery();
+      if (!query) return true;
+      return (card.dataset.sessionTitle || cardText(card, '.session-title') || '').toLowerCase().includes(query);
+    }
+
+    function cardMatchesAllFilters(card, status = activeStatus()) {
+      if (!cardMatchesBaseFilters(card)) return false;
+      return status === 'all' || cardStatus(card) === status;
+    }
+
     function scopedSessionTotals(workspaceKey = selectedWorkspaceKey) {
-      if (!workspaceKey) return logicalTotals;
       return cards.reduce((totals, card) => {
-        if (card.dataset.workspaceKey !== workspaceKey) return totals;
+        if (!cardMatchesBaseFilters(card, workspaceKey)) return totals;
         const status = cardStatus(card);
         totals[status] += 1;
         totals.all += 1;
@@ -11584,6 +11878,123 @@
       document.querySelector('.segment[data-status="waiting"]').textContent = t('wait') + ' ' + totals.waiting;
       document.querySelector('.segment[data-status="running"]').textContent = t('run') + ' ' + totals.running;
       document.querySelector('.segment[data-status="idle"]').textContent = t('idle') + ' ' + totals.idle;
+    }
+
+    function providerFilterText(provider) {
+      if (provider === 'all') return t('allProviders');
+      return providerMeta(provider).label;
+    }
+
+    function providerFilterName(provider) {
+      if (provider === 'all') return t('allProviders');
+      const meta = providerMeta(provider);
+      return t(meta.nameKey) || meta.label;
+    }
+
+    function providerFilterItems() {
+      return ['all', 'copilot', 'claude', 'codex', 'opencode'].map(provider => {
+        if (provider === 'all') {
+          return {
+            provider,
+            label: currentLang === 'zh' ? '全' : 'All',
+            name: t('allProviders'),
+            className: 'all'
+          };
+        }
+        const meta = providerMeta(provider);
+        return {
+          provider,
+          label: meta.label,
+          name: t(meta.nameKey) || meta.label,
+          className: meta.className
+        };
+      });
+    }
+
+    function updateProviderPickerLabel() {
+      if (!providerPickerValue || !providerPickerButton) return;
+      const selected = providerFilterItems().find(item => item.provider === selectedProviderFilter) || providerFilterItems()[0];
+      providerPickerValue.textContent = selected.name;
+      providerPickerButton.title = selected.name;
+      providerPickerButton.setAttribute('aria-expanded', providerPickerPopover?.hidden ? 'false' : 'true');
+    }
+
+    function createProviderOption(item, active) {
+      const option = document.createElement('button');
+      option.className = 'workspace-picker-option provider-picker-option' + (active ? ' is-active' : '');
+      option.type = 'button';
+      option.dataset.provider = item.provider;
+      option.setAttribute('role', 'option');
+      option.setAttribute('aria-selected', active ? 'true' : 'false');
+      option.title = item.name;
+      const selectOption = event => {
+        event.preventDefault();
+        event.stopPropagation();
+        chooseProvider(item.provider);
+      };
+      option.addEventListener('pointerdown', selectOption);
+      option.addEventListener('mousedown', selectOption);
+      option.addEventListener('click', selectOption);
+
+      appendText(option, 'span', 'provider-option-badge ' + item.className, item.label);
+      const textGroup = document.createElement('span');
+      appendText(textGroup, 'span', 'workspace-option-title', item.name);
+      option.appendChild(textGroup);
+      return option;
+    }
+
+    function renderProviderOptions() {
+      if (!providerPickerOptions) return;
+      providerPickerOptions.replaceChildren();
+      providerFilterItems().forEach(item => {
+        providerPickerOptions.appendChild(createProviderOption(item, item.provider === selectedProviderFilter));
+      });
+    }
+
+    function updateProviderPickerGeometry() {
+      if (!providerPickerButton || !providerPickerPopover || !providerPickerOptions) return;
+      const buttonRect = providerPickerButton.getBoundingClientRect();
+      const availableHeight = Math.max(130, window.innerHeight - buttonRect.bottom - 12);
+      const popoverHeight = Math.min(220, availableHeight);
+      providerPickerPopover.style.setProperty('--workspace-picker-max-height', popoverHeight + 'px');
+      providerPickerOptions.style.setProperty('--workspace-picker-options-max-height', Math.max(96, popoverHeight) + 'px');
+    }
+
+    function openProviderPicker() {
+      if (!providerPickerPopover || !providerPickerButton) return;
+      closeWorkspacePicker();
+      updateProviderPickerGeometry();
+      renderProviderOptions();
+      providerPickerPopover.hidden = false;
+      providerPickerButton.setAttribute('aria-expanded', 'true');
+    }
+
+    function closeProviderPicker() {
+      if (!providerPickerPopover || !providerPickerButton) return;
+      providerPickerPopover.hidden = true;
+      providerPickerButton.setAttribute('aria-expanded', 'false');
+    }
+
+    function chooseProvider(provider) {
+      selectedProviderFilter = provider || 'all';
+      updateProviderPickerLabel();
+      closeProviderPicker();
+      applyFilters();
+    }
+
+    function updateProviderFilterLabels() {
+      updateProviderPickerLabel();
+      if (providerPickerPopover && !providerPickerPopover.hidden) renderProviderOptions();
+    }
+
+    function clearNonWorkspaceSessionFilters() {
+      selectedProviderFilter = 'all';
+      sessionSearchQuery = '';
+      document.querySelectorAll('.segment[data-status]').forEach(segment => {
+        segment.classList.toggle('active', segment.dataset.status === 'all');
+      });
+      if (sessionSearch) sessionSearch.value = '';
+      applyFilters();
     }
 
     function updateWorkspacePickerLabel() {
@@ -11656,6 +12067,14 @@
       urgentChip.textContent = waitingChipText();
       workspaceLabel.textContent = t('workspace');
       workspacePickerSearch.placeholder = t('workspaceSearchPlaceholder');
+      if (providerFilterLabel) providerFilterLabel.textContent = t('providerFilterLabel');
+      if (providerPickerOptions) providerPickerOptions.setAttribute('aria-label', t('providerOptionsLabel'));
+      if (sessionSearchLabel) sessionSearchLabel.textContent = t('sessionSearchLabel');
+      if (sessionSearch) sessionSearch.placeholder = t('sessionSearchPlaceholder');
+      if (sessionEmptyTitle) sessionEmptyTitle.textContent = t('noFilteredSessionsTitle');
+      if (sessionEmptyText) sessionEmptyText.textContent = t('noFilteredSessionsText');
+      if (clearSessionFilters) clearSessionFilters.textContent = t('clearFilters');
+      updateProviderFilterLabels();
       applyStaticI18n();
       handoffWorkspaceInput.placeholder = t('handoffWorkspacePlaceholder');
       handoffTask.placeholder = t('handoffTaskPlaceholder');
@@ -11668,7 +12087,7 @@
       if (agentTaskDetailDescription) agentTaskDetailDescription.placeholder = t('todoDescriptionPlaceholder');
       if (agentTaskDetailAcceptance) agentTaskDetailAcceptance.placeholder = t('todoAcceptancePlaceholder');
       if (todoNudgeTitle) todoNudgeTitle.textContent = t('todoNudgeReady');
-      if (todoNudgeOpen) todoNudgeOpen.textContent = t('todoOpen');
+      if (todoNudgeOpen) todoNudgeOpen.textContent = t('todoInspect');
       if (todoClose) {
         todoClose.setAttribute('aria-label', t('todoClosePanel'));
         todoClose.title = t('todoClosePanel');
@@ -12072,21 +12491,19 @@
       const selectedWorkspaceLabel = selectedWorkspaceItem?.label || '';
       const selectedStatus = activeStatus();
       const scopedTotals = scopedSessionTotals(selectedWorkspace);
+      const visibleByStatus = { waiting: 0, running: 0, idle: 0 };
 
       cards.forEach(card => {
-        const workspace = card.dataset.workspaceKey;
         const status = cardStatus(card);
-        const matchesWorkspace = !selectedWorkspace || workspace === selectedWorkspace;
-        const matchesStatus = selectedStatus === 'all' || selectedStatus === status;
-        const shouldShow = matchesWorkspace && matchesStatus;
+        const shouldShow = cardMatchesAllFilters(card, selectedStatus);
         card.hidden = !shouldShow;
+        if (shouldShow) visibleByStatus[status] += 1;
       });
 
       lanes.forEach(lane => {
         const status = lane.dataset.status;
-        const laneTotal = scopedTotals[status] || 0;
         const laneAllowed = selectedStatus === 'all' || selectedStatus === status;
-        const count = laneAllowed ? laneTotal : 0;
+        const count = laneAllowed ? visibleByStatus[status] || 0 : 0;
         lane.querySelector('.lane-count').textContent = String(count);
         lane.classList.toggle('is-hidden', count === 0);
       });
@@ -12096,12 +12513,19 @@
       const queueCount = Math.max(0, logicalTotal - visibleCount);
 
       updateSegmentLabels(scopedTotals);
+      updateProviderFilterLabels();
       visibleNow.textContent = String(visibleCount);
       queueNow.textContent = String(queueCount);
       sessionTotal.textContent = String(logicalTotal);
       appTitle.textContent = selectedWorkspaceLabel || t('allSessions');
       appSubtitle.textContent = selectedWorkspace ? t('filterActive') : workspaceCountText();
-      filterState.textContent = selectedWorkspace ? t('workspacePrefix') + selectedWorkspaceLabel : updatedText();
+      const filterParts = [];
+      if (selectedWorkspace) filterParts.push(t('workspacePrefix') + selectedWorkspaceLabel);
+      if (selectedProviderFilter !== 'all') filterParts.push(providerFilterName(selectedProviderFilter));
+      if (selectedStatus !== 'all') filterParts.push(statusText(selectedStatus));
+      if (normalizedSessionSearchQuery()) filterParts.push('"' + sessionSearchQuery.trim() + '"');
+      filterState.textContent = filterParts.length ? filterParts.join(' / ') : updatedText();
+      if (sessionEmptyState) sessionEmptyState.hidden = logicalTotal !== 0;
       if (!options.preserveScroll) sessionScroll.scrollTop = 0;
       renderTodoNudge();
       requestAnimationFrame(syncCardScale);
@@ -12264,6 +12688,7 @@
     }
 
     function openWorkspacePicker() {
+      closeProviderPicker();
       updateWorkspacePickerGeometry();
       workspacePickerPopover.hidden = false;
       workspacePickerButton.setAttribute('aria-expanded', 'true');
@@ -12650,29 +13075,27 @@
       const monitor = await tauriCurrentMonitor?.().catch(() => null);
       const scale = monitor?.scaleFactor || scaleFactor || window.devicePixelRatio || 1;
       const windowScale = scaleFactor || scale;
-      const screenLeft = (monitor?.position?.x ?? Math.round((window.screen.availLeft || 0) * scale)) / scale;
-      const screenTop = (monitor?.position?.y ?? Math.round((window.screen.availTop || 0) * scale)) / scale;
-      const screenWidth = (monitor?.size?.width ?? Math.round((window.screen.availWidth || window.innerWidth || sessionPreviewSize.width) * scale)) / scale;
-      const screenHeight = (monitor?.size?.height ?? Math.round((window.screen.availHeight || window.innerHeight || sessionPreviewSize.height) * scale)) / scale;
-      const margin = 8;
-      const gap = 6;
-      const previewWidth = sessionPreviewSize.width;
-      const previewHeight = sessionPreviewSize.height;
-      const mainLeft = windowPosition.x / windowScale;
-      const mainTop = windowPosition.y / windowScale;
-      const minX = screenLeft + margin;
-      const minY = screenTop + margin;
-      const maxX = Math.max(minX, screenLeft + screenWidth - previewWidth - margin);
-      const maxY = Math.max(minY, screenTop + screenHeight - previewHeight - margin);
-      const belowY = mainTop + anchorRect.bottom + gap;
-      const aboveY = mainTop + anchorRect.top - previewHeight - gap;
+      const workArea = monitorWorkAreaPhysical(monitor, scale, sessionPreviewSize.width, sessionPreviewSize.height);
+      const margin = Math.round(8 * scale);
+      const gap = Math.round(6 * windowScale);
+      const previewWidth = Math.round(sessionPreviewSize.width * scale);
+      const previewHeight = Math.round(sessionPreviewSize.height * scale);
+      const mainLeft = Math.round(Number(windowPosition.x) || 0);
+      const mainTop = Math.round(Number(windowPosition.y) || 0);
+      const minX = workArea.x + margin;
+      const minY = workArea.y + margin;
+      const maxX = Math.max(minX, workArea.x + workArea.width - previewWidth - margin);
+      const maxY = Math.max(minY, workArea.y + workArea.height - previewHeight - margin);
+      const belowY = mainTop + Math.round(anchorRect.bottom * windowScale) + gap;
+      const aboveY = mainTop + Math.round(anchorRect.top * windowScale) - previewHeight - gap;
       let y = belowY;
       if (belowY > maxY && aboveY >= minY) y = aboveY;
 
-      return {
-        x: Math.round(Math.max(minX, Math.min(mainLeft + anchorRect.left, maxX))),
-        y: Math.round(Math.max(minY, Math.min(y, maxY)))
-      };
+      return childWindowPositionFromPhysical(
+        Math.max(minX, Math.min(mainLeft + Math.round(anchorRect.left * windowScale), maxX)),
+        Math.max(minY, Math.min(y, maxY)),
+        scale
+      );
     }
 
     async function placeNativeSessionPreview(windowRef) {
@@ -12680,7 +13103,7 @@
       const position = await nativeSessionPreviewPosition();
       if (!position) return false;
       await windowRef.setSize(new LogicalSizeClass(sessionPreviewSize.width, sessionPreviewSize.height)).catch(() => {});
-      await windowRef.setPosition(new LogicalPositionClass(position.x, position.y)).catch(() => {});
+      await setNativeWindowPhysicalPosition(windowRef, position);
       return true;
     }
 
@@ -12701,21 +13124,9 @@
         const position = await nativeSessionPreviewPosition();
         if (!position) return false;
 
-        const existing = nativePreviewWindow || await WebviewWindowClass.getByLabel('session-preview');
+        const existing = await usableNativeWindow('session-preview', nativePreviewWindow);
         if (existing) {
-          nativePreviewWindow = existing;
-          await placeNativeSessionPreview(existing);
-          emitRuntimeSettings('session-preview');
-          if (latestSessionPreviewData) {
-            await tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', latestSessionPreviewData).catch(() => {});
-          }
-          if (!sessionPreviewDesiredVisible || requestId !== sessionPreviewRequestId) {
-            await existing.hide().catch(() => {});
-            return true;
-          }
-          await existing.show().catch(() => {});
-          await existing.setFocus().catch(() => {});
-          scheduleNativeSessionPreviewSettle(requestId);
+          await revealNativeSessionPreviewWindow(existing, requestId);
           return true;
         }
 
@@ -12741,7 +13152,8 @@
         nativePreviewWindow.once('tauri://destroyed', () => { nativePreviewWindow = null; });
         nativePreviewWindow.once('tauri://error', () => { nativePreviewWindow = null; });
         nativePreviewWindow.once('tauri://created', () => {
-          nativePreviewWindow?.setPosition(new LogicalPositionClass(position.x, position.y)).catch(() => {});
+          setNativeWindowPhysicalPosition(nativePreviewWindow, position);
+          scheduleNativeRevealFallback(() => revealNativeSessionPreviewWindow(null, requestId), [260, 760]);
         });
         return true;
       } catch (error) {
@@ -13266,6 +13678,12 @@
       }, 120);
     }
 
+    document.addEventListener('input', event => {
+      if (event.target !== sessionSearch) return;
+      sessionSearchQuery = sessionSearch.value || '';
+      applyFilters({ preserveScroll: true });
+    }, true);
+
     bindTextInputGuard();
     bindTodoControls();
 
@@ -13376,31 +13794,22 @@
         todoWindowDesiredVisible = false;
       }).catch(() => {});
       tauriListen?.('agentwatcher-todo-ready', async () => {
-        const existing = nativeTodoWindow || await WebviewWindowClass?.getByLabel('todo-panel');
+        const existing = await usableNativeWindow('todo-panel', nativeTodoWindow);
         if (existing) {
           nativeTodoWindow = existing;
-          emitRuntimeSettings('todo-panel');
-          await tauriEmitTo?.('todo-panel', 'agentwatcher-todo-state-data', todoState).catch(() => {});
-          if (selectedTodoWorkspaceKey) {
-            await tauriEmitTo?.('todo-panel', 'agentwatcher-todo-select-workspace', { workspaceKey: selectedTodoWorkspaceKey }).catch(() => {});
-          }
           if (todoWindowDesiredVisible) {
-            await existing.show().catch(() => {});
-            await existing.setFocus().catch(() => {});
+            await revealNativeTodoWindow(existing);
           } else {
             await existing.hide().catch(() => {});
           }
         }
       }).catch(() => {});
       tauriListen?.('agentwatcher-performance-ready', async () => {
-        const existing = nativePerformanceWindow || await WebviewWindowClass?.getByLabel('performance-panel');
+        const existing = await usableNativeWindow('performance-panel', nativePerformanceWindow);
         if (existing) {
           nativePerformanceWindow = existing;
-          emitRuntimeSettings('performance-panel');
-          publishPerformanceFrontendData('performance-panel');
           if (performanceWindowDesiredVisible) {
-            await existing.show().catch(() => {});
-            await existing.setFocus().catch(() => {});
+            await revealNativePerformanceWindow(existing);
           } else {
             await existing.hide().catch(() => {});
           }
@@ -13422,34 +13831,23 @@
         publishPerformanceFrontendData('performance-panel');
       }).catch(() => {});
       tauriListen?.('agentwatcher-preview-ready', async () => {
-        const existing = nativePreviewWindow || await WebviewWindowClass?.getByLabel('session-preview');
+        const existing = await usableNativeWindow('session-preview', nativePreviewWindow);
         if (existing) {
           nativePreviewWindow = existing;
           const requestId = sessionPreviewRequestId;
-          await placeNativeSessionPreview(existing).catch(() => {});
-          emitRuntimeSettings('session-preview');
-          if (latestSessionPreviewData) {
-            await tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', latestSessionPreviewData).catch(() => {});
-          }
           if (sessionPreviewDesiredVisible && requestId === sessionPreviewRequestId) {
-            await existing.show().catch(() => {});
-            scheduleNativeSessionPreviewSettle(requestId);
+            await revealNativeSessionPreviewWindow(existing, requestId);
           } else {
             await existing.hide().catch(() => {});
           }
         }
       }).catch(() => {});
       tauriListen?.('agentwatcher-handoff-ready', async () => {
-        const existing = nativeHandoffWindow || await WebviewWindowClass?.getByLabel('handoff-panel');
+        const existing = await usableNativeWindow('handoff-panel', nativeHandoffWindow);
         if (existing) {
           nativeHandoffWindow = existing;
-          emitRuntimeSettings('handoff-panel');
-          if (latestHandoffPayload) {
-            await tauriEmitTo?.('handoff-panel', 'agentwatcher-handoff-data', latestHandoffPayload).catch(() => {});
-          }
           if (handoffWindowDesiredVisible) {
-            await existing.show().catch(() => {});
-            await existing.setFocus().catch(() => {});
+            await revealNativeHandoffWindow(existing);
           } else {
             await existing.hide().catch(() => {});
           }
@@ -13471,6 +13869,73 @@
           segment.classList.add('active');
           applyFilters();
         });
+      });
+      providerPickerButton?.addEventListener('pointerdown', event => {
+        providerPointerToggleAt = Date.now();
+        event.preventDefault();
+        if (providerPickerPopover.hidden) {
+          openProviderPicker();
+        } else {
+          closeProviderPicker();
+        }
+      });
+      providerPickerButton?.addEventListener('mousedown', event => {
+        if (Date.now() - providerPointerToggleAt < 450) return;
+        providerPointerToggleAt = Date.now();
+        event.preventDefault();
+        if (providerPickerPopover.hidden) {
+          openProviderPicker();
+        } else {
+          closeProviderPicker();
+        }
+      });
+      providerPickerButton?.addEventListener('click', event => {
+        if (Date.now() - providerPointerToggleAt < 450) return;
+        event.preventDefault();
+        if (providerPickerPopover.hidden) {
+          openProviderPicker();
+        } else {
+          closeProviderPicker();
+        }
+      });
+      providerPickerButton?.addEventListener('keydown', event => {
+        if (!['ArrowDown', 'Enter', ' '].includes(event.key)) return;
+        event.preventDefault();
+        openProviderPicker();
+      });
+      const chooseProviderFromEvent = event => {
+        const option = event.target.closest('.provider-picker-option');
+        if (!option) return;
+        event.preventDefault();
+        chooseProvider(option.dataset.provider || 'all');
+      };
+      providerPickerOptions?.addEventListener('pointerdown', chooseProviderFromEvent);
+      providerPickerOptions?.addEventListener('mousedown', chooseProviderFromEvent);
+      providerPickerOptions?.addEventListener('click', chooseProviderFromEvent);
+      sessionSearch?.addEventListener('input', event => {
+        sessionSearchQuery = event.target.value || '';
+        applyFilters({ preserveScroll: true });
+      });
+      sessionSearch?.addEventListener('keydown', event => {
+        if (event.key !== 'Escape') return;
+        if (sessionSearchQuery.trim()) {
+          event.preventDefault();
+          sessionSearchQuery = '';
+          sessionSearch.value = '';
+          applyFilters({ preserveScroll: true });
+        } else {
+          sessionSearch.blur();
+        }
+      });
+      clearSessionFilters?.addEventListener('click', clearNonWorkspaceSessionFilters);
+      document.addEventListener('keydown', event => {
+        if (!sessionSearch) return;
+        const key = event.key;
+        const searchShortcut = (event.ctrlKey && key.toLowerCase() === 'f') || (!event.ctrlKey && key === '/');
+        if (!searchShortcut) return;
+        if (event.target?.closest?.('input, textarea, select, button, [contenteditable="true"]')) return;
+        event.preventDefault();
+        sessionSearch.focus();
       });
 
       workspacePickerButton.addEventListener('click', () => {
@@ -13570,6 +14035,7 @@
           || (agentTaskSettingsToggle && agentTaskSettingsToggle.contains(event.target));
         const inPreview = !sessionPreview.hidden && sessionPreview.contains(event.target);
         const inWorkspacePicker = workspacePicker.contains(event.target);
+        const inProviderPicker = providerPicker?.contains(event.target);
         const inHandoffMenu = handoffContextMenu.contains(event.target);
         const inHandoffWorkspacePicker = handoffWorkspacePicker.contains(event.target);
         const inHandoffProviderPicker = handoffProviderPicker.contains(event.target);
@@ -13578,6 +14044,10 @@
 
         if (!workspacePickerPopover.hidden && !inWorkspacePicker) {
           closeWorkspacePicker();
+        }
+
+        if (providerPickerPopover && !providerPickerPopover.hidden && !inProviderPicker) {
+          closeProviderPicker();
         }
 
         if (handoffContextMenu.classList.contains('open') && !inHandoffMenu) {
@@ -13676,6 +14146,7 @@
         captureExpandedSize();
         if (!sessionPreview.hidden) positionSessionPreview();
         if (!workspacePickerPopover.hidden) updateWorkspacePickerGeometry();
+        if (providerPickerPopover && !providerPickerPopover.hidden) updateProviderPickerGeometry();
         if (!handoffLayer.hidden) positionHandoffPanel(false);
         if (settings.performanceDebug && !perfPanel.hidden) positionPerformancePanel(false);
         requestAnimationFrame(syncCompactRail);
@@ -13705,7 +14176,7 @@
         window.setTimeout(prewarmNativeHandoffWindow, 900);
       } else {
         zoomTransition = false;
-        renderTodoEverywhere();
+        loadTodoState();
         queueBrowserMockWaitingAlert();
       }
     }
