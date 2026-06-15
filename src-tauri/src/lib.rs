@@ -1042,10 +1042,20 @@ fn open_session(session: OpenSessionRequest) -> Result<(), String> {
 
     if bridge_extension_installed() {
         if let Some(bridge_link) = session_bridge_link(&session) {
+            let session_deep_link = session_deep_link(&session).map(|text| text.to_string());
             match open_session_with_bridge(session.workspace_path.as_deref(), &bridge_link) {
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    if let Some(fallback_link) = session_deep_link.as_ref() {
+                        let fallback_link = fallback_link.to_string();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(Duration::from_millis(900));
+                            let _ = open_vscode_deep_link(&fallback_link);
+                        });
+                    }
+                    return Ok(());
+                }
                 Err(bridge_error) => {
-                    if session_deep_link(&session).is_none() {
+                    if session_deep_link.is_none() {
                         return open_agents_page(session.workspace_path.as_deref()).map_err(|fallback_error| {
                             format!(
                                 "Bridge session launch failed ({}); fallback failed ({})",
@@ -1398,10 +1408,17 @@ fn open_session_with_bridge(workspace_path: Option<&str>, bridge_link: &str) -> 
         open_workspace(workspace_path)?;
     }
 
+    const BRIDGE_OPEN_RETRIES: usize = 2;
+    const BRIDGE_OPEN_DELAY_MS: u64 = 900;
+
     let bridge_link = bridge_link.to_string();
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(900));
+        std::thread::sleep(Duration::from_millis(BRIDGE_OPEN_DELAY_MS));
         let _ = open_vscode_deep_link(&bridge_link);
+        for _ in 1..BRIDGE_OPEN_RETRIES {
+            std::thread::sleep(Duration::from_millis(BRIDGE_OPEN_DELAY_MS));
+            let _ = open_vscode_deep_link(&bridge_link);
+        }
     });
 
     Ok(())
