@@ -280,6 +280,13 @@ impl TempDevFlowAdapter {
         &self.args_log
     }
 
+    /// cmd 批处理在中文系统上按 OEM 码页（GBK）写 args.log，
+    /// 严格 UTF-8 读取会失败；断言只看 ASCII 子串，故用容错读取。
+    fn read_args_log(&self) -> String {
+        String::from_utf8_lossy(&fs::read(&self.args_log).expect("adapter args should be logged"))
+            .into_owned()
+    }
+
     fn duplicate_primary_source(&self, primary: &str) -> PathBuf {
         let path = self.root.join("Plugins").join(format!("{primary}_AI"));
         fs::create_dir_all(&path).expect("duplicate primary dir should be created");
@@ -838,8 +845,7 @@ fn devflow_execute_delegates_exact_primary_path_to_workspace_plugin_path() {
             .to_string_lossy()
             .as_ref()
     );
-    let args_log = fs::read_to_string(devflow_adapter.args_log())
-        .expect("adapter create args should be logged");
+    let args_log = devflow_adapter.read_args_log();
     assert!(
         !args_log.contains("--primary"),
         "exact workspace plugin_path should be delegated to DevFlow instead of downgraded to --primary: {args_log}"
@@ -898,8 +904,7 @@ fn devflow_execute_registers_missing_workspace_plugin_path_via_devflow() {
     assert_eq!(output["status"], "complete");
     assert_eq!(output["devFlow"]["workspaceBindingUpdated"], true);
     assert_json_array_contains(&output["sideEffects"], "devflow-workspace-binding-updated");
-    let args_log =
-        fs::read_to_string(devflow_adapter.args_log()).expect("adapter args should be logged");
+    let args_log = devflow_adapter.read_args_log();
     assert!(
         args_log.contains("workspace add neon-dev1"),
         "UWF should use DevFlow workspace add instead of editing config itself: {args_log}"
@@ -1057,8 +1062,7 @@ fn devflow_execute_retargets_path_workspace_when_explicit_main_project_differs()
     assert_eq!(output["status"], "complete");
     assert_eq!(output["devFlow"]["workspaceBindingUpdated"], true);
     assert_eq!(output["devFlow"]["createdTask"]["workspace"], "neon-dev");
-    let args_log =
-        fs::read_to_string(devflow_adapter.args_log()).expect("adapter args should be logged");
+    let args_log = devflow_adapter.read_args_log();
     assert!(
         args_log.contains("workspace add neon-dev"),
         "UWF should register the workspace that matches explicit DEV, not reuse neon-dev1: {args_log}"
