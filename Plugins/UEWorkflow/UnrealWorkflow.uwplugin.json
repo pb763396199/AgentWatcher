@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "kind": "UnrealWorkflowPlugin",
+  "name": "UnrealWorkflow",
+  "displayName": "虚幻工作流",
+  "command": "uwf",
+  "sourceLayout": "Source",
+  "description": "独立可运行的虚幻项目 AI 开发工作流。AgentWatcher 只负责安装、发任务、监控和收集结果。",
+  "modules": [
+    {
+      "name": "Core",
+      "displayName": "核心契约",
+      "package": "uwf-core",
+      "path": "Source/Core",
+      "required": true,
+      "dependsOn": []
+    },
+    {
+      "name": "DevFlow",
+      "displayName": "虚幻开发流",
+      "englishDisplayName": "Dev Flow",
+      "shortName": "devflow",
+      "commandGroup": "uwf dev",
+      "package": "uwf-devflow",
+      "path": "Source/DevFlow",
+      "required": true,
+      "dependsOn": ["Core"]
+    },
+    {
+      "name": "AgentHub",
+      "displayName": "虚幻智能体",
+      "englishDisplayName": "Agent Hub",
+      "shortName": "agents",
+      "commandGroup": "uwf agents",
+      "package": "uwf-agenthub",
+      "path": "Source/AgentHub",
+      "required": true,
+      "dependsOn": ["Core"]
+    },
+    {
+      "name": "KnowledgeBase",
+      "displayName": "虚幻知识库",
+      "englishDisplayName": "Knowledge Base",
+      "shortName": "kb",
+      "commandGroup": "uwf kb",
+      "package": "uwf-knowledgebase",
+      "path": "Source/KnowledgeBase",
+      "required": true,
+      "dependsOn": ["Core"]
+    },
+    {
+      "name": "UnrealMaster",
+      "displayName": "虚幻大师",
+      "package": "uwf-unrealmaster",
+      "path": "Source/UnrealMaster",
+      "required": true,
+      "dependsOn": ["Core", "DevFlow", "AgentHub", "KnowledgeBase"]
+    },
+    {
+      "name": "Cli",
+      "displayName": "命令行入口",
+      "package": "uwf-cli",
+      "path": "Source/Cli",
+      "required": true,
+      "dependsOn": ["UnrealMaster"]
+    }
+  ],
+  "adapters": [
+    {
+      "name": "DevFlowAdapter",
+      "module": "DevFlow",
+      "path": "Adapters/DevFlow",
+      "policy": "typed-adapter-only",
+      "sourceModule": "DevFlow"
+    },
+    {
+      "name": "AgentHubAdapter",
+      "module": "AgentHub",
+      "path": "Adapters/AgentHub",
+      "policy": "typed-adapter-only",
+      "sourceModule": "AgentHub"
+    },
+    {
+      "name": "KnowledgeBaseAdapter",
+      "module": "KnowledgeBase",
+      "path": "Adapters/KnowledgeBase",
+      "policy": "typed-adapter-only",
+      "sourceModule": "KnowledgeBase"
+    }
+  ],
+  "safety": {
+    "allowArbitraryShell": false,
+    "allowRawUnrealBuild": false,
+    "allowDestructiveDelete": false,
+    "defaultMode": "read-only-contract-skeleton"
+  }
+}

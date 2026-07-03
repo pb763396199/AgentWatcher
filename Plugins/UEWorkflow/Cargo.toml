@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+  "Source/Core",
+  "Source/DevFlow",
+  "Source/AgentHub",
+  "Source/KnowledgeBase",
+  "Source/UnrealMaster",
+  "Source/Cli",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

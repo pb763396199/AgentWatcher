@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "kind": "AgentWatcherPlugin",
+  "name": "UEWorkflow",
+  "displayName": "虚幻项目开发工作流",
+  "category": "unreal",
+  "description": "AgentWatcher 的虚幻项目开发工作流插件清单。Modules 下的目录由 AgentWatcher 正式装配为指向 dedicated git worktree 的 Junction，公开清单只暴露业务模块身份。",
+  "modules": [
+    {
+      "name": "DevFlow",
+      "displayName": "开发流",
+      "mountPath": "Modules/DevFlow",
+      "link": {
+        "sourceModule": "DevFlow",
+        "worktreePath": ".plugin-worktrees/UEWorkflow/DevFlow",
+        "worktreeBranch": "agentwatcher/ueworkflow/devflow",
+        "linkType": "junction",
+        "required": true
+      }
+    },
+    {
+      "name": "AgentHub",
+      "displayName": "智能体",
+      "mountPath": "Modules/AgentHub",
+      "link": {
+        "sourceModule": "AgentHub",
+        "worktreePath": ".plugin-worktrees/UEWorkflow/AgentHub",
+        "worktreeBranch": "agentwatcher/ueworkflow/agenthub",
+        "linkType": "junction",
+        "required": true
+      }
+    },
+    {
+      "name": "KnowledgeBase",
+      "displayName": "知识库",
+      "mountPath": "Modules/KnowledgeBase",
+      "link": {
+        "sourceModule": "KnowledgeBase",
+        "worktreePath": ".plugin-worktrees/UEWorkflow/KnowledgeBase",
+        "worktreeBranch": "agentwatcher/ueworkflow/knowledgebase",
+        "linkType": "junction",
+        "required": true
+      }
+    }
+  ]
+}
