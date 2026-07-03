@@ -3,7 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const BRIDGE_LOG_VERSION = '0.1.11-session-bridge';
+const BRIDGE_LOG_VERSION = '0.1.12-session-bridge';
 const DEFAULT_TARGET = 'editor';
 const CLAUDE_CODE_SCHEME = 'claude-code';
 const CLAUDE_EDITOR_OPEN_COMMAND = 'claude-vscode.editor.open';
@@ -48,9 +48,32 @@ function claudeSessionIdFromResource(resource) {
   }
 }
 
+function normalizeFsPath(value) {
+  if (!value || typeof value !== 'string') return '';
+  return path.resolve(value).replace(/[\\/]+$/, '').toLowerCase();
+}
+
+function currentWorkspacePaths() {
+  return (vscode.workspace.workspaceFolders || [])
+    .map(folder => folder?.uri?.fsPath)
+    .filter(Boolean);
+}
+
+function currentWorkspaceDescription() {
+  const paths = currentWorkspacePaths();
+  return paths.length ? paths.join('; ') : '(empty VS Code window)';
+}
+
+function workspaceMatches(expectedWorkspacePath) {
+  const expected = normalizeFsPath(expectedWorkspacePath);
+  if (!expected) return true;
+  return currentWorkspacePaths().some(workspacePath => normalizeFsPath(workspacePath) === expected);
+}
+
 function activate(context) {
   const output = vscode.window.createOutputChannel('AgentWatcher Session Bridge');
   output.appendLine(`AgentWatcher Bridge ${BRIDGE_LOG_VERSION} activated`);
+  const lastWorkspaceRedirectAt = new Map();
 
   function writeHandoffAck(params, ok, message) {
     const ackPath = params?.get('ackPath');
@@ -69,10 +92,29 @@ function activate(context) {
     output.appendLine(`Wrote handoff acknowledgement ok=${ok}`);
   }
 
-  async function openSession(resourceText, target = DEFAULT_TARGET) {
+  async function ensureExpectedWorkspace(expectedWorkspacePath) {
+    if (workspaceMatches(expectedWorkspacePath)) return;
+
+    const expected = normalizeFsPath(expectedWorkspacePath);
+    const now = Date.now();
+    const lastRedirectAt = lastWorkspaceRedirectAt.get(expected) || 0;
+    if (expected && now - lastRedirectAt > 5000) {
+      lastWorkspaceRedirectAt.set(expected, now);
+      output.appendLine(`Workspace mismatch; opening target workspace window: ${expectedWorkspacePath}`);
+      await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(expectedWorkspacePath), { forceNewWindow: true });
+    } else {
+      output.appendLine(`Workspace mismatch; target workspace was already requested recently: ${expectedWorkspacePath}`);
+    }
+
+    throw new Error(`Workspace mismatch; opened target workspace window for AgentWatcher retry. Expected: ${expectedWorkspacePath}; current: ${currentWorkspaceDescription()}`);
+  }
+
+  async function openSession(resourceText, target = DEFAULT_TARGET, expectedWorkspacePath) {
     if (!resourceText || typeof resourceText !== 'string') {
       throw new Error('Missing AgentWatcher session resource.');
     }
+
+    await ensureExpectedWorkspace(expectedWorkspacePath);
 
     const resource = vscode.Uri.parse(resourceText, true);
     if (resource.scheme === CLAUDE_CODE_SCHEME) {
@@ -174,9 +216,10 @@ function activate(context) {
             return;
           }
 
-          const resourceText = params.get('resource') || params.get('session');
+          const resourceText = params.get('scopedResource') || params.get('resource') || params.get('session');
           const target = params.get('target') || DEFAULT_TARGET;
-          await openSession(resourceText, target);
+          await openSession(resourceText, target, params.get('workspacePath'));
+          writeHandoffAck(params, true, 'Session opened.');
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           output.appendLine(`Failed: ${message}`);
@@ -193,8 +236,8 @@ function activate(context) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('agentwatcherSessionBridge.openSession', async (resourceText, target) => {
-      await openSession(resourceText, target || DEFAULT_TARGET);
+    vscode.commands.registerCommand('agentwatcherSessionBridge.openSession', async (resourceText, target, expectedWorkspacePath) => {
+      await openSession(resourceText, target || DEFAULT_TARGET, expectedWorkspacePath);
     }),
     vscode.commands.registerCommand('agentwatcherSessionBridge.runCommand', async (command) => {
       await runAllowedCommand(command);

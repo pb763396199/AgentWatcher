@@ -376,6 +376,31 @@
       transition: opacity 160ms ease, transform 180ms ease, clip-path 180ms ease;
     }
 
+    body.is-native-window-interacting .watcher-window,
+    body.is-native-window-interacting .compact-rail,
+    body.is-native-window-interacting .waiting-alert-layer,
+    body.is-native-window-interacting .session-preview,
+    body.is-native-window-interacting .handoff-panel,
+    body.is-native-window-interacting .todo-window,
+    body.is-native-window-interacting .perf-panel {
+      box-shadow: none !important;
+      clip-path: none !important;
+      transition: none !important;
+      transform: none !important;
+      will-change: auto !important;
+    }
+
+    body.is-native-window-interacting *,
+    body.is-native-window-interacting *::before,
+    body.is-native-window-interacting *::after {
+      animation: none !important;
+      box-shadow: none !important;
+      backdrop-filter: none !important;
+      filter: none !important;
+      transition: none !important;
+      will-change: auto !important;
+    }
+
     body.is-rail-only .watcher-window {
       opacity: 0;
       pointer-events: none;
@@ -1955,6 +1980,7 @@
       bottom: 12px;
       width: auto;
       min-height: 42px;
+      max-height: min(180px, calc(100vh - 24px));
       display: none;
       align-items: center;
       padding: 9px 12px;
@@ -1964,6 +1990,11 @@
       color: #dcdcdc;
       box-shadow: var(--shadow);
       font-size: 12px;
+      line-height: 1.45;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      z-index: 50;
     }
 
     body[data-layout="horizontal"] .toast {
@@ -1972,6 +2003,12 @@
     }
 
     .toast.show { display: flex; }
+
+    .toast.error {
+      border-color: rgba(244, 71, 71, 0.75);
+      background: #2f2022;
+      color: #ffdede;
+    }
 
     .perf-panel {
       position: fixed;
@@ -3395,6 +3432,163 @@
       background: var(--surface);
     }
 
+    .agenttask-ueworkflow-plan {
+      display: grid;
+      gap: 6px;
+      padding: 7px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #252526;
+      min-width: 0;
+    }
+
+    .agenttask-ueworkflow-plan[hidden] {
+      display: none;
+    }
+
+    .agenttask-ueworkflow-plan-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .agenttask-ueworkflow-plan-head strong,
+    .agenttask-ueworkflow-plan-head span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .agenttask-ueworkflow-plan-head strong {
+      color: var(--text);
+      font-size: 12px;
+      line-height: 16px;
+    }
+
+    .agenttask-ueworkflow-plan-head span {
+      color: var(--soft);
+      font-size: 10px;
+      line-height: 14px;
+    }
+
+    .agenttask-ueworkflow-plan-body {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .agenttask-ueworkflow-plan-line {
+      min-width: 0;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 14px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .agenttask-ueworkflow-context {
+      display: grid;
+      gap: 7px;
+      min-width: 0;
+      padding: 7px 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #252526;
+    }
+
+    .agenttask-ueworkflow-context[hidden] {
+      display: none;
+    }
+
+    .agenttask-ueworkflow-context-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .agenttask-ueworkflow-context-head strong,
+    .agenttask-ueworkflow-context-head span,
+    .agenttask-ueworkflow-context-row span,
+    .agenttask-ueworkflow-context-actions span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .agenttask-ueworkflow-context-head strong {
+      color: var(--text);
+      font-size: 12px;
+      line-height: 16px;
+    }
+
+    .agenttask-ueworkflow-context-head span,
+    .agenttask-ueworkflow-context-row span,
+    .agenttask-ueworkflow-context-actions span {
+      color: var(--soft);
+      font-size: 10px;
+      line-height: 14px;
+    }
+
+    .agenttask-ueworkflow-context-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .agenttask-ueworkflow-context-row {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+    }
+
+    .agenttask-ueworkflow-context-row.full {
+      grid-column: 1 / -1;
+    }
+
+    .agenttask-ueworkflow-context-row.required span::after {
+      content: " *";
+      color: var(--danger);
+    }
+
+    .agenttask-ueworkflow-context-row input,
+    .agenttask-ueworkflow-context-row textarea {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: #1b1b1b;
+      color: var(--text);
+      font: 11px/1.35 var(--font);
+    }
+
+    .agenttask-ueworkflow-context-row input {
+      height: 26px;
+      padding: 0 7px;
+    }
+
+    .agenttask-ueworkflow-context-row textarea {
+      min-height: 42px;
+      max-height: 90px;
+      padding: 6px 7px;
+      resize: vertical;
+    }
+
+    .agenttask-ueworkflow-context-actions {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+      min-width: 0;
+    }
+
     .agenttask-workspace {
       display: grid;
       grid-template-columns: minmax(0, 1fr);
@@ -3425,6 +3619,153 @@
       border-radius: 5px;
       background: #1b1b1b;
       font-size: 11px;
+    }
+
+    .ueworkflow-panel {
+      display: grid;
+      gap: 6px;
+      padding: 0;
+    }
+
+    .ueworkflow-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) repeat(4, auto);
+      gap: 6px;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .ueworkflow-title {
+      min-width: 0;
+      overflow: hidden;
+      color: #dcdcdc;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 16px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .ueworkflow-action {
+      height: 23px;
+      min-width: 34px;
+      padding: 0 8px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: #252526;
+      color: #dcdcdc;
+      font-size: 11px;
+      line-height: 21px;
+      cursor: pointer;
+    }
+
+    .ueworkflow-action:hover,
+    .ueworkflow-action:focus-visible {
+      border-color: rgba(55, 148, 255, 0.65);
+      outline: none;
+      background: #2a2d2e;
+    }
+
+    .ueworkflow-modules {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .ueworkflow-module {
+      min-width: 0;
+      padding: 5px 6px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: #252526;
+    }
+
+    .ueworkflow-module-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 5px;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .ueworkflow-module-name,
+    .ueworkflow-module-path {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .ueworkflow-module-name {
+      color: #dcdcdc;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 15px;
+    }
+
+    .ueworkflow-module-path {
+      margin-top: 2px;
+      color: var(--soft);
+      font-size: 10px;
+      line-height: 14px;
+    }
+
+    .ueworkflow-binding {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .ueworkflow-binding-row {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+    }
+
+    .ueworkflow-binding-row.full {
+      grid-column: 1 / -1;
+    }
+
+    .ueworkflow-binding-row label {
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 13px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .ueworkflow-binding-row input,
+    .ueworkflow-binding-row textarea {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: #1b1b1b;
+      color: var(--text);
+      font: 11px/1.35 var(--font);
+    }
+
+    .ueworkflow-binding-row input {
+      height: 26px;
+      padding: 0 7px;
+    }
+
+    .ueworkflow-binding-row textarea {
+      min-height: 44px;
+      max-height: 90px;
+      padding: 6px 7px;
+      resize: vertical;
+    }
+
+    .ueworkflow-binding-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      min-width: 0;
     }
 
     .agenttask-select,
@@ -4366,6 +4707,7 @@
 
     body[data-theme="light"] .agenttask-titlebar,
     body[data-theme="light"] .agenttask-workspace,
+    body[data-theme="light"] .ueworkflow-panel,
     body[data-theme="light"] .agenttask-addbar,
     body[data-theme="light"] .agenttask-detail-actions {
       background: #f8f8f8;
@@ -4374,10 +4716,17 @@
 
     body[data-theme="light"] .agenttask-workspace .handoff-picker-button,
     body[data-theme="light"] .agenttask-workspace .handoff-picker-search input,
+    body[data-theme="light"] .ueworkflow-action,
+    body[data-theme="light"] .ueworkflow-module,
     body[data-theme="light"] .agenttask-toolbar .segment[data-agent-task-filter] {
       background: #ffffff;
       color: #1f1f1f;
       border-color: #d0d0d0;
+    }
+
+    body[data-theme="light"] .ueworkflow-title,
+    body[data-theme="light"] .ueworkflow-module-name {
+      color: #1f1f1f;
     }
 
     body[data-theme="light"] .agenttask-select,
@@ -5014,6 +5363,16 @@
             <button class="preset-btn" id="bridgeAction" type="button" style="padding: 3px 8px; font-size: 11px;" disabled data-i18n="bridgeInstall">Install</button>
           </div>
         </div>
+        <div class="settings-group ueworkflow-panel" id="ueWorkflowPanel" aria-label="UEWorkflow">
+          <div class="ueworkflow-head">
+            <div class="settings-group-title ueworkflow-title" id="ueWorkflowTitle">UEWorkflow</div>
+            <button class="ueworkflow-action" id="ueWorkflowEnableToggle" type="button">停用</button>
+            <button class="ueworkflow-action" id="ueWorkflowRepair" type="button">安装/修复</button>
+            <button class="ueworkflow-action" id="ueWorkflowProviderInstall" type="button">安装到 Provider</button>
+            <button class="ueworkflow-action" id="ueWorkflowRefresh" type="button">刷新</button>
+          </div>
+          <div class="ueworkflow-modules" id="ueWorkflowModules"></div>
+        </div>
       </section>
 
       <div class="watcher-body">
@@ -5186,21 +5545,75 @@
                   <textarea class="agenttask-textarea" id="agentTaskDetailAcceptance" data-i18n-placeholder="todoAcceptancePlaceholder"></textarea>
                 </label>
                 <div class="agenttask-field agenttask-target-field">
-                  <span class="agenttask-field-label" data-i18n="agentTaskTargetLabel">Target</span>
+                  <span class="agenttask-field-label" data-i18n="agentTaskWorkflowLabel">Workflow</span>
+                  <div class="agenttask-target-control">
+                    <div class="handoff-picker handoff-provider-picker agenttask-target-picker" id="agentTaskWorkflowPicker">
+                      <button class="handoff-picker-button" id="agentTaskWorkflowButton" type="button" aria-haspopup="listbox" aria-expanded="false" data-i18n-aria="agentTaskWorkflowLabel">
+                        <span class="handoff-picker-value" id="agentTaskWorkflowValue"></span>
+                        <span class="handoff-picker-caret" aria-hidden="true">v</span>
+                      </button>
+                      <div class="handoff-picker-popover" id="agentTaskWorkflowPopover" hidden>
+                        <div class="handoff-picker-options" id="agentTaskWorkflowOptions" role="listbox" data-i18n-aria="agentTaskWorkflowOptionsLabel"></div>
+                      </div>
+                    </div>
+                    <select class="agenttask-mode" id="agentTaskWorkflowSelect" data-i18n-aria="agentTaskWorkflowLabel" hidden aria-hidden="true" tabindex="-1"></select>
+                  </div>
+                </div>
+                <div class="agenttask-field agenttask-target-field">
+                  <span class="agenttask-field-label" data-i18n="agentTaskTargetLabel">Target Agent</span>
                   <div class="agenttask-target-control">
                     <div class="handoff-picker handoff-provider-picker agenttask-target-picker" id="agentTaskModePicker">
-                      <button class="handoff-picker-button" id="agentTaskModeButton" type="button" aria-haspopup="listbox" aria-expanded="false" data-i18n-aria="todoLaunchMode">
+                      <button class="handoff-picker-button" id="agentTaskModeButton" type="button" aria-haspopup="listbox" aria-expanded="false" data-i18n-aria="agentTaskTargetLabel">
                         <span class="handoff-picker-value" id="agentTaskModeValue"></span>
                         <span class="handoff-picker-caret" aria-hidden="true">v</span>
                       </button>
                       <div class="handoff-picker-popover" id="agentTaskModePopover" hidden>
-                        <div class="handoff-picker-options" id="agentTaskModeOptions" role="listbox" data-i18n-aria="handoffProviderOptionsLabel"></div>
+                        <div class="handoff-picker-options" id="agentTaskModeOptions" role="listbox" data-i18n-aria="agentTaskAgentOptionsLabel"></div>
                       </div>
                     </div>
-                    <select class="agenttask-mode" id="agentTaskModeSelect" data-i18n-aria="todoLaunchMode" hidden aria-hidden="true" tabindex="-1"></select>
+                    <select class="agenttask-mode" id="agentTaskModeSelect" data-i18n-aria="agentTaskTargetLabel" hidden aria-hidden="true" tabindex="-1"></select>
                     <span class="agenttask-status" id="agentTaskStatus"></span>
                   </div>
                 </div>
+                <section class="agenttask-ueworkflow-context" id="agentTaskUEWorkflowContext" hidden aria-label="虚幻项目上下文">
+                  <div class="agenttask-ueworkflow-context-head">
+                    <strong>虚幻项目上下文</strong>
+                    <span>每个任务单独填写</span>
+                  </div>
+                  <div class="agenttask-ueworkflow-context-grid">
+                    <label class="agenttask-ueworkflow-context-row full required">
+                      <span>分支名</span>
+                      <input id="agentTaskUEWorkflowBranch" type="text" autocomplete="off" placeholder="例如：sublevel-transform-fix" />
+                    </label>
+                    <label class="agenttask-ueworkflow-context-row full">
+                      <span>主项目路径（可选）</span>
+                      <input id="agentTaskUEWorkflowMainProject" type="text" autocomplete="off" placeholder="留空时使用 DevFlow workspace，例如 F:\\ShanghaiP4\\neon\\UGA\\DEV_1" />
+                    </label>
+                    <label class="agenttask-ueworkflow-context-row full required">
+                      <span>Host 根目录</span>
+                      <input id="agentTaskUEWorkflowHostRoot" type="text" autocomplete="off" placeholder="F:\\ShanghaiP4\\neon\\Hosts" />
+                    </label>
+                    <label class="agenttask-ueworkflow-context-row full required">
+                      <span>主插件集</span>
+                      <textarea id="agentTaskUEWorkflowPrimary" spellcheck="false" placeholder="每行一个插件工程路径，例如：&#10;F:\\ShanghaiP4\\neon\\Plugins\\AesWorld&#10;F:\\ShanghaiP4\\neon\\Plugins\\AesWorld_AI"></textarea>
+                    </label>
+                    <label class="agenttask-ueworkflow-context-row full">
+                      <span>依赖覆盖（选填）</span>
+                      <textarea id="agentTaskUEWorkflowDeps" spellcheck="false" placeholder="例如：PCG=project；CesiumForUnreal=engine"></textarea>
+                    </label>
+                  </div>
+                  <div class="agenttask-ueworkflow-context-actions">
+                    <button class="ueworkflow-action" id="agentTaskUEWorkflowFill" type="button">自动填充</button>
+                    <span id="agentTaskUEWorkflowContextStatus"></span>
+                  </div>
+                </section>
+                <section class="agenttask-ueworkflow-plan" id="agentTaskUEWorkflowPlan" hidden aria-label="虚幻工作流预演">
+                  <div class="agenttask-ueworkflow-plan-head">
+                    <strong>虚幻工作流</strong>
+                    <span id="agentTaskUEWorkflowPlanState">等待预演</span>
+                  </div>
+                  <div class="agenttask-ueworkflow-plan-body" id="agentTaskUEWorkflowPlanStages"></div>
+                </section>
                 <label class="agenttask-field">
                   <span class="agenttask-field-label" data-i18n="agentTaskPromptLabel">Prompt</span>
                   <textarea class="agenttask-textarea agenttask-prompt" id="agentTaskPromptPreview" readonly></textarea>
@@ -5445,6 +5858,11 @@
     let tauriEmitTo = null;
     let expandedSize = null;
     let zoomTransition = false;
+    let watcherNativeWindowInteractionInProgress = false;
+    let watcherNativeWindowInteractionSettleTimer = 0;
+    let watcherNativeResizeInProgress = false;
+    let watcherNativeResizeSettleTimer = 0;
+    let watcherResizeLayoutFrame = 0;
     let nativeWaitingAlertOffset = { x: 0, y: 0 };
     let nativePreviewWindow = null;
     let nativeHandoffWindow = null;
@@ -5458,12 +5876,33 @@
     let sessionPreviewDesiredVisible = false;
     let sessionPreviewRequestId = 0;
     const runtimeParams = new URLSearchParams(window.location.search);
+    const debugRuntimeState = {
+      silentDebug: runtimeParams.get('silentDebug') === '1'
+        || localStorage.getItem('agentwatcher.debug.silent') === '1'
+        || window.__agentWatcherSilentDebug === true
+    };
     const isPreviewWindow = runtimeParams.get('preview') === '1';
     const isHandoffWindow = runtimeParams.get('handoff') === '1';
     const isTodoWindow = runtimeParams.get('todo') === '1';
     const isPerformanceWindow = runtimeParams.get('performance') === '1';
+    if (tauriInvoke) {
+      try {
+        const runtimeState = await tauriInvoke('get_debug_runtime_state');
+        debugRuntimeState.silentDebug = debugRuntimeState.silentDebug || runtimeState?.silentDebug === true;
+      } catch (error) {
+        // Debug flags are best-effort; UI behavior falls back to normal interactive mode.
+      }
+    }
+    function isSilentDebugMode() {
+      return debugRuntimeState.silentDebug === true
+        || localStorage.getItem('agentwatcher.debug.silent') === '1'
+        || window.__agentWatcherSilentDebug === true;
+    }
     const EXPANDED_MIN_WIDTH = 360;
     const EXPANDED_MIN_HEIGHT = 460;
+    const EXPANDED_DEFAULT_SIZE = { width: 396, height: 580 };
+    const WATCHER_NATIVE_MOVE_SETTLE_MS = 2200;
+    const WATCHER_NATIVE_RESIZE_SETTLE_MS = 260;
     const WAITING_ALERT_GAP = 8;
     const HANDOFF_CONTEXT_MENU_WIDTH = 236;
     const HANDOFF_CONTEXT_MENU_HEIGHT = 128;
@@ -5663,6 +6102,13 @@
     const agentTaskWorkspaceInput = document.getElementById('agentTaskWorkspaceInput');
     const agentTaskWorkspaceOptions = document.getElementById('agentTaskWorkspaceOptions');
     const agentTaskWorkspacePanel = document.getElementById('agentTaskWorkspacePanel');
+    const ueWorkflowPanel = document.getElementById('ueWorkflowPanel');
+    const ueWorkflowTitle = document.getElementById('ueWorkflowTitle');
+    const ueWorkflowEnableToggle = document.getElementById('ueWorkflowEnableToggle');
+    const ueWorkflowRepair = document.getElementById('ueWorkflowRepair');
+    const ueWorkflowProviderInstall = document.getElementById('ueWorkflowProviderInstall');
+    const ueWorkflowRefresh = document.getElementById('ueWorkflowRefresh');
+    const ueWorkflowModules = document.getElementById('ueWorkflowModules');
     const agentTaskToolbar = document.getElementById('agentTaskToolbar');
     const agentTaskFilterButtons = Array.from(document.querySelectorAll('[data-agent-task-filter]'));
     const agentTaskList = document.getElementById('agentTaskList');
@@ -5672,6 +6118,12 @@
     const agentTaskDetailPanel = agentTaskDetailLayer?.querySelector('.agenttask-detail');
     const agentTaskDetailDescription = document.getElementById('agentTaskDetailDescription');
     const agentTaskDetailAcceptance = document.getElementById('agentTaskDetailAcceptance');
+    const agentTaskWorkflowPicker = document.getElementById('agentTaskWorkflowPicker');
+    const agentTaskWorkflowButton = document.getElementById('agentTaskWorkflowButton');
+    const agentTaskWorkflowValue = document.getElementById('agentTaskWorkflowValue');
+    const agentTaskWorkflowPopover = document.getElementById('agentTaskWorkflowPopover');
+    const agentTaskWorkflowOptions = document.getElementById('agentTaskWorkflowOptions');
+    const agentTaskWorkflowSelect = document.getElementById('agentTaskWorkflowSelect');
     const agentTaskModePicker = document.getElementById('agentTaskModePicker');
     const agentTaskModeButton = document.getElementById('agentTaskModeButton');
     const agentTaskModeValue = document.getElementById('agentTaskModeValue');
@@ -5679,6 +6131,17 @@
     const agentTaskModeOptions = document.getElementById('agentTaskModeOptions');
     const agentTaskModeSelect = document.getElementById('agentTaskModeSelect');
     const agentTaskStatus = document.getElementById('agentTaskStatus');
+    const agentTaskUEWorkflowContext = document.getElementById('agentTaskUEWorkflowContext');
+    const agentTaskUEWorkflowBranch = document.getElementById('agentTaskUEWorkflowBranch');
+    const agentTaskUEWorkflowMainProject = document.getElementById('agentTaskUEWorkflowMainProject');
+    const agentTaskUEWorkflowHostRoot = document.getElementById('agentTaskUEWorkflowHostRoot');
+    const agentTaskUEWorkflowPrimary = document.getElementById('agentTaskUEWorkflowPrimary');
+    const agentTaskUEWorkflowDeps = document.getElementById('agentTaskUEWorkflowDeps');
+    const agentTaskUEWorkflowFill = document.getElementById('agentTaskUEWorkflowFill');
+    const agentTaskUEWorkflowContextStatus = document.getElementById('agentTaskUEWorkflowContextStatus');
+    const agentTaskUEWorkflowPlan = document.getElementById('agentTaskUEWorkflowPlan');
+    const agentTaskUEWorkflowPlanState = document.getElementById('agentTaskUEWorkflowPlanState');
+    const agentTaskUEWorkflowPlanStages = document.getElementById('agentTaskUEWorkflowPlanStages');
     const agentTaskPromptPreview = document.getElementById('agentTaskPromptPreview');
     const agentTaskDetailClose = document.getElementById('agentTaskDetailClose');
     const agentTaskBlock = document.getElementById('agentTaskBlock');
@@ -5724,6 +6187,13 @@
     let agentTaskPendingConfirm = null;
     let agentTaskPointerDrag = null;
     let agentTaskSuppressOpenUntil = 0;
+    let ueWorkflowLinkStatus = null;
+    let ueWorkflowDoctorStatus = null;
+    let ueWorkflowModulesStatus = null;
+    let ueWorkflowModuleStatus = {};
+    let ueWorkflowStatusError = '';
+    let ueWorkflowLoading = false;
+    let ueWorkflowRuntimeState = null;
     let todoSessionFocusTimer = 0;
     let isAgentTaskMode = false;
     let agentTaskFlipTimer = 0;
@@ -5777,6 +6247,18 @@
     const AGENT_TASK_TITLE_MAX_PX = 18;
     const AGENT_TASK_TITLE_DEFAULT_PX = 13;
     const AGENT_TASK_DRAG_THRESHOLD_PX = 6;
+    const UE_WORKFLOW_PLUGIN_NAME = 'UEWorkflow';
+    const UE_WORKFLOW_MASTER_CONFIRMATION = 'UEWorkflow.UnrealMaster.execute.v1';
+    const UE_WORKFLOW_LIFECYCLE_EVENT_LIMIT = 60;
+    const AGENT_TASK_WORKFLOW_STANDARD = 'standard';
+    const AGENT_TASK_WORKFLOW_UE = 'ueworkflow';
+    const DEFAULT_AGENT_TASK_WORKFLOW = AGENT_TASK_WORKFLOW_UE;
+    const DEFAULT_AGENT_TASK_LAUNCH_MODE = 'agents';
+    const UE_WORKFLOW_BUSINESS_MODULES = [
+      { codeName: 'DevFlow', shortName: 'devflow', displayName: '开发流', statusName: 'dev' },
+      { codeName: 'AgentHub', shortName: 'agents', displayName: '智能体', statusName: 'agents' },
+      { codeName: 'KnowledgeBase', shortName: 'kb', displayName: '知识库', statusName: 'kb' }
+    ];
     const PAGE_ZOOM_MIN = 25;
     const PAGE_ZOOM_MAX = 500;
     const PAGE_ZOOM_DEFAULT = 100;
@@ -5926,6 +6408,8 @@
         clearFilters: 'Clear filters',
         includeCodex: 'Codex sessions',
         includeOpenCode: 'OpenCode sessions',
+        handoffUnrealWorkflowLabel: 'Unreal Workflow',
+        handoffUnrealWorkflowDescription: 'Create a controlled Unreal Workflow plan first, then send the provider task package',
         handoffCodexLabel: 'Codex Desktop',
         handoffCodexDescription: 'Create a Codex desktop thread in the selected workspace and send the handoff prompt',
         handoffOpenCodeLabel: 'OpenCode CLI',
@@ -5977,7 +6461,13 @@
         pageZoom: 'Page zoom (%)',
         agentTaskNotesLabel: 'Notes',
         agentTaskAcceptanceLabel: 'Acceptance',
-        agentTaskTargetLabel: 'Target',
+        agentTaskWorkflowLabel: 'Workflow',
+        agentTaskWorkflowOptionsLabel: 'Workflow options',
+        agentTaskWorkflowStandardLabel: 'Normal task',
+        agentTaskWorkflowStandardDescription: 'Send the task directly to the selected Agent',
+        agentTaskWorkflowUnrealDescription: 'Create an Unreal Workflow dry-run and execution package, then open the selected Agent',
+        agentTaskTargetLabel: 'Target Agent',
+        agentTaskAgentOptionsLabel: 'Target Agent options',
         agentTaskPromptLabel: 'Prompt',
         agentTaskMetaReturned: 'Edit and launch again',
         agentTaskMetaWaiting: '{target} waiting for your reply',
@@ -6089,6 +6579,8 @@
         clearFilters: '清除筛选',
         includeCodex: 'Codex 会话',
         includeOpenCode: 'OpenCode 会话',
+        handoffUnrealWorkflowLabel: '虚幻工作流',
+        handoffUnrealWorkflowDescription: '先生成受控虚幻工作流预演，再发送 provider 任务包',
         handoffCodexLabel: 'Codex 桌面端',
         handoffCodexDescription: '在选中的工作区创建 Codex 桌面端会话，并发送接续提示词',
         handoffOpenCodeLabel: 'OpenCode CLI',
@@ -6140,7 +6632,13 @@
         pageZoom: '页面缩放（%）',
         agentTaskNotesLabel: '任务说明',
         agentTaskAcceptanceLabel: '完成标准',
-        agentTaskTargetLabel: '执行目标',
+        agentTaskWorkflowLabel: '工作流',
+        agentTaskWorkflowOptionsLabel: '工作流选项',
+        agentTaskWorkflowStandardLabel: '普通任务',
+        agentTaskWorkflowStandardDescription: '直接把任务发给所选 Agent',
+        agentTaskWorkflowUnrealDescription: '先生成虚幻工作流预演和执行包，再打开所选 Agent',
+        agentTaskTargetLabel: '目标 Agent',
+        agentTaskAgentOptionsLabel: '目标 Agent 选项',
         agentTaskPromptLabel: '派发快照',
         agentTaskMetaReturned: '可编辑后再启动',
         agentTaskMetaWaiting: '{target} 等待你回复',
@@ -6242,11 +6740,17 @@
       });
 
     const handoffLaunchModes = [
+      { value: 'ueworkflow', labelKey: 'handoffUnrealWorkflowLabel', descriptionKey: 'handoffUnrealWorkflowDescription' },
       { value: 'agents', labelKey: 'handoffAgentsLabel', descriptionKey: 'handoffAgentsDescription' },
       { value: 'code-chat', labelKey: 'handoffCodeChatLabel', descriptionKey: 'handoffCodeChatDescription' },
       { value: 'claude-panel', labelKey: 'handoffClaudeLabel', descriptionKey: 'handoffClaudeDescription' },
       { value: 'codex-app', labelKey: 'handoffCodexLabel', descriptionKey: 'handoffCodexDescription' },
       { value: 'opencode-cli', labelKey: 'handoffOpenCodeLabel', descriptionKey: 'handoffOpenCodeDescription' }
+    ];
+    const agentTaskProviderModes = handoffLaunchModes.filter(item => item.value !== AGENT_TASK_WORKFLOW_UE);
+    const agentTaskWorkflowModes = [
+      { value: AGENT_TASK_WORKFLOW_UE, labelKey: 'handoffUnrealWorkflowLabel', descriptionKey: 'agentTaskWorkflowUnrealDescription' },
+      { value: AGENT_TASK_WORKFLOW_STANDARD, labelKey: 'agentTaskWorkflowStandardLabel', descriptionKey: 'agentTaskWorkflowStandardDescription' }
     ];
     let currentLang = settings.language;
     let previewCard = null;
@@ -6268,6 +6772,7 @@
     let sessionPreviewSize = loadSessionPreviewSize();
     applyDocumentSettings();
     let toastTimer = 0;
+    const ueWorkflowExecuteInFlight = new Map();
     let waitingSessionStatusSnapshot = new Map();
     let waitingAlertBaselineReady = false;
     const waitingAlertItems = new Map();
@@ -6496,6 +7001,8 @@
             })
           : null;
         const workspaceKey = identity?.key || normalizedWorkspacePathKey(path) || workspace.key || key;
+        const taskWorkspacePath = normalizeWorkspaceLaunchPath(identity?.path || path || workspace.path || '');
+        tasks.forEach(task => repairUEWorkflowTaskDispatchWorkspace(task, taskWorkspacePath));
         const existing = normalized.workspaces[workspaceKey];
         if (existing) {
           existing.label = cleanWorkspaceValue(existing.label || identity?.label || workspace.label || workspace.name || workspaceKey, workspaceKey);
@@ -6517,38 +7024,203 @@
       return normalized;
     }
 
+    function repairUEWorkflowTaskDispatchWorkspace(task, taskWorkspacePath) {
+      const workspacePath = normalizeWorkspaceLaunchPath(taskWorkspacePath || '');
+      if (!task || !workspacePath || !isUEWorkflowWorkflow(task.workflow) || !Array.isArray(task.dispatches)) return;
+      const workspaceKey = normalizedWorkspacePathKey(workspacePath);
+      task.dispatches = task.dispatches.map(dispatch => {
+        if (!dispatch || typeof dispatch !== 'object') return dispatch;
+        const dispatchPath = normalizeWorkspaceLaunchPath(dispatch.workspacePath || '');
+        const providerPath = normalizeWorkspaceLaunchPath(dispatch.providerWorkspacePath || dispatch.executionWorkspacePath || '');
+        const dispatchKey = normalizedWorkspacePathKey(dispatchPath);
+        if (!dispatchPath) return { ...dispatch, workspacePath };
+        if (!providerPath && dispatchKey && dispatchKey !== workspaceKey) {
+          return { ...dispatch, workspacePath, providerWorkspacePath: dispatchPath };
+        }
+        if (dispatchKey && dispatchKey !== workspaceKey) {
+          return { ...dispatch, workspacePath };
+        }
+        return dispatch;
+      });
+    }
+
+    function todoTaskMapById(state) {
+      const map = new Map();
+      Object.values(state?.workspaces || {}).forEach(workspace => {
+        (workspace?.tasks || []).forEach(task => {
+          if (task?.id) map.set(task.id, task);
+        });
+      });
+      return map;
+    }
+
+    function mergeLocalUEWorkflowTaskState(nextState) {
+      const currentTasks = todoTaskMapById(todoState);
+      Object.values(nextState?.workspaces || {}).forEach(workspace => {
+        (workspace?.tasks || []).forEach(task => {
+          const current = currentTasks.get(task?.id || '');
+          if (!current) return;
+          const currentUpdated = Number(current.updatedAt) || 0;
+          const nextUpdated = Number(task.updatedAt) || 0;
+          if (currentUpdated < nextUpdated) return;
+          if (!task.ueWorkflowMaster && current.ueWorkflowMaster) {
+            task.ueWorkflowMaster = current.ueWorkflowMaster;
+            task.updatedAt = Math.max(currentUpdated, nextUpdated);
+          }
+          if (!task.ueWorkflowContext && current.ueWorkflowContext) {
+            task.ueWorkflowContext = current.ueWorkflowContext;
+            task.updatedAt = Math.max(currentUpdated, nextUpdated);
+          }
+          if (!task.execution && current.execution?.pluginName === UE_WORKFLOW_PLUGIN_NAME) {
+            task.execution = current.execution;
+            task.updatedAt = Math.max(currentUpdated, nextUpdated);
+          }
+        });
+      });
+      return nextState;
+    }
+
     function normalizeTodoTask(task, index = 0) {
       if (!task || typeof task !== 'object') return null;
       const title = String(task.title || '').trim();
       if (!title) return null;
       const status = ['ready', 'running', 'review', 'blocked', 'done'].includes(task.status) ? task.status : 'ready';
       const dispatches = Array.isArray(task.dispatches) ? task.dispatches.map(normalizeTodoDispatch).filter(Boolean) : [];
+      const execution = normalizeTodoExecution(task.execution);
+      const rawUEWorkflowMaster =
+        task.ueWorkflowMaster
+        || execution?.result?.details
+        || task.execution?.result?.details
+        || null
+      const ueWorkflowMaster = summarizeUEWorkflowMasterDetails(rawUEWorkflowMaster, null)
+        || normalizeUEWorkflowMasterDetails(rawUEWorkflowMaster);
+      const legacyUEWorkflowTask = task.launchMode === AGENT_TASK_WORKFLOW_UE
+        || !!task.ueWorkflowMaster
+        || execution?.pluginName === UE_WORKFLOW_PLUGIN_NAME;
+      const workflow = normalizedAgentTaskWorkflow(
+        task.workflow,
+        legacyUEWorkflowTask ? AGENT_TASK_WORKFLOW_UE : AGENT_TASK_WORKFLOW_STANDARD
+      );
       const normalized = {
         id: String(task.id || makeTodoId()),
         title,
         description: String(task.description || ''),
         acceptance: String(task.acceptance || ''),
+        workflow,
+        launchMode: normalizedAgentTaskMode(task.launchMode || ''),
         status,
         order: Number.isFinite(Number(task.order)) ? Number(task.order) : index,
         createdAt: Number(task.createdAt) || Date.now(),
         updatedAt: Number(task.updatedAt) || Date.now(),
-        dispatches
+        dispatches,
+        execution,
+        ueWorkflowContext: normalizeUEWorkflowBinding(task.ueWorkflowContext || task.ueWorkflowBinding || {}),
+        ueWorkflowMaster,
+        ueWorkflowLifecycle: normalizeUEWorkflowLifecycle(task.ueWorkflowLifecycle || task.ueWorkflowRun)
       };
       return normalized;
+    }
+
+    function normalizeUEWorkflowLifecycle(lifecycle) {
+      if (!lifecycle || typeof lifecycle !== 'object') return null;
+      const events = Array.isArray(lifecycle.events)
+        ? lifecycle.events
+          .map(event => {
+            if (!event || typeof event !== 'object') return null;
+            return {
+              id: String(event.id || makeTodoId('uwf-event')),
+              type: String(event.type || event.phase || 'event').slice(0, 80),
+              message: String(event.message || event.title || '').slice(0, 500),
+              at: Number(event.at || event.timestamp || Date.now()) || Date.now(),
+              data: event.data && typeof event.data === 'object' ? event.data : null
+            };
+          })
+          .filter(Boolean)
+          .slice(-UE_WORKFLOW_LIFECYCLE_EVENT_LIMIT)
+        : [];
+      const normalized = {
+        runId: String(lifecycle.runId || ''),
+        phase: String(lifecycle.phase || '').slice(0, 80),
+        status: ['ready', 'running', 'waiting', 'success', 'failed'].includes(String(lifecycle.status || '')) ? String(lifecycle.status) : '',
+        message: String(lifecycle.message || '').slice(0, 500),
+        updatedAt: Number(lifecycle.updatedAt || 0) || 0,
+        events
+      };
+      if (!normalized.runId && !normalized.phase && !normalized.status && !normalized.message && !events.length) return null;
+      return normalized;
+    }
+
+    function normalizeUEWorkflowMasterDetails(details) {
+      if (!details || typeof details !== 'object') return null;
+      return details.kind === 'UnrealWorkflowMasterResult' ? details : null;
+    }
+
+    function normalizeTodoExecution(execution) {
+      if (!execution || typeof execution !== 'object') return null;
+      const taskInfo = execution.task && typeof execution.task === 'object' ? execution.task : {};
+      const result = normalizeTodoExecutionResult(execution.result || execution.latestResult || taskInfo.result);
+      const status = normalizedModuleExecutionStatus(execution.status || taskInfo.status || result?.status || '');
+      const normalized = {
+        runId: String(execution.runId || taskInfo.taskId || execution.taskId || ''),
+        pluginName: String(execution.pluginName || taskInfo.pluginName || result?.pluginName || ''),
+        moduleName: String(execution.moduleName || taskInfo.moduleName || result?.moduleName || ''),
+        commandName: String(execution.commandName || taskInfo.commandName || result?.commandName || ''),
+        status,
+        summary: String(execution.summary || taskInfo.summary || result?.summary || ''),
+        startedMs: Number(execution.startedMs || taskInfo.startedMs || 0) || 0,
+        finishedMs: Number(execution.finishedMs || taskInfo.finishedMs || 0) || 0,
+        result
+      };
+      if (!normalized.runId && !normalized.pluginName && !normalized.moduleName && !normalized.commandName && !normalized.summary && !normalized.result) return null;
+      return normalized;
+    }
+
+    function normalizeTodoExecutionResult(result) {
+      if (!result || typeof result !== 'object') return null;
+      return {
+        schemaVersion: Number(result.schemaVersion) || 1,
+        kind: String(result.kind || 'AgentWatcherModuleResult'),
+        pluginName: String(result.pluginName || ''),
+        moduleName: String(result.moduleName || ''),
+        commandName: String(result.commandName || ''),
+        status: normalizedModuleExecutionStatus(result.status || ''),
+        summary: String(result.summary || ''),
+        exitCode: Number.isFinite(Number(result.exitCode)) ? Number(result.exitCode) : null,
+        artifacts: Array.isArray(result.artifacts) ? result.artifacts : [],
+        metrics: result.metrics && typeof result.metrics === 'object' ? result.metrics : {},
+        details: result.details && typeof result.details === 'object' ? result.details : null,
+        stdoutExcerpt: String(result.stdoutExcerpt || ''),
+        stderrExcerpt: String(result.stderrExcerpt || '')
+      };
+    }
+
+    function normalizedModuleExecutionStatus(status) {
+      const value = String(status || '').toLowerCase();
+      if (['running', 'success', 'failed', 'blocked', 'cancelled', 'planned'].includes(value)) return value;
+      return '';
     }
 
     function normalizeTodoDispatch(dispatch) {
       if (!dispatch || typeof dispatch !== 'object') return null;
       return {
         id: String(dispatch.id || makeTodoId('dispatch')),
-        mode: handoffLaunchModes.some(item => item.value === dispatch.mode) ? dispatch.mode : 'agents',
+        workflow: normalizedAgentTaskWorkflow(
+          dispatch.workflow,
+          dispatch.mode === AGENT_TASK_WORKFLOW_UE ? AGENT_TASK_WORKFLOW_UE : AGENT_TASK_WORKFLOW_STANDARD
+        ),
+        mode: normalizedAgentTaskMode(dispatch.mode || ''),
         workspacePath: normalizeWorkspaceLaunchPath(dispatch.workspacePath || ''),
+        providerWorkspacePath: normalizeWorkspaceLaunchPath(dispatch.providerWorkspacePath || dispatch.executionWorkspacePath || ''),
         launchedAt: Number(dispatch.launchedAt) || Date.now(),
         boundSessionId: dispatch.boundSessionId ? String(dispatch.boundSessionId) : '',
         boundProvider: dispatch.boundProvider ? String(dispatch.boundProvider) : '',
         boundAt: Number(dispatch.boundAt) || 0,
         sessionStatus: ['waiting', 'running', 'idle'].includes(dispatch.sessionStatus) ? dispatch.sessionStatus : '',
-        lastPrompt: String(dispatch.lastPrompt || '')
+        launchError: String(dispatch.launchError || ''),
+        lastPrompt: String(dispatch.lastPrompt || ''),
+        sessionPath: String(dispatch.sessionPath || ''),
+        transcriptPath: String(dispatch.transcriptPath || ''),
+        sessionResource: String(dispatch.sessionResource || '')
       };
     }
 
@@ -6631,7 +7303,26 @@
           order: 5,
           createdAt: now - 58 * 60_000,
           updatedAt: now - 5 * 60_000,
-          dispatches: [makeDispatch('running-bound', 'code-chat', 12, 'debug-copilot-running-session', 'copilot', 'running')]
+          dispatches: [makeDispatch('running-bound', 'code-chat', 12, 'debug-copilot-running-session', 'copilot', 'running')],
+          execution: {
+            runId: 'debug-module-run',
+            pluginName: 'UEWorkflow',
+            moduleName: 'DevFlow',
+            commandName: 'status',
+            status: 'success',
+            summary: '开发流状态检查完成',
+            startedMs: now - 7 * 60_000,
+            finishedMs: now - 6 * 60_000,
+            result: {
+              schemaVersion: 1,
+              kind: 'AgentWatcherModuleResult',
+              moduleName: 'DevFlow',
+              commandName: 'status',
+              status: 'success',
+              summary: '开发流状态检查完成',
+              exitCode: 0
+            }
+          }
         },
         {
           id: 'debug-review-copilot',
@@ -6920,6 +7611,7 @@
     }
 
     function todoProviderForMode(mode) {
+      if (mode === 'ueworkflow') return 'copilot';
       if (mode === 'claude-panel') return 'claude';
       if (mode === 'codex-app') return 'codex';
       if (mode === 'opencode-cli') return 'opencode';
@@ -6932,6 +7624,16 @@
       if (status === 'review') return t('todoReview');
       if (status === 'blocked') return t('todoBlocked');
       return t('todoReady');
+    }
+
+    function moduleExecutionStatusText(status) {
+      const zh = currentLang === 'zh';
+      if (status === 'running') return zh ? '模块运行中' : 'Module running';
+      if (status === 'success') return zh ? '模块成功' : 'Module success';
+      if (status === 'failed') return zh ? '模块失败' : 'Module failed';
+      if (status === 'blocked') return zh ? '模块受阻' : 'Module blocked';
+      if (status === 'cancelled') return zh ? '模块已取消' : 'Module cancelled';
+      return zh ? '模块状态' : 'Module status';
     }
 
     function agentTaskActionText(action) {
@@ -6988,7 +7690,7 @@
 
     function shouldDeferInputInterruptions(options = {}) {
       if (isForcedUiUpdate(options)) return false;
-      return isTextComposing || !!activeTextInputElement() || Date.now() < textInputQuietUntil;
+      return watcherNativeWindowInteractionInProgress || watcherNativeResizeInProgress || isTextComposing || !!activeTextInputElement() || Date.now() < textInputQuietUntil;
     }
 
     function hasInputGuardedUiWork() {
@@ -7001,6 +7703,8 @@
         inputGuardFlushTimer = 0;
       }
       if (!hasInputGuardedUiWork()) return;
+      if (watcherNativeWindowInteractionInProgress) return;
+      if (watcherNativeResizeInProgress) return;
       if (isTextComposing || activeTextInputElement()) return;
       const delay = Math.max(0, textInputQuietUntil - Date.now()) + 24;
       inputGuardFlushTimer = window.setTimeout(flushInputGuardedUi, delay);
@@ -7025,7 +7729,7 @@
       }
 
       if (pendingTodoStatePayload) {
-        todoState = normalizeTodoState(pendingTodoStatePayload);
+        todoState = mergeLocalUEWorkflowTaskState(normalizeTodoState(pendingTodoStatePayload));
         pendingTodoStatePayload = null;
         pendingTodoRender = true;
       }
@@ -7099,12 +7803,31 @@
       agentTaskPendingConfirm = null;
     }
 
+    function showAgentTaskActionError(error) {
+      const message = String(error || '任务动作执行失败').trim() || '任务动作执行失败';
+      showToast(message);
+      console.error('[AgentTask] action failed', error);
+    }
+
+    function runAgentTaskAction(spec) {
+      try {
+        const result = spec?.action?.();
+        if (result && typeof result.catch === 'function') {
+          result.catch(showAgentTaskActionError);
+        }
+      } catch (error) {
+        showAgentTaskActionError(error);
+      }
+    }
+
     function runAgentTaskConfirmedAction(button, spec) {
       if (!button || !spec) return;
       const key = spec.confirmKey || spec.key || spec.label;
-      if (agentTaskPendingConfirm?.key === key) {
+      const buttonAlreadyConfirming = button.classList.contains('is-confirming')
+        || (spec.confirmLabel && button.textContent.trim() === spec.confirmLabel);
+      if (agentTaskPendingConfirm?.key === key || buttonAlreadyConfirming) {
         resetAgentTaskConfirm();
-        spec.action?.();
+        runAgentTaskAction(spec);
         return;
       }
       resetAgentTaskConfirm();
@@ -7145,7 +7868,9 @@
           title: found.task.title || '',
           description: found.task.description || '',
           acceptance: found.task.acceptance || '',
-          mode: normalizedAgentTaskMode(latest?.mode || agentTaskModeSelect?.value || 'agents')
+          workflow: agentTaskWorkflowForTask(found.task),
+          mode: normalizedAgentTaskMode(latest?.mode || found.task.launchMode || agentTaskModeSelect?.value || DEFAULT_AGENT_TASK_LAUNCH_MODE),
+          ueWorkflowContext: ueWorkflowContextFromTask(found.task, found.workspace)
         };
       }
       return agentTaskDetailDraft;
@@ -7164,7 +7889,13 @@
       if (titleInput) draft.title = titleInput.value;
       if (agentTaskDetailDescription) draft.description = agentTaskDetailDescription.value;
       if (agentTaskDetailAcceptance) draft.acceptance = agentTaskDetailAcceptance.value;
+      if (agentTaskWorkflowSelect) draft.workflow = normalizedAgentTaskWorkflow(agentTaskWorkflowSelect.value);
       if (agentTaskModeSelect) draft.mode = normalizedAgentTaskMode(agentTaskModeSelect.value);
+      if (isUEWorkflowWorkflow(draft.workflow)) {
+        draft.ueWorkflowContext = agentTaskUEWorkflowContext && !agentTaskUEWorkflowContext.hidden
+          ? ueWorkflowTaskContextFromInputs()
+          : (draft.ueWorkflowContext || ueWorkflowContextFromTask(found.task, found.workspace));
+      }
       return draft;
     }
 
@@ -7494,7 +8225,7 @@
         scheduleInputGuardFlush();
         return;
       }
-      todoState = normalizeTodoState(payload);
+      todoState = mergeLocalUEWorkflowTaskState(normalizeTodoState(payload));
       renderOrSyncTodoState({ force: isForcedUiUpdate(options) });
     }
 
@@ -7661,8 +8392,404 @@
       agentTaskQuickTitle?.focus();
     }
 
+    function emptyUEWorkflowBinding() {
+      return {
+        branchName: '',
+        devFlowWorkspace: '',
+        project: '',
+        mainProject: '',
+        hostRoot: '',
+        primary: '',
+        primaryPath: '',
+        pluginDependencies: ''
+      };
+    }
+
+    function normalizeUEWorkflowBranchName(value) {
+      return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    }
+
+    function isValidUEWorkflowBranchName(value) {
+      const text = String(value || '').trim();
+      return /^[a-z0-9][a-z0-9-]*$/.test(text);
+    }
+
+    function normalizeUEWorkflowPrimary(value) {
+      return String(value || '')
+        .split(/[,\n\r;；，、]+/)
+        .map(item => item.trim())
+        .filter(Boolean)
+        .join(',');
+    }
+
+    function ueWorkflowListItems(value) {
+      return String(value || '')
+        .split(/[,\n\r;；，、]+/)
+        .map(item => item.trim())
+        .filter(Boolean);
+    }
+
+    function normalizeUEWorkflowPathSet(value) {
+      return ueWorkflowListItems(value)
+        .map(item => normalizeWorkspaceLaunchPath(item))
+        .filter(Boolean)
+        .join(';');
+    }
+
+    function ueWorkflowPathLooksLikePath(value) {
+      return /[\\/]/.test(String(value || '')) || /^[a-z]:/i.test(String(value || ''));
+    }
+
+    function ueWorkflowPluginNameFromPath(value) {
+      const clean = normalizeWorkspaceLaunchPath(value || '').replace(/[\\/]+$/, '');
+      if (!clean) return '';
+      const parts = clean.split(/[\\/]+/).filter(Boolean);
+      const last = parts[parts.length - 1] || '';
+      if (/\.uplugin$/i.test(last)) return last.replace(/\.uplugin$/i, '');
+      return last;
+    }
+
+    function ueWorkflowPrimaryNamesFromPathSet(value) {
+      return ueWorkflowListItems(value)
+        .map(ueWorkflowPluginNameFromPath)
+        .filter(Boolean)
+        .join(',');
+    }
+
+    function normalizeUEWorkflowBinding(binding) {
+      const source = binding && typeof binding === 'object' ? binding : {};
+      const clean = value => String(value || '').trim();
+      const sourcePrimary = clean(source.primary);
+      const sourcePrimaryPath = clean(source.primaryPath || source.primaryPaths);
+      const primaryPath = normalizeUEWorkflowPathSet(sourcePrimaryPath || (ueWorkflowPathLooksLikePath(sourcePrimary) ? sourcePrimary : ''));
+      return {
+        branchName: normalizeUEWorkflowBranchName(source.branchName || source.taskBranch || source.devFlowTaskId || ''),
+        devFlowWorkspace: clean(source.devFlowWorkspace || source.workspace),
+        project: clean(source.project),
+        mainProject: normalizeWorkspaceLaunchPath(source.mainProject || ''),
+        hostRoot: normalizeWorkspaceLaunchPath(source.hostRoot || ''),
+        primary: normalizeUEWorkflowPrimary(primaryPath ? (source.primaryName || ueWorkflowPrimaryNamesFromPathSet(primaryPath)) : sourcePrimary),
+        primaryPath,
+        pluginDependencies: clean(source.pluginDependencies)
+      };
+    }
+
+    function pathFromParts(parts) {
+      if (!parts.length) return '';
+      if (/^[a-z]:$/i.test(parts[0])) return parts[0] + '\\' + parts.slice(1).join('\\');
+      return parts.join('\\');
+    }
+
+    function inferUEWorkflowPathContext(workspace) {
+      const workspacePath = normalizeWorkspaceLaunchPath(workspace?.path || '');
+      const pathParts = workspacePath.split(/[\\/]+/).filter(Boolean);
+      const lowerParts = pathParts.map(part => part.toLowerCase());
+      const pluginsIndex = lowerParts.findIndex(part => part === 'plugins');
+      const hostsIndex = lowerParts.findIndex(part => part === 'hosts');
+      const primaryPlugin = pluginsIndex >= 0 && pathParts[pluginsIndex + 1] ? pathParts[pluginsIndex + 1] : '';
+      const projectRootParts = hostsIndex > 0
+        ? pathParts.slice(0, hostsIndex)
+        : (pluginsIndex > 0 ? pathParts.slice(0, pluginsIndex) : []);
+      const inferredProjectRoot = pathFromParts(projectRootParts);
+      const mainProject = (pluginsIndex >= 0 && hostsIndex < 0) ? '' : inferredProjectRoot;
+      const project = projectRootParts[projectRootParts.length - 1] || '';
+      const hostRoot = hostsIndex > 0
+        ? pathFromParts(pathParts.slice(0, hostsIndex + 1))
+        : (mainProject ? mainProject + '\\Hosts' : '');
+      const primaryPath = primaryPlugin && pluginsIndex >= 0
+        ? pathFromParts(pathParts.slice(0, pluginsIndex + 2))
+        : workspacePath;
+      return { workspacePath, project, mainProject, hostRoot, primaryPlugin, primaryPath };
+    }
+
+    function mergeUEWorkflowContext(base, override) {
+      const normalizedBase = normalizeUEWorkflowBinding(base);
+      const normalizedOverride = normalizeUEWorkflowBinding(override);
+      const merged = { ...normalizedBase };
+      Object.keys(merged).forEach(key => {
+        if (normalizedOverride[key]) merged[key] = normalizedOverride[key];
+      });
+      return normalizeUEWorkflowBinding(merged);
+    }
+
+    function deriveUEWorkflowBindingFromWorkspace(workspace) {
+      const inferred = inferUEWorkflowPathContext(workspace || currentTodoWorkspace() || {});
+      return normalizeUEWorkflowBinding({
+        devFlowWorkspace: '',
+        project: inferred.project,
+        mainProject: inferred.mainProject,
+        hostRoot: inferred.hostRoot,
+        primary: inferred.primaryPlugin,
+        primaryPath: inferred.primaryPath,
+        pluginDependencies: ''
+      });
+    }
+
+    function ueWorkflowContextFromTask(task, workspace) {
+      return mergeUEWorkflowContext(
+        deriveUEWorkflowBindingFromWorkspace(workspace || currentTodoWorkspace() || {}),
+        task?.ueWorkflowContext || {}
+      );
+    }
+
+    function ueWorkflowTaskContextFromInputs() {
+      const primaryPath = normalizeUEWorkflowPathSet(agentTaskUEWorkflowPrimary?.value);
+      return normalizeUEWorkflowBinding({
+        branchName: agentTaskUEWorkflowBranch?.value,
+        mainProject: agentTaskUEWorkflowMainProject?.value,
+        hostRoot: agentTaskUEWorkflowHostRoot?.value,
+        primary: ueWorkflowPrimaryNamesFromPathSet(primaryPath),
+        primaryPath,
+        pluginDependencies: agentTaskUEWorkflowDeps?.value
+      });
+    }
+
+    function applyUEWorkflowTaskContextToInputs(context) {
+      const normalized = normalizeUEWorkflowBinding(context);
+      if (agentTaskUEWorkflowBranch) agentTaskUEWorkflowBranch.value = normalized.branchName || '';
+      if (agentTaskUEWorkflowMainProject) agentTaskUEWorkflowMainProject.value = normalized.mainProject || '';
+      if (agentTaskUEWorkflowHostRoot) agentTaskUEWorkflowHostRoot.value = normalized.hostRoot || '';
+      if (agentTaskUEWorkflowPrimary) agentTaskUEWorkflowPrimary.value = normalized.primaryPath || normalized.primary || '';
+      if (agentTaskUEWorkflowDeps) agentTaskUEWorkflowDeps.value = normalized.pluginDependencies || '';
+    }
+
+    function ueWorkflowContextInputHasFocus() {
+      return !!document.activeElement?.closest?.('#agentTaskUEWorkflowContext');
+    }
+
+    function syncUEWorkflowTaskContextDraftFromInputs() {
+      const found = findTodoTask(agentTaskDetailTaskId);
+      const draft = ensureAgentTaskDetailDraft(found);
+      if (!draft) return null;
+      draft.ueWorkflowContext = ueWorkflowTaskContextFromInputs();
+      return draft.ueWorkflowContext;
+    }
+
+    function ueWorkflowBindingMissing(binding = emptyUEWorkflowBinding()) {
+      const normalized = normalizeUEWorkflowBinding(binding);
+      const missing = [];
+      if (!normalized.branchName) missing.push('分支名');
+      else if (!isValidUEWorkflowBranchName(normalized.branchName)) missing.push('分支名格式');
+      if (!normalized.hostRoot) missing.push('Host 根目录');
+      if (!normalized.primaryPath && !normalized.primary) missing.push('主插件集');
+      return missing;
+    }
+
+    function renderUEWorkflowPanel() {
+      if (!ueWorkflowPanel || !ueWorkflowModules) return;
+      if (ueWorkflowTitle) {
+        ueWorkflowTitle.textContent = '虚幻工作流';
+      }
+      if (ueWorkflowRefresh) ueWorkflowRefresh.disabled = ueWorkflowLoading;
+      if (ueWorkflowRepair) ueWorkflowRepair.disabled = ueWorkflowLoading || !tauriInvoke;
+      if (ueWorkflowProviderInstall) ueWorkflowProviderInstall.disabled = ueWorkflowLoading || !tauriInvoke || ueWorkflowRuntimeState?.enabled === false;
+      if (ueWorkflowEnableToggle) {
+        const enabled = ueWorkflowRuntimeState?.enabled !== false;
+        ueWorkflowEnableToggle.disabled = ueWorkflowLoading || !tauriInvoke;
+        ueWorkflowEnableToggle.textContent = enabled ? '停用' : '启用';
+        ueWorkflowEnableToggle.setAttribute('aria-pressed', String(enabled));
+        ueWorkflowEnableToggle.title = enabled ? '停用虚幻工作流' : '启用虚幻工作流';
+      }
+      ueWorkflowModules.replaceChildren();
+
+      const statusItem = document.createElement('div');
+      statusItem.className = 'ueworkflow-module';
+      const statusRow = document.createElement('div');
+      statusRow.className = 'ueworkflow-module-row';
+      const doctorStatus = ueWorkflowDoctorStatus?.status || (ueWorkflowLoading ? 'checking' : 'unknown');
+      const doctorLabel = ({
+        ok: '正常',
+        warning: '需处理',
+        error: '异常',
+        checking: '检查中',
+        unknown: '未知'
+      })[doctorStatus] || doctorStatus;
+      appendText(statusRow, 'div', 'ueworkflow-module-name', 'doctor：' + doctorLabel);
+      statusItem.appendChild(statusRow);
+      const statusLine = ueWorkflowStatusError
+        ? ueWorkflowStatusError
+        : (ueWorkflowDoctorStatus?.message || '设置页只负责插件安装、修复、启用和 Provider 安装。');
+      appendText(statusItem, 'div', 'ueworkflow-module-path', statusLine);
+      ueWorkflowModules.appendChild(statusItem);
+
+      UE_WORKFLOW_BUSINESS_MODULES.forEach(module => {
+        const item = document.createElement('div');
+        item.className = 'ueworkflow-module';
+        const row = document.createElement('div');
+        row.className = 'ueworkflow-module-row';
+        appendText(row, 'div', 'ueworkflow-module-name', module.displayName);
+        item.appendChild(row);
+        appendText(item, 'div', 'ueworkflow-module-path', `命令组：uwf ${module.statusName}`);
+        ueWorkflowModules.appendChild(item);
+      });
+    }
+
+    async function refreshUEWorkflowStatus(options = {}) {
+      if (!tauriInvoke) {
+        renderUEWorkflowPanel();
+        return null;
+      }
+      ueWorkflowLoading = true;
+      renderUEWorkflowPanel();
+      try {
+        const [linkResult, doctorResult, modulesResult] = await Promise.allSettled([
+          tauriInvoke('get_plugin_link_status', { pluginName: UE_WORKFLOW_PLUGIN_NAME }),
+          tauriInvoke('get_ueworkflow_doctor'),
+          tauriInvoke('get_ueworkflow_modules')
+        ]);
+        ueWorkflowLinkStatus = linkResult.status === 'fulfilled' ? linkResult.value : null;
+        ueWorkflowDoctorStatus = doctorResult.status === 'fulfilled' ? doctorResult.value?.result : null;
+        ueWorkflowModulesStatus = modulesResult.status === 'fulfilled' ? modulesResult.value?.result : null;
+        ueWorkflowStatusError = [linkResult, doctorResult, modulesResult]
+          .filter(result => result.status === 'rejected')
+          .map(result => String(result.reason || ''))
+          .filter(Boolean)
+          .join('；');
+        const statusEntries = await Promise.allSettled(
+          UE_WORKFLOW_BUSINESS_MODULES.map(module => tauriInvoke('get_ueworkflow_module_status', { moduleName: module.statusName }))
+        );
+        ueWorkflowModuleStatus = {};
+        statusEntries.forEach((entry, index) => {
+          const module = UE_WORKFLOW_BUSINESS_MODULES[index];
+          if (entry.status === 'fulfilled') {
+            ueWorkflowModuleStatus[module.shortName] = entry.value?.result || {};
+          }
+        });
+        return {
+          linkStatus: ueWorkflowLinkStatus,
+          doctor: ueWorkflowDoctorStatus,
+          modules: ueWorkflowModulesStatus,
+          moduleStatus: ueWorkflowModuleStatus
+        };
+      } catch (error) {
+        if (!options.silent) showToast(String(error));
+        ueWorkflowLinkStatus = null;
+        ueWorkflowDoctorStatus = null;
+        ueWorkflowModulesStatus = null;
+        ueWorkflowModuleStatus = {};
+        ueWorkflowStatusError = String(error);
+        return null;
+      } finally {
+        ueWorkflowLoading = false;
+        renderUEWorkflowPanel();
+      }
+    }
+
+    async function refreshUEWorkflowRuntimeState(options = {}) {
+      if (!tauriInvoke) {
+        renderUEWorkflowPanel();
+        return null;
+      }
+      try {
+        ueWorkflowRuntimeState = await tauriInvoke('get_plugin_runtime_state', { pluginName: UE_WORKFLOW_PLUGIN_NAME });
+        return ueWorkflowRuntimeState;
+      } catch (error) {
+        ueWorkflowRuntimeState = null;
+        if (!options.silent) showToast(String(error));
+        return null;
+      } finally {
+        renderUEWorkflowPanel();
+      }
+    }
+
+    async function toggleUEWorkflowEnabled() {
+      if (!tauriInvoke || ueWorkflowLoading) return;
+      const nextEnabled = ueWorkflowRuntimeState?.enabled === false;
+      ueWorkflowLoading = true;
+      renderUEWorkflowPanel();
+      try {
+        ueWorkflowRuntimeState = await tauriInvoke('set_plugin_enabled', {
+          pluginName: UE_WORKFLOW_PLUGIN_NAME,
+          enabled: nextEnabled
+        });
+        showToast(nextEnabled ? '虚幻工作流已启用' : '虚幻工作流已停用');
+      } catch (error) {
+        showToast(String(error));
+      } finally {
+        ueWorkflowLoading = false;
+        renderUEWorkflowPanel();
+      }
+    }
+
+    async function refreshUEWorkflowSettings() {
+      await Promise.all([
+        refreshUEWorkflowStatus({ silent: true }),
+        refreshUEWorkflowRuntimeState({ silent: true })
+      ]);
+    }
+
+    async function repairUEWorkflowLinks(options = {}) {
+      if (!tauriInvoke || ueWorkflowLoading) return;
+      if (!options.confirmed) {
+        showToast('请再次确认安装/修复 UEWorkflow 模块');
+        return;
+      }
+      ueWorkflowLoading = true;
+      renderUEWorkflowPanel();
+      try {
+        const before = await tauriInvoke('get_plugin_link_status', { pluginName: UE_WORKFLOW_PLUGIN_NAME });
+        const expectedModules = (before?.modules || []).map(module => ({
+          moduleName: module.moduleName,
+          state: module.state,
+          mountPath: module.mountPath,
+          expectedTarget: module.expectedTarget,
+          worktreeBranch: module.worktreeBranch || null,
+          managedWorktree: module.managedWorktree === true,
+          linkType: module.linkType
+        }));
+        const result = await tauriInvoke('repair_plugin_links', {
+          request: {
+            pluginName: UE_WORKFLOW_PLUGIN_NAME,
+            confirmed: true,
+            dryRunAccepted: true,
+            expectedModules
+          }
+        });
+        showToast(result?.changed ? '虚幻工作流已修复' : '虚幻工作流已就绪');
+        await refreshUEWorkflowStatus({ silent: true });
+      } catch (error) {
+        showToast(String(error));
+      } finally {
+        ueWorkflowLoading = false;
+        renderUEWorkflowPanel();
+      }
+    }
+
+    async function installUEWorkflowProviders(options = {}) {
+      if (!tauriInvoke || ueWorkflowLoading) return;
+      if (!options.confirmed) {
+        showToast('请再次确认安装到 Provider');
+        return;
+      }
+      ueWorkflowLoading = true;
+      renderUEWorkflowPanel();
+      try {
+        await tauriInvoke('run_ueworkflow_command', {
+          request: {
+            commandId: 'agents.install.execute',
+            confirmed: true,
+            dryRunAccepted: true,
+            confirmationBoundary: 'UEWorkflow.AgentHub.install-provider.v1'
+          }
+        });
+        showToast('虚幻工作流已安装到 Provider');
+        await refreshUEWorkflowStatus({ silent: true });
+      } catch (error) {
+        ueWorkflowStatusError = String(error || 'Provider 安装失败');
+        showToast(ueWorkflowStatusError);
+      } finally {
+        ueWorkflowLoading = false;
+        renderUEWorkflowPanel();
+      }
+    }
+
     function renderAgentTaskPanel(options = {}) {
       if (!agentTaskList) return;
+      if (isAgentTaskMode) ensureAgentTaskWindowExpanded();
       if (shouldDeferInputInterruptions(options)) {
         pendingTodoRender = true;
         scheduleInputGuardFlush();
@@ -7854,7 +8981,8 @@
       const isExpandedTask = isOpenTask || isClosingTask;
       const primaryAction = isExpandedTask
         ? agentTaskPrimaryAction(task, {
-            mode: () => agentTaskModeSelect?.value || latestTodoDispatch(task)?.mode || 'agents',
+            workflow: () => agentTaskWorkflowSelect?.value || task.workflow || DEFAULT_AGENT_TASK_WORKFLOW,
+            mode: () => agentTaskModeSelect?.value || latestTodoDispatch(task)?.mode || DEFAULT_AGENT_TASK_LAUNCH_MODE,
             saveBefore: true
           })
         : agentTaskCardAction(task);
@@ -7880,6 +9008,23 @@
     function agentTaskPrimaryAction(task, options = {}) {
       if (!task) return null;
       if (task.status === 'ready') {
+        const workflow = typeof options.workflow === 'function' ? options.workflow() : options.workflow;
+        const mode = typeof options.mode === 'function' ? options.mode() : options.mode;
+        if (isUEWorkflowWorkflow(workflow || agentTaskWorkflowForTask(task))) {
+          const hasDryRun = ueWorkflowTaskHasDryRun(task) || ueWorkflowTaskHasExecutePackage(task);
+          const label = hasDryRun ? '生成执行包' : '预演';
+          return {
+            label,
+            ariaLabel: label,
+            confirm: false,
+            confirmKey: 'ueworkflow:' + (hasDryRun ? 'execute:' : 'dry-run:') + task.id,
+            action: async () => {
+              if (options.saveBefore && !(await saveAgentTaskDetail({ announce: false, render: false, force: true }))) return;
+              if (hasDryRun) await executeUEWorkflowTaskPackage(task.id);
+              else await runUEWorkflowDryRunForTodo(task.id);
+            }
+          };
+        }
         const label = t('todoDispatch');
         const latest = latestTodoDispatch(task);
         return {
@@ -7888,17 +9033,24 @@
           confirmKey: 'launch:' + task.id,
           action: async () => {
             if (options.saveBefore && !(await saveAgentTaskDetail({ announce: false, render: false, force: true }))) return;
-            const mode = typeof options.mode === 'function' ? options.mode() : options.mode;
-            await dispatchTodoTask(task.id, mode || latest?.mode || 'agents');
+            await dispatchTodoTask(task.id, mode || latest?.mode || DEFAULT_AGENT_TASK_LAUNCH_MODE);
           }
         };
       }
       if (task.status === 'running') {
+        if (isUEWorkflowWorkflow(task.workflow) && agentTaskCanComplete(task)) {
+          const label = agentTaskActionText('accept');
+          return { label, ariaLabel: label, confirmKey: 'complete-running-ueworkflow:' + task.id, action: () => setTodoTaskStatus(task.id, 'done') };
+        }
         const stage = agentTaskRunStage(task);
         const label = stage === 'waiting' ? t('todoReply') : t('todoInspect');
         return { label, ariaLabel: label, confirmKey: 'open:' + stage + ':' + task.id, action: () => openTodoTaskSession(task.id) };
       }
       if (task.status === 'review') {
+        if (isUEWorkflowWorkflow(task.workflow) && !agentTaskCanComplete(task)) {
+          const label = t('todoInspect');
+          return { label, ariaLabel: label, confirmKey: 'open:review:' + task.id, action: () => openTodoTaskSession(task.id) };
+        }
         const label = agentTaskActionText('accept');
         return { label, ariaLabel: label, confirmKey: 'accept:' + task.id, action: () => setTodoTaskStatus(task.id, 'done') };
       }
@@ -7933,6 +9085,31 @@
       };
     }
 
+    function currentAgentTaskDetailPrimaryAction() {
+      const found = findTodoTask(agentTaskDetailTaskId);
+      if (!found) return null;
+      return agentTaskPrimaryAction(found.task, {
+        workflow: () => agentTaskWorkflowSelect?.value || found.task.workflow || DEFAULT_AGENT_TASK_WORKFLOW,
+        mode: () => agentTaskModeSelect?.value || latestTodoDispatch(found.task)?.mode || DEFAULT_AGENT_TASK_LAUNCH_MODE,
+        saveBefore: true
+      });
+    }
+
+    function handleAgentTaskDetailPrimaryClick(event) {
+      const button = event.target?.closest?.('.agenttask-card-action[data-agent-task-action-role="primary"]');
+      if (!button || !agentTaskDetailLayer?.contains(button)) return;
+      const actionSpec = currentAgentTaskDetailPrimaryAction();
+      if (!actionSpec) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      if (actionSpec.confirm === false) {
+        runAgentTaskAction(actionSpec);
+        return;
+      }
+      runAgentTaskConfirmedAction(button, actionSpec);
+    }
+
     function agentTaskCardActionButton(spec) {
       const button = document.createElement('button');
       button.type = 'button';
@@ -7943,11 +9120,14 @@
       button.setAttribute('aria-label', spec.ariaLabel || spec.label);
       button.addEventListener('click', event => {
         event.stopPropagation();
-        if (spec.confirm === false) {
-          spec.action?.();
+        const actionSpec = role === 'primary' && button.closest('#agentTaskDetailLayer')
+          ? (currentAgentTaskDetailPrimaryAction() || spec)
+          : spec;
+        if (actionSpec.confirm === false) {
+          runAgentTaskAction(actionSpec);
           return;
         }
-        runAgentTaskConfirmedAction(button, spec);
+        runAgentTaskConfirmedAction(button, actionSpec);
       });
       return button;
     }
@@ -7996,14 +9176,14 @@
       dispatchRow.className = 'todo-dispatch-row';
       const modeSelect = document.createElement('select');
       modeSelect.className = 'todo-mode-select';
-      handoffLaunchModes.forEach(mode => {
+      agentTaskProviderModes.forEach(mode => {
         const option = document.createElement('option');
         option.value = mode.value;
         option.textContent = handoffLaunchModeName(mode);
         modeSelect.appendChild(option);
       });
       const latest = latestTodoDispatch(task);
-      modeSelect.value = latest?.mode || 'agents';
+      modeSelect.value = normalizedAgentTaskMode(latest?.mode || task.launchMode || DEFAULT_AGENT_TASK_LAUNCH_MODE);
       const launch = document.createElement('button');
       launch.type = 'button';
       launch.className = 'todo-launch';
@@ -8088,8 +9268,8 @@
       return t('todoUnbound');
     }
 
-    function agentTaskMetaTarget(latest) {
-      return handoffLaunchModeLabel(latest?.mode || 'agents');
+    function agentTaskMetaTarget(latest, task = null) {
+      return handoffLaunchModeLabel(latest?.mode || task?.launchMode || DEFAULT_AGENT_TASK_LAUNCH_MODE);
     }
 
     function agentTaskDispatchTargetLabel(task) {
@@ -8097,21 +9277,24 @@
       if (latest?.mode) return handoffLaunchModeLabel(latest.mode);
       if (latest?.boundProvider === 'claude') return handoffLaunchModeLabel('claude-panel');
       if (latest?.boundProvider === 'copilot') return handoffLaunchModeLabel('agents');
+      if (task?.launchMode) return handoffLaunchModeLabel(task.launchMode);
       return t('agentTaskNoTargetAgent');
     }
 
-    function agentTaskTargetMetaText(key, latest) {
-      return t(key).replace('{target}', agentTaskMetaTarget(latest));
+    function agentTaskTargetMetaText(key, latest, task = null) {
+      return t(key).replace('{target}', agentTaskMetaTarget(latest, task));
     }
 
     function agentTaskItemMeta(task) {
       const latest = latestTodoDispatch(task);
       if (task.status === 'ready') return latest ? t('agentTaskMetaReturned') : '';
       if (task.status === 'running') {
-        if (latest?.sessionStatus === 'waiting') return agentTaskTargetMetaText('agentTaskMetaWaiting', latest);
+        const lifecycle = isUEWorkflowWorkflow(task.workflow) ? normalizeUEWorkflowLifecycle(task.ueWorkflowLifecycle) : null;
+        if (lifecycle?.message) return lifecycle.message;
+        if (latest?.sessionStatus === 'waiting') return agentTaskTargetMetaText('agentTaskMetaWaiting', latest, task);
         if (!latest) return t('agentTaskMetaRunning');
-        if (latest.boundSessionId) return agentTaskTargetMetaText('agentTaskMetaRunningBound', latest);
-        return agentTaskTargetMetaText('agentTaskMetaRunningUnbound', latest);
+        if (latest.boundSessionId) return agentTaskTargetMetaText('agentTaskMetaRunningBound', latest, task);
+        return agentTaskTargetMetaText('agentTaskMetaRunningUnbound', latest, task);
       }
       if (task.status === 'review') return t('agentTaskMetaReview');
       if (task.status === 'blocked') return t('agentTaskMetaPaused');
@@ -8137,9 +9320,11 @@
         ? sessions.find(item => String(item.id) === String(latest.boundSessionId))
         : null;
       if (!session) {
-        session = todoSessionMatchById(sessions).get(String(found.task.id || '').toLowerCase()) || null;
+        session = bestTodoSessionForTask(found.workspace, found.task, sessions);
       }
-      const workspacePath = normalizeWorkspaceLaunchPath(session?.workspacePath || latest?.workspacePath || found.workspace.path || '');
+      const providerWorkspacePath = normalizeWorkspaceLaunchPath(latest?.providerWorkspacePath || latest?.executionWorkspacePath || '');
+      const taskWorkspacePath = normalizeWorkspaceLaunchPath(latest?.workspacePath || found.workspace.path || '');
+      const workspacePath = normalizeWorkspaceLaunchPath(session?.workspacePath || (isUEWorkflowWorkflow(found.task.workflow) ? (taskWorkspacePath || providerWorkspacePath) : (taskWorkspacePath || providerWorkspacePath)) || '');
       return {
         found,
         task: found.task,
@@ -8237,7 +9422,9 @@
             session: {
               id: latest.boundSessionId || '',
               provider: latest.boundProvider || todoProviderForMode(latest.mode),
-              workspacePath: latest.workspacePath || found.workspace.path
+              workspacePath: isUEWorkflowWorkflow(found.task.workflow)
+                ? (latest.workspacePath || found.workspace.path || latest.providerWorkspacePath)
+                : (latest.workspacePath || found.workspace.path || latest.providerWorkspacePath)
             }
           });
         }
@@ -8252,7 +9439,11 @@
     }
 
     function agentTaskCanComplete(task) {
-      return task?.status === 'running';
+      if (!task) return false;
+      if (isUEWorkflowWorkflow(task.workflow)) {
+        return ['running', 'review'].includes(task.status) && ueWorkflowTaskCanManualComplete(task);
+      }
+      return task.status === 'running' || task.status === 'review';
     }
 
     function resetTodoForm() {
@@ -8301,6 +9492,8 @@
           title,
           description: todoDescriptionInput.value,
           acceptance: todoAcceptanceInput.value,
+          workflow: AGENT_TASK_WORKFLOW_STANDARD,
+          launchMode: DEFAULT_AGENT_TASK_LAUNCH_MODE,
           status: 'ready',
           order: workspace.tasks.length,
           createdAt: Date.now(),
@@ -8326,6 +9519,10 @@
       const found = findTodoTask(taskId);
       if (!found) return;
       if (status === 'blocked' && !agentTaskCanBlock(found.task)) return;
+      if (status === 'done' && isUEWorkflowWorkflow(found.task.workflow) && !agentTaskCanComplete(found.task)) {
+        showToast('虚幻工作流还没有进入可确认完成状态，请先检查目标 Agent 会话。', { kind: 'error' });
+        return;
+      }
       if (status === 'blocked') {
         delete found.task.blockedFrom;
         delete found.task.blockedResume;
@@ -8538,35 +9735,101 @@
       }
     }
 
+    function normalizedAgentTaskWorkflow(workflow, fallback = DEFAULT_AGENT_TASK_WORKFLOW) {
+      const value = String(workflow || '').toLowerCase();
+      if (value === AGENT_TASK_WORKFLOW_STANDARD) return AGENT_TASK_WORKFLOW_STANDARD;
+      if (value === AGENT_TASK_WORKFLOW_UE) return AGENT_TASK_WORKFLOW_UE;
+      return fallback === AGENT_TASK_WORKFLOW_STANDARD ? AGENT_TASK_WORKFLOW_STANDARD : AGENT_TASK_WORKFLOW_UE;
+    }
+
     function normalizedAgentTaskMode(mode) {
-      return handoffLaunchModes.some(item => item.value === mode) ? mode : 'agents';
+      return agentTaskProviderModes.some(item => item.value === mode) ? mode : DEFAULT_AGENT_TASK_LAUNCH_MODE;
+    }
+
+    function agentTaskWorkflowForTask(task, draft = null) {
+      if (draft?.workflow) return normalizedAgentTaskWorkflow(draft.workflow);
+      if (task?.workflow) return normalizedAgentTaskWorkflow(task.workflow);
+      if (task?.launchMode === AGENT_TASK_WORKFLOW_UE) return AGENT_TASK_WORKFLOW_UE;
+      return DEFAULT_AGENT_TASK_WORKFLOW;
+    }
+
+    function agentTaskProviderModeForTask(task, draft = null) {
+      if (draft?.mode) return normalizedAgentTaskMode(draft.mode);
+      if (task?.launchMode && task.launchMode !== AGENT_TASK_WORKFLOW_UE) return normalizedAgentTaskMode(task.launchMode);
+      const latest = latestTodoDispatch(task);
+      if (latest?.mode) return normalizedAgentTaskMode(latest.mode);
+      return DEFAULT_AGENT_TASK_LAUNCH_MODE;
+    }
+
+    function isUEWorkflowWorkflow(workflow) {
+      return normalizedAgentTaskWorkflow(workflow) === AGENT_TASK_WORKFLOW_UE;
+    }
+
+    function isUEWorkflowTask(task, draft = null) {
+      return isUEWorkflowWorkflow(agentTaskWorkflowForTask(task, draft));
+    }
+
+    function syncAgentTaskWorkflowPicker() {
+      const workflow = normalizedAgentTaskWorkflow(agentTaskWorkflowSelect?.value || DEFAULT_AGENT_TASK_WORKFLOW);
+      const item = agentTaskWorkflowModes.find(entry => entry.value === workflow) || agentTaskWorkflowModes[0];
+      if (agentTaskWorkflowSelect) agentTaskWorkflowSelect.value = workflow;
+      if (agentTaskWorkflowValue) agentTaskWorkflowValue.textContent = handoffLaunchModeName(item);
+      if (agentTaskWorkflowButton) {
+        agentTaskWorkflowButton.title = t(item.descriptionKey);
+        agentTaskWorkflowButton.setAttribute('aria-label', t('agentTaskWorkflowLabel'));
+      }
+    }
+
+    function renderAgentTaskWorkflowOptions() {
+      if (!agentTaskWorkflowOptions) return;
+      const currentWorkflow = normalizedAgentTaskWorkflow(agentTaskWorkflowSelect?.value || DEFAULT_AGENT_TASK_WORKFLOW);
+      agentTaskWorkflowOptions.replaceChildren();
+      agentTaskWorkflowModes.forEach(item => {
+        agentTaskWorkflowOptions.appendChild(createHandoffProviderOption(item, item.value === currentWorkflow));
+      });
+    }
+
+    function ensureAgentTaskWorkflowOptions() {
+      const previous = normalizedAgentTaskWorkflow(agentTaskWorkflowSelect?.value || DEFAULT_AGENT_TASK_WORKFLOW);
+      if (agentTaskWorkflowSelect) {
+        agentTaskWorkflowSelect.replaceChildren();
+        agentTaskWorkflowModes.forEach(workflow => {
+          const option = document.createElement('option');
+          option.value = workflow.value;
+          option.textContent = handoffLaunchModeName(workflow);
+          agentTaskWorkflowSelect.appendChild(option);
+        });
+        agentTaskWorkflowSelect.value = previous;
+      }
+      syncAgentTaskWorkflowPicker();
+      renderAgentTaskWorkflowOptions();
     }
 
     function syncAgentTaskModePicker() {
-      const mode = normalizedAgentTaskMode(agentTaskModeSelect?.value || 'agents');
-      const item = handoffLaunchModes.find(entry => entry.value === mode) || handoffLaunchModes[0];
+      const mode = normalizedAgentTaskMode(agentTaskModeSelect?.value || DEFAULT_AGENT_TASK_LAUNCH_MODE);
+      const item = agentTaskProviderModes.find(entry => entry.value === mode) || agentTaskProviderModes[0];
       if (agentTaskModeSelect) agentTaskModeSelect.value = mode;
       if (agentTaskModeValue) agentTaskModeValue.textContent = handoffLaunchModeName(item);
       if (agentTaskModeButton) {
         agentTaskModeButton.title = t(item.descriptionKey);
-        agentTaskModeButton.setAttribute('aria-label', t('todoLaunchMode'));
+        agentTaskModeButton.setAttribute('aria-label', t('agentTaskTargetLabel'));
       }
     }
 
     function renderAgentTaskModeOptions() {
       if (!agentTaskModeOptions) return;
-      const currentMode = normalizedAgentTaskMode(agentTaskModeSelect?.value || 'agents');
+      const currentMode = normalizedAgentTaskMode(agentTaskModeSelect?.value || DEFAULT_AGENT_TASK_LAUNCH_MODE);
       agentTaskModeOptions.replaceChildren();
-      handoffLaunchModes.forEach(item => {
+      agentTaskProviderModes.forEach(item => {
         agentTaskModeOptions.appendChild(createHandoffProviderOption(item, item.value === currentMode));
       });
     }
 
     function ensureAgentTaskModeOptions() {
-      const previous = normalizedAgentTaskMode(agentTaskModeSelect?.value || 'agents');
+      const previous = normalizedAgentTaskMode(agentTaskModeSelect?.value || DEFAULT_AGENT_TASK_LAUNCH_MODE);
       if (agentTaskModeSelect) {
         agentTaskModeSelect.replaceChildren();
-        handoffLaunchModes.forEach(mode => {
+        agentTaskProviderModes.forEach(mode => {
           const option = document.createElement('option');
           option.value = mode.value;
           option.textContent = handoffLaunchModeName(mode);
@@ -8586,10 +9849,40 @@
       renderAgentTaskModeOptions();
       closeAgentTaskModePicker();
       updateAgentTaskPromptPreview();
+      renderAgentTaskPanel({ force: true, allowDetailTransitionRender: true });
+    }
+
+    function chooseAgentTaskWorkflow(workflow) {
+      if (!agentTaskWorkflowSelect) return;
+      agentTaskWorkflowSelect.value = normalizedAgentTaskWorkflow(workflow);
+      syncAgentTaskDraftFromControls();
+      syncAgentTaskWorkflowPicker();
+      renderAgentTaskWorkflowOptions();
+      closeAgentTaskWorkflowPicker();
+      updateAgentTaskPromptPreview();
+      renderAgentTaskPanel({ force: true, allowDetailTransitionRender: true });
+    }
+
+    function openAgentTaskWorkflowPicker() {
+      if (!agentTaskWorkflowPopover || agentTaskWorkflowPicker?.hidden) return;
+      closeAgentTaskModePicker();
+      closeAgentTaskWorkspacePicker();
+      closeHandoffWorkspacePicker();
+      closeHandoffProviderPicker();
+      renderAgentTaskWorkflowOptions();
+      agentTaskWorkflowPopover.hidden = false;
+      agentTaskWorkflowButton?.setAttribute('aria-expanded', 'true');
+    }
+
+    function closeAgentTaskWorkflowPicker() {
+      if (!agentTaskWorkflowPopover) return;
+      agentTaskWorkflowPopover.hidden = true;
+      agentTaskWorkflowButton?.setAttribute('aria-expanded', 'false');
     }
 
     function openAgentTaskModePicker() {
       if (!agentTaskModePopover || agentTaskModePicker?.hidden) return;
+      closeAgentTaskWorkflowPicker();
       closeAgentTaskWorkspacePicker();
       closeHandoffWorkspacePicker();
       closeHandoffProviderPicker();
@@ -8613,6 +9906,8 @@
         closeAgentTaskDetail();
         return;
       }
+      ensureAgentTaskWorkflowOptions();
+      ensureAgentTaskWorkflowOptions();
       ensureAgentTaskModeOptions();
       const draft = ensureAgentTaskDetailDraft(found);
       const activeField = document.activeElement;
@@ -8622,11 +9917,39 @@
         agentTaskDetailAcceptance.value = draft ? draft.acceptance : (found.task.acceptance || '');
       }
       const latest = latestTodoDispatch(found.task);
-      if (agentTaskModeSelect) agentTaskModeSelect.value = normalizedAgentTaskMode(draft?.mode || latest?.mode || agentTaskModeSelect.value || 'agents');
+      if (agentTaskWorkflowSelect) agentTaskWorkflowSelect.value = normalizedAgentTaskWorkflow(draft?.workflow || found.task.workflow || agentTaskWorkflowSelect.value || DEFAULT_AGENT_TASK_WORKFLOW);
+      if (agentTaskModeSelect) agentTaskModeSelect.value = normalizedAgentTaskMode(draft?.mode || latest?.mode || found.task.launchMode || agentTaskModeSelect.value || DEFAULT_AGENT_TASK_LAUNCH_MODE);
+      const workflow = normalizedAgentTaskWorkflow(agentTaskWorkflowSelect?.value || draft?.workflow || found.task.workflow || DEFAULT_AGENT_TASK_WORKFLOW);
+      const mode = normalizedAgentTaskMode(agentTaskModeSelect?.value || draft?.mode || found.task.launchMode || DEFAULT_AGENT_TASK_LAUNCH_MODE);
+      syncAgentTaskWorkflowPicker();
+      renderAgentTaskWorkflowOptions();
       syncAgentTaskModePicker();
       renderAgentTaskModeOptions();
       const status = found.task.status;
       const canEdit = status === 'ready';
+      const showUEContext = isUEWorkflowWorkflow(workflow);
+      if (agentTaskUEWorkflowContext) agentTaskUEWorkflowContext.hidden = !showUEContext;
+      if (showUEContext && !ueWorkflowContextInputHasFocus()) {
+        applyUEWorkflowTaskContextToInputs(draft?.ueWorkflowContext || ueWorkflowContextFromTask(found.task, found.workspace));
+      }
+      [
+        agentTaskUEWorkflowBranch,
+        agentTaskUEWorkflowMainProject,
+        agentTaskUEWorkflowHostRoot,
+        agentTaskUEWorkflowPrimary,
+        agentTaskUEWorkflowDeps
+      ].forEach(field => {
+        if (!field) return;
+        field.readOnly = !canEdit;
+        field.setAttribute('aria-readonly', String(!canEdit));
+      });
+      if (agentTaskUEWorkflowFill) agentTaskUEWorkflowFill.disabled = !canEdit;
+      if (agentTaskUEWorkflowContextStatus) {
+        const missing = ueWorkflowBindingMissing(draft?.ueWorkflowContext || ueWorkflowContextFromTask(found.task, found.workspace));
+        agentTaskUEWorkflowContextStatus.textContent = showUEContext
+          ? (missing.length ? ('缺少：' + missing.join('、')) : '上下文已就绪')
+          : '';
+      }
       agentTaskDetailPanel?.classList.toggle('is-readonly-detail', !canEdit);
       [agentTaskDetailDescription, agentTaskDetailAcceptance].forEach(field => {
         if (!field) return;
@@ -8637,9 +9960,18 @@
         agentTaskModeSelect.hidden = true;
         agentTaskModeSelect.disabled = !canEdit;
       }
+      if (agentTaskWorkflowSelect) {
+        agentTaskWorkflowSelect.hidden = true;
+        agentTaskWorkflowSelect.disabled = !canEdit;
+      }
+      if (agentTaskWorkflowPicker) agentTaskWorkflowPicker.hidden = false;
+      if (agentTaskWorkflowButton) agentTaskWorkflowButton.disabled = !canEdit;
       if (agentTaskModePicker) agentTaskModePicker.hidden = !canEdit;
       if (agentTaskModeButton) agentTaskModeButton.disabled = !canEdit;
-      if (!canEdit) closeAgentTaskModePicker();
+      if (!canEdit) {
+        closeAgentTaskWorkflowPicker();
+        closeAgentTaskModePicker();
+      }
       if (agentTaskBlock) agentTaskBlock.hidden = !agentTaskCanBlock(found.task);
       if (agentTaskStatus) {
         agentTaskStatus.classList.toggle('is-target-agent', !canEdit);
@@ -8648,6 +9980,7 @@
         agentTaskStatus.title = canEdit ? '' : todoStatusText(status);
       }
       updateAgentTaskPromptPreview();
+      renderAgentTaskUEWorkflowPlan(found, canEdit);
       if (agentTaskComplete) agentTaskComplete.hidden = !agentTaskCanComplete(found.task);
     }
 
@@ -8658,7 +9991,10 @@
         ...found.task,
         title: currentAgentTaskTitleValue(found) || found.task.title,
         description: draft ? draft.description : agentTaskDetailDescription.value,
-        acceptance: draft ? draft.acceptance : agentTaskDetailAcceptance.value
+        acceptance: draft ? draft.acceptance : agentTaskDetailAcceptance.value,
+        workflow: draft?.workflow || found.task.workflow,
+        launchMode: draft?.mode || found.task.launchMode,
+        ueWorkflowContext: draft?.ueWorkflowContext || found.task.ueWorkflowContext
       };
     }
 
@@ -8670,7 +10006,13 @@
         return;
       }
       const draft = ensureAgentTaskDetailDraft(found);
-      agentTaskPromptPreview.value = buildTodoPrompt(found.workspace, agentTaskDraftPromptTask(found), draft?.mode || agentTaskModeSelect.value || 'agents');
+      agentTaskPromptPreview.value = buildTodoPrompt(
+        found.workspace,
+        agentTaskDraftPromptTask(found),
+        draft?.mode || found.task.launchMode || agentTaskModeSelect.value || DEFAULT_AGENT_TASK_LAUNCH_MODE,
+        draft?.workflow || found.task.workflow || agentTaskWorkflowSelect?.value || DEFAULT_AGENT_TASK_WORKFLOW
+      );
+      renderAgentTaskUEWorkflowPlan(found, found.task.status === 'ready');
     }
 
     function scheduleTodoDispatchRefresh() {
@@ -8681,6 +10023,7 @@
     }
 
     function todoIdsFromSession(session) {
+      const marker = sessionUEWorkflowMarker(session);
       const structuredIds = Array.isArray(session?.todoIds) ? session.todoIds : [];
       const text = [
         session?.lastUserMessage,
@@ -8689,9 +10032,32 @@
         session?.lastAiMessage
       ].filter(Boolean).join('\n');
       const textIds = text.match(/\btodo-[a-z0-9]+-[a-z0-9]+\b/gi) || [];
-      return Array.from(new Set([...structuredIds, ...textIds]
+      return Array.from(new Set([marker.taskId, ...structuredIds, ...textIds]
         .map(id => String(id || '').toLowerCase())
         .filter(id => /\btodo-[a-z0-9]+-[a-z0-9]+\b/.test(id))));
+    }
+
+    function canonicalTodoProvider(provider) {
+      const value = String(provider || '').toLowerCase();
+      if (value === 'claude-code' || value === 'claude-panel') return 'claude';
+      if (value === 'copilot-cli' || value === 'code-chat' || value === 'agents') return 'copilot';
+      if (value === 'opencode-cli') return 'opencode';
+      if (value === 'codex-app') return 'codex';
+      return value;
+    }
+
+    function sessionUEWorkflowMarker(session) {
+      const marker = session?.ueworkflow || session?.ueWorkflow || {};
+      const workflow = String(marker.workflow || '').toLowerCase();
+      const acceptedWorkflow = !workflow || workflow === AGENT_TASK_WORKFLOW_UE || workflow === 'unrealworkflow';
+      if (!acceptedWorkflow) return {};
+      return {
+        workflow,
+        provider: canonicalTodoProvider(marker.provider || ''),
+        taskId: String(marker.taskId || marker.task_id || marker.taskID || '').toLowerCase(),
+        runId: String(marker.runId || marker.run_id || '').toLowerCase(),
+        contractVersion: String(marker.contractVersion || marker.contract_version || '')
+      };
     }
 
     function todoDispatchModeFromSession(session) {
@@ -8711,18 +10077,64 @@
       return prompt.includes('todo-') ? prompt : '';
     }
 
-    function todoSessionMatchById(sessions) {
-      const matches = new Map();
-      (Array.isArray(sessions) ? sessions : []).forEach(session => {
-        const normalizedSession = normalizeSession(session);
-        todoIdsFromSession(normalizedSession).forEach(todoId => {
-          const previous = matches.get(todoId);
-          if (!previous || Number(normalizedSession.updatedMs) > Number(previous.updatedMs)) {
-            matches.set(todoId, normalizedSession);
-          }
-        });
-      });
-      return matches;
+    function sessionContainsTodoId(session, taskId) {
+      const normalizedTaskId = String(taskId || '').toLowerCase();
+      if (!normalizedTaskId) return false;
+      return todoIdsFromSession(session).includes(normalizedTaskId);
+    }
+
+    function todoSessionExpectedProvider(task, dispatch = null, fallbackMode = '') {
+      return canonicalTodoProvider(
+        dispatch?.boundProvider
+        || todoProviderForMode(dispatch?.mode)
+        || todoProviderForMode(task?.launchMode || fallbackMode)
+        || ''
+      );
+    }
+
+    function todoSessionMatchesTask(workspace, task, session, dispatch = latestTodoDispatch(task)) {
+      if (!workspace || !task || !session || !sessionContainsTodoId(session, task.id)) return false;
+      const marker = sessionUEWorkflowMarker(session);
+      if (isUEWorkflowWorkflow(task.workflow) && marker.workflow) {
+        const taskId = String(task.id || '').toLowerCase();
+        if (!marker.taskId || marker.taskId !== taskId) return false;
+      }
+      const expectedProvider = todoSessionExpectedProvider(task, dispatch, todoDispatchModeFromSession(session));
+      const sessionProvider = canonicalTodoProvider(marker.provider || session.provider || '');
+      if (expectedProvider && sessionProvider && sessionProvider !== expectedProvider) return false;
+      if (!isUEWorkflowWorkflow(task.workflow)) return true;
+
+      const sessionId = String(session.id || '');
+      if (dispatch?.boundSessionId && sessionId && String(dispatch.boundSessionId) === sessionId) return true;
+
+      const launchedAt = Number(dispatch?.launchedAt || 0) || 0;
+      const sessionUpdatedAt = Number(session.updatedMs || session.createdMs || 0) || 0;
+      if (launchedAt && sessionUpdatedAt && sessionUpdatedAt + 120_000 < launchedAt) return false;
+
+      const expectedWorkspacePath = normalizeWorkspaceLaunchPath(
+        isUEWorkflowWorkflow(task.workflow)
+          ? (dispatch?.workspacePath || workspace?.path || '')
+          : (dispatch?.providerWorkspacePath || dispatch?.executionWorkspacePath || dispatch?.workspacePath || '')
+      );
+      const sessionWorkspacePath = normalizeWorkspaceLaunchPath(session.workspacePath || '');
+      const expectedWorkspaceKey = normalizedWorkspacePathKey(expectedWorkspacePath);
+      const sessionWorkspaceKey = normalizedWorkspacePathKey(sessionWorkspacePath);
+      if (expectedWorkspaceKey && sessionWorkspaceKey && expectedWorkspaceKey !== sessionWorkspaceKey) return false;
+
+      return true;
+    }
+
+    function bestTodoSessionForTask(workspace, task, sessions) {
+      const dispatch = latestTodoDispatch(task);
+      return (Array.isArray(sessions) ? sessions : [])
+        .map(normalizeSession)
+        .filter(session => todoSessionMatchesTask(workspace, task, session, dispatch))
+        .sort((left, right) => {
+          const leftBound = dispatch?.boundSessionId && String(left.id) === String(dispatch.boundSessionId) ? 1 : 0;
+          const rightBound = dispatch?.boundSessionId && String(right.id) === String(dispatch.boundSessionId) ? 1 : 0;
+          if (leftBound !== rightBound) return rightBound - leftBound;
+          return Number(right.updatedMs || right.createdMs || 0) - Number(left.updatedMs || left.createdMs || 0);
+        })[0] || null;
     }
 
     function completedTodoSessionScope() {
@@ -8766,25 +10178,66 @@
       const sessionId = String(session.id || '');
       const sessionStatus = normalizedSessionStatus(session);
       const mode = todoDispatchModeFromSession(session);
+      if (isUEWorkflowWorkflow(task.workflow)) {
+        if (!todoSessionMatchesTask(workspace, task, session)) {
+          return false;
+        }
+      }
       let dispatch = (task.dispatches || []).find(item => item.boundSessionId && String(item.boundSessionId) === sessionId);
+      if (!dispatch && isUEWorkflowWorkflow(task.workflow)) {
+        const expectedProvider = session.provider || todoProviderForMode(mode);
+        dispatch = [...(Array.isArray(task.dispatches) ? task.dispatches : [])]
+          .reverse()
+          .find(item => {
+            if (!item) return false;
+            const itemProvider = item.boundProvider || todoProviderForMode(item.mode);
+            if (expectedProvider && itemProvider && itemProvider !== expectedProvider) return false;
+            return todoSessionMatchesTask(workspace, task, session, item);
+          });
+      }
       if (!dispatch) {
         dispatch = {
           id: makeTodoId('dispatch'),
+          workflow: isUEWorkflowWorkflow(task.workflow) ? AGENT_TASK_WORKFLOW_UE : normalizedAgentTaskWorkflow(task.workflow),
           mode,
-          workspacePath: workspace.path || session.workspacePath || '',
+          workspacePath: workspace.path || '',
+          providerWorkspacePath: isUEWorkflowWorkflow(task.workflow) ? '' : normalizeWorkspaceLaunchPath(session.workspacePath || ''),
           launchedAt: Number(session.createdMs || session.updatedMs) || Date.now(),
           boundSessionId: sessionId,
           boundProvider: session.provider || todoProviderForMode(mode),
           boundAt: Date.now(),
           sessionStatus,
-          lastPrompt: todoPromptFromSession(session)
+          lastPrompt: todoPromptFromSession(session),
+          sessionPath: String(session.sessionPath || ''),
+          transcriptPath: String(session.transcriptPath || ''),
+          sessionResource: String(session.sessionResource || '')
         };
         task.dispatches = Array.isArray(task.dispatches) ? task.dispatches : [];
         task.dispatches.push(dispatch);
+        if (isUEWorkflowWorkflow(task.workflow) && !ueWorkflowLifecycleHasEvent(task, 'session-bound')) {
+          setUEWorkflowLifecycle(task, 'session-bound', '已识别并绑定目标会话。', {
+            data: {
+              sessionId,
+              provider: session.provider || dispatch.boundProvider || '',
+              taskWorkspacePath: normalizeWorkspaceLaunchPath(dispatch.workspacePath || workspace.path || ''),
+              providerWorkspacePath: normalizeWorkspaceLaunchPath(dispatch.providerWorkspacePath || '')
+            }
+          });
+        }
         changed = true;
       }
       if (!dispatch.boundSessionId && sessionId) {
         dispatch.boundSessionId = sessionId;
+        if (isUEWorkflowWorkflow(task.workflow) && !ueWorkflowLifecycleHasEvent(task, 'session-bound')) {
+          setUEWorkflowLifecycle(task, 'session-bound', '已识别并绑定目标会话。', {
+            data: {
+              sessionId,
+              provider: session.provider || dispatch.boundProvider || '',
+              taskWorkspacePath: normalizeWorkspaceLaunchPath(dispatch.workspacePath || workspace.path || ''),
+              providerWorkspacePath: normalizeWorkspaceLaunchPath(dispatch.providerWorkspacePath || '')
+            }
+          });
+        }
         changed = true;
       }
       if (session.provider && dispatch.boundProvider !== session.provider) {
@@ -8795,11 +10248,42 @@
         dispatch.sessionStatus = sessionStatus;
         changed = true;
       }
+      const sessionWorkspacePath = normalizeWorkspaceLaunchPath(session.workspacePath || '');
+      if (sessionWorkspacePath && !dispatch.providerWorkspacePath && normalizedWorkspacePathKey(sessionWorkspacePath) !== normalizedWorkspacePathKey(dispatch.workspacePath || '')) {
+        dispatch.providerWorkspacePath = sessionWorkspacePath;
+        changed = true;
+      }
       if (!dispatch.lastPrompt && todoPromptFromSession(session)) {
         dispatch.lastPrompt = todoPromptFromSession(session);
         changed = true;
       }
-      const nextStatus = sessionStatus === 'idle' ? 'review' : 'running';
+      if (session.sessionPath && dispatch.sessionPath !== String(session.sessionPath)) {
+        dispatch.sessionPath = String(session.sessionPath);
+        changed = true;
+      }
+      if (session.transcriptPath && dispatch.transcriptPath !== String(session.transcriptPath)) {
+        dispatch.transcriptPath = String(session.transcriptPath);
+        changed = true;
+      }
+      if (session.sessionResource && dispatch.sessionResource !== String(session.sessionResource)) {
+        dispatch.sessionResource = String(session.sessionResource);
+        changed = true;
+      }
+      if (isUEWorkflowWorkflow(task.workflow) && ['running', 'idle'].includes(sessionStatus) && !ueWorkflowLifecycleHasEvent(task, 'first-response-detected')) {
+        setUEWorkflowLifecycle(task, 'first-response-detected', '已看到目标会话开始回应。', {
+          data: {
+            sessionId,
+            provider: session.provider || dispatch.boundProvider || ''
+          }
+        });
+        changed = true;
+      }
+      if (updateUEWorkflowLifecycleFromSessionSummary(task, session)) {
+        changed = true;
+      }
+      const nextStatus = isUEWorkflowWorkflow(task.workflow)
+        ? (ueWorkflowTaskHasClosureEvidence(task) || (sessionStatus === 'idle' && ueWorkflowTaskReadyForReview(task)) ? 'review' : 'running')
+        : (sessionStatus === 'idle' ? 'review' : 'running');
       if (task.status !== nextStatus) {
         task.status = nextStatus;
         task.updatedAt = Date.now();
@@ -8814,6 +10298,10 @@
     async function saveAgentTaskDetail(options = {}) {
       const found = findTodoTask(agentTaskDetailTaskId);
       if (!found) return false;
+      if (agentTaskAutoSaveTimer) {
+        window.clearTimeout(agentTaskAutoSaveTimer);
+        agentTaskAutoSaveTimer = 0;
+      }
       if (found.task.status !== 'ready') {
         updateAgentTaskPromptPreview();
         return true;
@@ -8827,6 +10315,11 @@
       found.task.title = title;
       found.task.description = draft ? draft.description : agentTaskDetailDescription.value;
       found.task.acceptance = draft ? draft.acceptance : agentTaskDetailAcceptance.value;
+      found.task.workflow = normalizedAgentTaskWorkflow(draft?.workflow || agentTaskWorkflowSelect?.value || found.task.workflow || DEFAULT_AGENT_TASK_WORKFLOW);
+      found.task.launchMode = normalizedAgentTaskMode(draft?.mode || agentTaskModeSelect?.value || found.task.launchMode || DEFAULT_AGENT_TASK_LAUNCH_MODE);
+      found.task.ueWorkflowContext = isUEWorkflowWorkflow(found.task.workflow)
+        ? normalizeUEWorkflowBinding(draft?.ueWorkflowContext || found.task.ueWorkflowContext || {})
+        : normalizeUEWorkflowBinding(found.task.ueWorkflowContext || {});
       found.task.updatedAt = Date.now();
       await saveTodoState({
         announce: options.announce !== false,
@@ -8853,6 +10346,16 @@
       }, 350);
     }
 
+    function handleAgentTaskModeChanged() {
+      handleAgentTaskDetailInput();
+      renderAgentTaskPanel({ force: true, allowDetailTransitionRender: true });
+    }
+
+    function handleAgentTaskWorkflowChanged() {
+      handleAgentTaskDetailInput();
+      renderAgentTaskPanel({ force: true, allowDetailTransitionRender: true });
+    }
+
     async function submitAgentTaskQuickAdd(event) {
       event?.preventDefault();
       const title = agentTaskQuickTitle.value.trim();
@@ -8870,6 +10373,13 @@
         title,
         description: '',
         acceptance: '',
+        workflow: DEFAULT_AGENT_TASK_WORKFLOW,
+        launchMode: DEFAULT_AGENT_TASK_LAUNCH_MODE,
+        ueWorkflowContext: normalizeUEWorkflowBinding(
+          isUEWorkflowWorkflow(DEFAULT_AGENT_TASK_WORKFLOW)
+            ? deriveUEWorkflowBindingFromWorkspace(workspace)
+            : {}
+        ),
         status: 'ready',
         order: workspace.tasks.length,
         createdAt: Date.now(),
@@ -8883,8 +10393,1010 @@
       await saveTodoState({ announce: true, message: t('todoSaved'), render: false });
     }
 
-    function buildTodoPrompt(workspace, task, mode = 'agents') {
-      const target = handoffLaunchModes.find(item => item.value === mode);
+    function ueWorkflowMasterDetailsFromExecution(execution) {
+      const result = execution?.result;
+      const details = result?.details && typeof result.details === 'object' ? result.details : result;
+      return details?.kind === 'UnrealWorkflowMasterResult' ? details : null;
+    }
+
+    function ueWorkflowMasterDetailsFromTask(task) {
+      return normalizeUEWorkflowMasterDetails(task?.ueWorkflowMaster)
+        || ueWorkflowMasterDetailsFromExecution(task?.execution);
+    }
+
+    function ueWorkflowTaskHasDryRun(task) {
+      const details = ueWorkflowMasterDetailsFromTask(task);
+      return !!details && (task?.execution?.commandName === 'master dry-run' || details.command === 'master dry-run');
+    }
+
+    function ueWorkflowTaskHasExecutePackage(task) {
+      const details = ueWorkflowMasterDetailsFromTask(task);
+      return !!details
+        && (task?.execution?.commandName === 'master execute' || details.command === 'master execute')
+        && ueWorkflowTodoExecutionStatus(details) === 'success';
+    }
+
+    function ueWorkflowTaskReadyForReview(task) {
+      if (!isUEWorkflowWorkflow(task?.workflow)) return false;
+      const lifecycle = normalizeUEWorkflowLifecycle(task?.ueWorkflowLifecycle);
+      if (lifecycle?.status === 'failed' || lifecycle?.phase === 'failed') return false;
+      const latest = latestTodoDispatch(task);
+      return ueWorkflowTaskHasExecutePackage(task)
+        && String(latest?.sessionStatus || '') === 'idle'
+        && !!latest?.boundSessionId;
+    }
+
+    function ueWorkflowLifecycleEventTypes(task) {
+      const lifecycle = normalizeUEWorkflowLifecycle(task?.ueWorkflowLifecycle);
+      return new Set((Array.isArray(lifecycle?.events) ? lifecycle.events : [])
+        .map(event => String(event?.type || '').trim())
+        .filter(Boolean));
+    }
+
+    function ueWorkflowTaskHasClosureEvidence(task) {
+      const types = ueWorkflowLifecycleEventTypes(task);
+      return ['done', 'cleanup', 'review-passed', 'merged'].some(type => types.has(type));
+    }
+
+    function ueWorkflowTaskCanManualComplete(task) {
+      if (!isUEWorkflowWorkflow(task?.workflow)) return false;
+      const lifecycle = normalizeUEWorkflowLifecycle(task?.ueWorkflowLifecycle);
+      if (lifecycle?.status === 'failed' || lifecycle?.phase === 'failed') return false;
+      if (!ueWorkflowTaskHasExecutePackage(task)) return false;
+      const latest = latestTodoDispatch(task);
+      if (!latest || latest.launchError) return false;
+      if (latest.boundSessionId) return true;
+      if (['running', 'waiting', 'idle'].includes(String(latest.sessionStatus || ''))) return true;
+      const types = ueWorkflowLifecycleEventTypes(task);
+      return ['session-bound', 'first-response-detected', 'build-started', 'build-passed', 'review-started', 'review-passed', 'merged', 'cleanup', 'done']
+        .some(type => types.has(type));
+    }
+
+    function ueWorkflowBusinessProvider(details) {
+      return String(details?.providerPackage?.provider || details?.request?.provider || 'copilot').toLowerCase();
+    }
+
+    function cleanUEWorkflowTaskValue(value, fallback = '') {
+      return String(value || fallback).trim().replace(/[\r\n\t]+/g, ' ').slice(0, 180);
+    }
+
+    function ueWorkflowFailureMessage(prefix, error) {
+      const detail = String(error || '').trim();
+      return detail ? `${prefix}：${detail}` : prefix;
+    }
+
+    function ueWorkflowCliPreflightLines(context) {
+      const pendingContext = context?.requiredBeforeProviderExecution
+        || context?.mustConfirmBeforeProviderExecution
+        || /待|pending|缺少|未完成/i.test([
+        context?.hostProject,
+        context?.pluginDependencies,
+        context?.confirmationStage
+      ].filter(Boolean).join(' '));
+      const lines = [
+        '强制入口',
+        '先执行以下 PowerShell 预检；失败就停止并回报 AgentWatcher，不要手工继续：',
+        '$uwf=(Get-Command uwf -ErrorAction SilentlyContinue).Source; if (-not $uwf -and (Test-Path "$env:USERPROFILE\\.unrealworkflow\\bin\\uwf.cmd")) { $uwf="$env:USERPROFILE\\.unrealworkflow\\bin\\uwf.cmd" }; if (-not $uwf) { Write-Error "UWF_NOT_AVAILABLE: stop and report to AgentWatcher"; exit 10 }; & $uwf doctor --json',
+        '预检通过后，也必须通过 uwf / DevFlow 的受控命令推进；不得直接创建 Host、不得直接改主线、不得直接调用 Build.bat。'
+      ];
+      if (pendingContext) {
+        lines.push('Host 项目或插件依赖仍为“待确认”时，不能进入源码修改；必须先让 AgentWatcher/DevFlow 补齐上下文。');
+      }
+      return lines;
+    }
+
+    function ueWorkflowWorkspaceId(workspace) {
+      return cleanUEWorkflowTaskValue(workspace?.path || workspace?.label || workspace?.key || workspace?.name || 'workspace', 'workspace');
+    }
+
+    function inferUEWorkflowContext(workspace, task) {
+      const binding = ueWorkflowContextFromTask(task, workspace || currentTodoWorkspace() || {});
+      const inferred = inferUEWorkflowPathContext(workspace || currentTodoWorkspace() || {});
+      const missing = ueWorkflowBindingMissing(binding);
+      return {
+        branchName: binding.branchName || '',
+        workspacePath: binding.primaryPath || inferred.workspacePath,
+        devFlowWorkspace: binding.devFlowWorkspace || '',
+        project: binding.project || inferred.project,
+        primaryPlugin: binding.primary || '',
+        primaryPluginPath: binding.primaryPath || '',
+        hostRoot: binding.hostRoot || '',
+        mainProject: binding.mainProject || '',
+        hostProject: binding.hostRoot
+          ? `${binding.mainProject ? ('主项目 ' + binding.mainProject + ' / ') : '主项目由 DevFlow workspace 自动确定 / '}Host 根 ${binding.hostRoot}`
+          : '缺少 Host 根目录，请在任务创建面板补齐；主项目可由 DevFlow workspace 配置补齐',
+        pluginDependencies: binding.pluginDependencies || '未填写，DevFlow 将按 .uplugin 与工程/引擎插件扫描自动识别',
+        confirmationStage: missing.length ? ('任务上下文未完成：' + missing.join('、')) : '任务创建上下文已确认'
+      };
+    }
+
+    function ueWorkflowTaskRequest(found, options = {}) {
+      const task = found.task;
+      const goalParts = [task.title, task.description, task.acceptance ? `验收：${task.acceptance}` : ''].map(value => String(value || '').trim()).filter(Boolean);
+      const goal = goalParts.join(' - ').replace(/[\r\n\t]+/g, ' ').trim() || task.title;
+      const context = inferUEWorkflowContext(found.workspace, task);
+      const binding = ueWorkflowContextFromTask(task, found.workspace);
+      const primaryWorkspacePath = ueWorkflowListItems(binding.primaryPath)[0] || '';
+      const branchName = normalizeUEWorkflowBranchName(binding.branchName);
+      const workspaceInput = binding.devFlowWorkspace
+        || primaryWorkspacePath
+        || normalizeWorkspaceLaunchPath(found.workspace?.path || '')
+        || ueWorkflowWorkspaceId(found.workspace);
+      return {
+        goal,
+        workspace: workspaceInput,
+        taskId: branchName,
+        provider: options.provider || todoProviderForMode(agentTaskProviderModeForTask(task)),
+        scope: 'project_plugin',
+        project: context.project || undefined,
+        primary: context.primaryPlugin || undefined,
+        hostRoot: binding.hostRoot || undefined,
+        mainProject: binding.mainProject || undefined,
+        primaryPath: binding.primaryPath || undefined,
+        pluginDependencies: binding.pluginDependencies || undefined
+      };
+    }
+
+    function ueWorkflowContextConfirmation(details, workspace, task) {
+      const inferred = inferUEWorkflowContext(workspace || {}, task);
+      const fromTop = details?.contextConfirmation;
+      const fromPackage = details?.providerPackage?.contextConfirmation;
+      const fromDevFlow = (Array.isArray(details?.moduleResults) ? details.moduleResults : [])
+        .map(result => result?.targetContext || result?.outcome?.targetContext)
+        .find(Boolean);
+      const source = fromDevFlow || fromTop || fromPackage || {};
+      return {
+        branchName: source.branchName || source.taskId || details?.request?.taskId || inferred.branchName || '',
+        workspacePath: source.workspacePath || inferred.workspacePath || source.workspace || '',
+        devFlowWorkspace: source.devFlowWorkspace || inferred.devFlowWorkspace || '',
+        project: source.project || inferred.project || '',
+        primaryPlugin: source.primaryPlugin || source.primary || inferred.primaryPlugin || '',
+        primaryPluginPath: source.primaryPluginPath || inferred.primaryPluginPath || '',
+        hostRoot: source.hostRoot || inferred.hostRoot || '',
+        mainProject: source.mainProject || inferred.mainProject || '',
+        hostProject: source.hostProject?.message || source.hostProject || inferred.hostProject,
+        pluginDependencies: source.pluginDependencies?.message || source.pluginDependencies || inferred.pluginDependencies,
+        pluginDependencyItems: Array.isArray(source.pluginDependencies?.items) ? source.pluginDependencies.items : [],
+        primaryPluginScans: Array.isArray(source.primaryPluginScans) ? source.primaryPluginScans : [],
+        confirmationStage: source.confirmationStage || inferred.confirmationStage,
+        requiredBeforeProviderExecution: source.requiredBeforeProviderExecution === true,
+        mustConfirmBeforeProviderExecution: source.mustConfirmBeforeProviderExecution === true
+      };
+    }
+
+    function ueWorkflowProviderWorkspacePath(details, workspace, task) {
+      const context = ueWorkflowContextConfirmation(details, workspace, task);
+      const path = String(context.workspacePath || '').trim();
+      const pending = context.requiredBeforeProviderExecution
+        || context.mustConfirmBeforeProviderExecution
+        || /待|pending|缺少|未完成/i.test([
+        context.hostProject,
+        context.pluginDependencies,
+        context.confirmationStage
+      ].filter(Boolean).join(' '));
+      return path && !pending ? path : '';
+    }
+
+    function ueWorkflowContextLines(context) {
+      const lines = [];
+      if (context.branchName) lines.push('分支名：' + context.branchName);
+      if (context.workspacePath) lines.push('DevFlow 隔离工作区：' + context.workspacePath);
+      if (context.project) lines.push('主项目：' + context.project);
+      if (context.mainProject) lines.push('主项目路径：' + context.mainProject);
+      if (context.primaryPlugin) lines.push('主插件集：' + context.primaryPlugin);
+      if (context.primaryPluginPath) lines.push('主插件工程：' + String(context.primaryPluginPath).replace(/[\r\n]+/g, '；'));
+      if (context.hostRoot) lines.push('Host 根目录：' + context.hostRoot);
+      const hostProject = String(context.hostProject || '待 DevFlow 确认')
+        .replace(/Provider 必须从该任务 worktree 工作。?/g, 'DevFlow 隔离目录只作为实际执行目录，不作为 AgentWatcher 会话 workspace。');
+      lines.push('Host 项目：' + hostProject);
+      lines.push('插件依赖：' + (context.pluginDependencies || '待 DevFlow 确认'));
+      if (Array.isArray(context.pluginDependencyItems) && context.pluginDependencyItems.length) {
+        lines.push('依赖明细：' + context.pluginDependencyItems.slice(0, 12).map(item => {
+          const name = item?.name || 'unknown';
+          const source = item?.source || 'unknown';
+          return `${name}(${source})`;
+        }).join(' / '));
+      }
+      if (Array.isArray(context.primaryPluginScans) && context.primaryPluginScans.length) {
+        lines.push('插件扫描：' + context.primaryPluginScans.slice(0, 6).map(item => {
+          const name = item?.name || 'unknown';
+          const status = item?.status || 'unknown';
+          const modules = Array.isArray(item?.modules) && item.modules.length ? ` modules=${item.modules.join(',')}` : '';
+          return `${name}(${status}${modules})`;
+        }).join(' / '));
+      }
+      lines.push('确认阶段：' + (context.confirmationStage || '生成方案 / DevFlow 预演'));
+      return lines;
+    }
+
+    function ueWorkflowResultArtifacts(details) {
+      const artifacts = [];
+      const appendArtifact = (artifact, moduleName) => {
+        if (!artifact || typeof artifact !== 'object') return;
+        artifacts.push({
+          label: cleanUEWorkflowTaskValue(artifact.description || artifact.id || artifact.kind || artifact.artifactType || moduleName, '产物'),
+          path: cleanUEWorkflowTaskValue(artifact.path || artifact.uri || '', '')
+        });
+      };
+      (Array.isArray(details?.artifacts) ? details.artifacts : []).forEach(artifact => {
+        appendArtifact(artifact, '虚幻工作流');
+      });
+      (Array.isArray(details?.moduleResults) ? details.moduleResults : []).forEach(result => {
+        const moduleName = result?.module?.displayName || result?.module?.codeName || result?.module || '';
+        (Array.isArray(result?.outcome?.artifacts) ? result.outcome.artifacts : []).forEach(artifact => appendArtifact(artifact, moduleName));
+        (Array.isArray(result?.artifacts) ? result.artifacts : []).forEach(artifact => appendArtifact(artifact, moduleName));
+      });
+      return artifacts;
+    }
+
+    function ueWorkflowTodoExecutionStatus(details) {
+      const status = String(details?.status || '').toLowerCase();
+      if (status === 'blocked') return 'blocked';
+      if (status === 'failed' || status === 'error') return 'failed';
+      if (status === 'planned') return 'planned';
+      if (status === 'complete' || status === 'ready' || status === 'ok' || status === 'success') return 'success';
+      return 'failed';
+    }
+
+    function ueWorkflowModuleFailureSummary(details) {
+      const failed = (Array.isArray(details?.moduleResults) ? details.moduleResults : []).find(result => {
+        const status = String(result?.status || '').toLowerCase();
+        return status === 'blocked' || status === 'failed' || status === 'error';
+      });
+      if (!failed) return '';
+      const moduleName = failed?.module?.displayName || failed?.module?.codeName || failed?.module || '模块';
+      const message = cleanUEWorkflowTaskValue(failed?.message || failed?.error || '', '');
+      const evidence = failed?.errorEvidence || {};
+      const evidenceText = cleanUEWorkflowTaskValue(
+        evidence.stderr || evidence.stdout || evidence.message || '',
+        ''
+      );
+      const combined = [message, evidenceText].filter(Boolean).join('：');
+      const hint = ueWorkflowFailureHint(combined);
+      return [moduleName, [combined, hint].filter(Boolean).join('\n解决建议：')]
+        .filter(Boolean)
+        .join('：');
+    }
+
+    function ueWorkflowFailureHint(text) {
+      const value = String(text || '').toLowerCase();
+      if (!value) return '';
+      if (value.includes('engine-path') || value.includes('engine path') || value.includes('engineassociation')) {
+        return '确认 DevFlow workspace 已登记 engine_path，或在虚幻项目上下文里填写正确 UE 引擎路径后重新生成执行包。';
+      }
+      if (value.includes('.uproject')) {
+        return '主项目路径必须是包含 .uproject 的 UE 项目目录；如果已配置 DevFlow workspace，可以把主项目路径留空。';
+      }
+      if (value.includes('workspace.plugin_path') || value.includes('主插件路径')) {
+        return '检查主插件集是否填写为真实插件工程路径，并确认它和 DevFlow workspace 的 plugin_path 指向同一个插件。';
+      }
+      if (value.includes('vs code') || value.includes('copilot') || value.includes('claude') || value.includes('opencode')) {
+        return '先确认执行包已生成成功，再检查目标 Agent/Provider 是否已安装 UnrealMaster。';
+      }
+      return '检查任务里的分支名、Host 根目录、主插件集，然后重新预演；失败详情会保留在任务卡片里。';
+    }
+
+    function ueWorkflowTodoExecutionSummary(details, fallback) {
+      const moduleFailure = ueWorkflowModuleFailureSummary(details);
+      if (moduleFailure) return moduleFailure;
+      const message = cleanUEWorkflowTaskValue(details?.message || details?.error || '', '');
+      if ((details?.status === 'blocked' || details?.status === 'failed' || details?.status === 'error') && message) {
+        return message;
+      }
+      return fallback;
+    }
+
+    function summarizeUEWorkflowRequest(request) {
+      if (!request || typeof request !== 'object') return null;
+      const summary = {};
+      ['taskId', 'provider', 'workspace', 'scope', 'project', 'primary', 'hostRoot', 'mainProject', 'primaryPath', 'pluginDependencies'].forEach(key => {
+        if (request[key] !== undefined && request[key] !== null && String(request[key]).trim()) {
+          summary[key] = String(request[key]).slice(0, key === 'pluginDependencies' ? 1000 : 260);
+        }
+      });
+      return Object.keys(summary).length ? summary : null;
+    }
+
+    function summarizeUEWorkflowModuleResult(result) {
+      if (!result || typeof result !== 'object') return null;
+      const outcome = result.outcome && typeof result.outcome === 'object' ? result.outcome : {};
+      return {
+        module: result.module || outcome.module || null,
+        status: String(result.status || outcome.status || '').slice(0, 80),
+        message: cleanUEWorkflowTaskValue(result.message || outcome.message || outcome.summary || '', ''),
+        targetContext: result.targetContext || outcome.targetContext || null,
+        artifacts: [
+          ...(Array.isArray(result.artifacts) ? result.artifacts : []),
+          ...(Array.isArray(outcome.artifacts) ? outcome.artifacts : [])
+        ].slice(0, 20),
+        command: cleanUEWorkflowTaskValue(result.command || outcome.command || '', '')
+      };
+    }
+
+    function summarizeUEWorkflowMasterDetails(details, response = null) {
+      if (!details || typeof details !== 'object' || details.kind !== 'UnrealWorkflowMasterResult') return null;
+      const providerPackage = details.providerPackage && typeof details.providerPackage === 'object' ? details.providerPackage : {};
+      const contextConfirmation = details.contextConfirmation
+        || providerPackage.contextConfirmation
+        || (Array.isArray(details.moduleResults) ? details.moduleResults : [])
+          .map(result => result?.targetContext || result?.outcome?.targetContext)
+          .find(Boolean)
+        || null;
+      return {
+        kind: 'UnrealWorkflowMasterResult',
+        status: String(details.status || '').slice(0, 80),
+        command: cleanUEWorkflowTaskValue(details.command || '', ''),
+        message: cleanUEWorkflowTaskValue(details.message || details.error || '', ''),
+        summaryOnly: true,
+        request: summarizeUEWorkflowRequest(details.request),
+        contextConfirmation,
+        providerPackage: {
+          provider: String(providerPackage.provider || details.request?.provider || '').slice(0, 80),
+          contextConfirmation: providerPackage.contextConfirmation || null,
+          taskPackagePath: cleanUEWorkflowTaskValue(providerPackage.taskPackagePath || providerPackage.path || '', ''),
+          command: cleanUEWorkflowTaskValue(providerPackage.command || '', '')
+        },
+        stages: Array.isArray(details.stages) ? details.stages.slice(0, 20) : [],
+        blockedActions: Array.isArray(details.blockedActions) ? details.blockedActions.slice(0, 30).map(item => String(item).slice(0, 400)) : [],
+        sideEffects: Array.isArray(details.sideEffects) ? details.sideEffects.slice(0, 30).map(item => String(item).slice(0, 400)) : [],
+        moduleResults: (Array.isArray(details.moduleResults) ? details.moduleResults : [])
+          .map(summarizeUEWorkflowModuleResult)
+          .filter(Boolean)
+          .slice(0, 20),
+        artifacts: ueWorkflowResultArtifacts(details).slice(0, 40),
+        knowledgeClosure: cleanUEWorkflowTaskValue(details.knowledgeClosure || response?.knowledgeRecord?.recordId || '', ''),
+        recordId: cleanUEWorkflowTaskValue(response?.executionRecord?.executionId || response?.knowledgeRecord?.recordId || '', ''),
+        recordPath: cleanUEWorkflowTaskValue(response?.executionRecord?.path || response?.knowledgeRecord?.path || '', '')
+      };
+    }
+
+    function ueWorkflowExecutionFromMasterResponse(response, commandName, summary) {
+      const details = summarizeUEWorkflowMasterDetails(response?.result || {}, response) || {};
+      const recordId = response?.executionRecord?.executionId || response?.knowledgeRecord?.recordId || '';
+      const status = ueWorkflowTodoExecutionStatus(details);
+      const normalizedSummary = ueWorkflowTodoExecutionSummary(details, summary);
+      return normalizeTodoExecution({
+        runId: recordId,
+        pluginName: UE_WORKFLOW_PLUGIN_NAME,
+        moduleName: 'UnrealMaster',
+        commandName,
+        status,
+        summary: normalizedSummary,
+        result: {
+          schemaVersion: 1,
+          kind: 'UnrealWorkflowMasterResult',
+          pluginName: UE_WORKFLOW_PLUGIN_NAME,
+          moduleName: 'UnrealMaster',
+          commandName,
+          status,
+          summary: normalizedSummary,
+          artifacts: ueWorkflowResultArtifacts(details),
+          details
+        }
+      });
+    }
+
+    function applyUEWorkflowMasterResultToTask(taskId, masterResult, execution) {
+      const current = findTodoTask(taskId);
+      if (!current) return null;
+      current.task.ueWorkflowMaster = summarizeUEWorkflowMasterDetails(masterResult, null) || normalizeUEWorkflowMasterDetails(masterResult) || null;
+      current.task.execution = execution;
+      current.task.updatedAt = Date.now();
+      agentTaskDetailTaskId = current.task.id;
+      return current;
+    }
+
+    async function runUEWorkflowDryRunForTodo(taskId, options = {}) {
+      const found = findTodoTask(taskId);
+      if (!found || !tauriInvoke) return null;
+      if (agentTaskAutoSaveTimer) {
+        window.clearTimeout(agentTaskAutoSaveTimer);
+        agentTaskAutoSaveTimer = 0;
+      }
+      if (ueWorkflowRuntimeState?.enabled === false) {
+        showToast('虚幻工作流已停用');
+        return null;
+      }
+      const missing = ueWorkflowBindingMissing(ueWorkflowContextFromTask(found.task, found.workspace));
+      if (missing.length) {
+        showToast('请先补齐虚幻项目上下文：' + missing.join('、'), { kind: 'error' });
+        agentTaskDetailTaskId = found.task.id;
+        renderAgentTaskPanel({ force: true, allowDetailTransitionRender: true });
+        updateAgentTaskPromptPreview();
+        return null;
+      }
+      try {
+        const response = await tauriInvoke('run_ueworkflow_master_dry_run', {
+          request: ueWorkflowTaskRequest(found, options)
+        });
+        const execution = ueWorkflowExecutionFromMasterResponse(response, 'master dry-run', '虚幻工作流预演已生成');
+        applyUEWorkflowMasterResultToTask(taskId, response?.result, execution);
+        await saveTodoState({ force: true, render: false });
+        clearAgentTaskDetailDraft(found.task.id);
+        renderAgentTaskPanel({ force: true, allowDetailTransitionRender: true });
+        updateAgentTaskPromptPreview();
+        showToast('虚幻工作流预演已生成');
+        return response;
+      } catch (error) {
+        showToast(ueWorkflowFailureMessage('虚幻工作流预演失败', error), { kind: 'error' });
+        console.error('[UEWorkflow] dry-run failed', error);
+        return null;
+      }
+    }
+
+    function buildUEWorkflowTodoPrompt(workspace, task) {
+      const details = ueWorkflowMasterDetailsFromTask(task);
+      const completion = (task.acceptance || '').trim() || t('todoDefaultCompletion');
+      const description = (task.description || '').trim();
+      const context = ueWorkflowContextConfirmation(details, workspace, task);
+      const lines = [
+        t('todoPromptIdLabel') + ': ' + task.id,
+        '',
+        t('todoTargetAgentLabel'),
+        '虚幻大师',
+        '',
+        '工作流',
+        '虚幻工作流',
+        '',
+        ...ueWorkflowCliPreflightLines(context),
+        '',
+        t('todoWorkspaceLabelPrompt'),
+        workspace.label || workspace.key || '当前工作区',
+        normalizeWorkspaceLaunchPath(workspace.path || '') ? ('会话 workspace 路径：' + normalizeWorkspaceLaunchPath(workspace.path || '')) : '',
+        context.workspacePath ? ('实际执行目录：' + context.workspacePath) : '',
+        '',
+        'UE 上下文确认',
+        ...ueWorkflowContextLines(context),
+        '',
+        t('todoTaskLabel'),
+        task.title,
+        '',
+        '任务说明',
+        description || '无',
+        '',
+        t('todoCompletionLabel'),
+        completion
+      ];
+      if (!details) {
+        lines.push('', '下一步', '先在 AgentWatcher 中生成 dry-run，确认阶段计划、风险、产物路径和执行边界。');
+        return lines.join('\n');
+      }
+      const stages = Array.isArray(details.stages) ? details.stages : [];
+      if (stages.length) {
+        lines.push('', '阶段计划');
+        stages.slice(0, 8).forEach((stage, index) => {
+          lines.push(`${index + 1}. ${stage.title || stage.id || '阶段'}：${stage.summary || ''}`);
+        });
+      }
+      const blocked = Array.isArray(details.blockedActions) ? details.blockedActions : [];
+      if (blocked.length) {
+        lines.push('', '安全边界');
+        blocked.slice(0, 8).forEach(item => lines.push('- ' + item));
+      }
+      const artifacts = ueWorkflowResultArtifacts(details);
+      if (artifacts.length) {
+        lines.push('', '产物路径');
+        artifacts.slice(0, 8).forEach(item => lines.push('- ' + [item.label, item.path].filter(Boolean).join('：')));
+      }
+      lines.push('', t('todoInstructionsLabel'));
+      lines.push('遵循 provider 任务包中的命令契约；不要执行任意 shell，不要 raw UE build，不要破坏性删除。uwf 或 DevFlow 不可用时必须停止，不允许退化成手工改主线。完成后把复盘、方案和规则候选交给知识库沉淀。');
+      return lines.join('\n');
+    }
+
+    function buildUEWorkflowProviderPrompt(workspace, task, details) {
+      return buildUEWorkflowTodoPrompt(workspace, { ...task, execution: task.execution || ueWorkflowExecutionFromMasterResponse({ result: details }, 'master execute', '虚幻工作流执行包已生成') });
+    }
+
+    function ueWorkflowLifecyclePhaseMessage(phase, fallback = '') {
+      const messages = {
+        'package-started': '正在创建 DevFlow 隔离环境',
+        'package-generating': '正在生成执行包',
+        'package-ready': '执行包已生成',
+        'provider-launch-requested': '正在打开目标 Agent',
+        'provider-opened': '目标 Agent 已打开，等待会话写入任务标记',
+        'session-bound': '已识别并绑定目标会话',
+        'first-response-detected': '已看到目标会话开始回应',
+        failed: '执行失败，错误已保留在任务详情'
+      };
+      return messages[phase] || fallback || phase || '';
+    }
+
+    function setUEWorkflowLifecycle(task, phase, message = '', options = {}) {
+      if (!task) return null;
+      const now = Date.now();
+      const lifecycle = normalizeUEWorkflowLifecycle(task.ueWorkflowLifecycle) || {
+        runId: '',
+        phase: '',
+        status: '',
+        message: '',
+        updatedAt: 0,
+        events: []
+      };
+      const finalMessage = String(message || ueWorkflowLifecyclePhaseMessage(phase)).slice(0, 500);
+      const status = options.status || (phase === 'failed' ? 'failed' : 'running');
+      lifecycle.runId = lifecycle.runId || options.runId || makeTodoId('uwf-run');
+      lifecycle.phase = String(phase || lifecycle.phase || '').slice(0, 80);
+      lifecycle.status = status;
+      lifecycle.message = finalMessage;
+      lifecycle.updatedAt = now;
+      lifecycle.events = Array.isArray(lifecycle.events) ? lifecycle.events : [];
+      lifecycle.events.push({
+        id: makeTodoId('uwf-event'),
+        type: lifecycle.phase || 'event',
+        message: finalMessage,
+        at: now,
+        data: options.data && typeof options.data === 'object' ? options.data : null
+      });
+      lifecycle.events = lifecycle.events.slice(-UE_WORKFLOW_LIFECYCLE_EVENT_LIMIT);
+      task.ueWorkflowLifecycle = lifecycle;
+      task.updatedAt = now;
+      return lifecycle;
+    }
+
+    function ueWorkflowLifecycleHasEvent(task, phase) {
+      const lifecycle = normalizeUEWorkflowLifecycle(task?.ueWorkflowLifecycle);
+      return !!lifecycle?.events?.some(event => event?.type === phase);
+    }
+
+    function sessionSummaryText(session) {
+      return [
+        session?.title,
+        session?.branch,
+        session?.lastUserMessage,
+        session?.lastAiMessage
+      ].filter(Boolean).join('\n');
+    }
+
+    function summaryMatchesAny(text, patterns) {
+      return patterns.some(pattern => pattern.test(text));
+    }
+
+    function maybeAddUEWorkflowLifecycleEvent(task, session, phase, message, patterns) {
+      if (!task || ueWorkflowLifecycleHasEvent(task, phase)) return false;
+      const text = sessionSummaryText(session);
+      if (!text || !summaryMatchesAny(text, patterns)) return false;
+      setUEWorkflowLifecycle(task, phase, message, {
+        data: {
+          sessionId: String(session?.id || ''),
+          provider: String(session?.provider || '')
+        }
+      });
+      return true;
+    }
+
+    function updateUEWorkflowLifecycleFromSessionSummary(task, session) {
+      if (!isUEWorkflowWorkflow(task?.workflow) || !session) return false;
+      let changed = false;
+      changed = maybeAddUEWorkflowLifecycleEvent(task, session, 'build-started', '目标会话出现构建/编译动作。', [
+        /\bbuild\b/i,
+        /\bubt\b/i,
+        /unrealbuildtool/i,
+        /编译|构建/
+      ]) || changed;
+      changed = maybeAddUEWorkflowLifecycleEvent(task, session, 'build-passed', '目标会话出现构建通过证据。', [
+        /build\s+(passed|success|succeeded|complete|completed)/i,
+        /total execution time/i,
+        /writemetadata\s+unrealeditor\.target/i,
+        /编译.*(成功|通过|完成)|构建.*(成功|通过|完成)/
+      ]) || changed;
+      changed = maybeAddUEWorkflowLifecycleEvent(task, session, 'review-started', '目标会话出现评审动作。', [
+        /\breview\b/i,
+        /评审|审查|复核/
+      ]) || changed;
+      changed = maybeAddUEWorkflowLifecycleEvent(task, session, 'review-passed', '目标会话出现评审通过证据。', [
+        /review\s+(passed|approved|clear)/i,
+        /approve/i,
+        /评审.*(通过|完成)|审查.*(通过|完成)/
+      ]) || changed;
+      changed = maybeAddUEWorkflowLifecycleEvent(task, session, 'merged', '目标会话出现合并/提交链路证据。', [
+        /\bmerge(d)?\b/i,
+        /\bsquash\b/i,
+        /cherry[- ]pick/i,
+        /\bcommit\b/i,
+        /合并|提交|拣选/
+      ]) || changed;
+      changed = maybeAddUEWorkflowLifecycleEvent(task, session, 'cleanup', '目标会话出现清理动作。', [
+        /\bcleanup\b/i,
+        /remove.*worktree/i,
+        /delete.*worktree/i,
+        /清理|删除.*工作树|删除.*worktree/
+      ]) || changed;
+      const lifecycle = normalizeUEWorkflowLifecycle(task.ueWorkflowLifecycle);
+      if (String(session.status || '') === 'idle'
+        && !ueWorkflowLifecycleHasEvent(task, 'done')
+        && lifecycle?.events?.some(event => event?.type === 'merged' || event?.type === 'cleanup')) {
+        setUEWorkflowLifecycle(task, 'done', '目标会话已空闲，并已有合并或清理证据；等待人工确认完成。', {
+          status: 'waiting',
+          data: {
+            sessionId: String(session?.id || ''),
+            provider: String(session?.provider || '')
+          }
+        });
+        changed = true;
+      }
+      return changed;
+    }
+
+    function ueWorkflowDispatchProvider(dispatch) {
+      return String(dispatch?.boundProvider || todoProviderForMode(dispatch?.mode) || '').toLowerCase();
+    }
+
+    function pruneActiveUEWorkflowDispatches(task, provider, keepId = '') {
+      if (!task || !Array.isArray(task.dispatches)) return;
+      const expectedProvider = String(provider || '').toLowerCase();
+      task.dispatches = task.dispatches.filter(dispatch => {
+        if (!dispatch || dispatch.id === keepId) return true;
+        const sameProvider = !expectedProvider || ueWorkflowDispatchProvider(dispatch) === expectedProvider;
+        const stillPending = !dispatch.boundSessionId && ['', 'waiting', 'running'].includes(String(dispatch.sessionStatus || ''));
+        return !(sameProvider && stillPending);
+      });
+    }
+
+    function saveTodoStateSoon(options = {}) {
+      window.setTimeout(() => {
+        void saveTodoState({ ...options, render: options.render === true });
+      }, 0);
+    }
+
+    function sleepMs(ms) {
+      return new Promise(resolve => window.setTimeout(resolve, ms));
+    }
+
+    async function runUEWorkflowMasterExecuteWithPolling(taskId, request) {
+      const started = await tauriInvoke('start_ueworkflow_master_execute_run', { request });
+      const runId = String(started?.runId || '');
+      const current = findTodoTask(taskId);
+      if (current?.task) {
+        setUEWorkflowLifecycle(current.task, 'package-generating', '正在生成执行包，AgentWatcher 会在后台继续等待结果。', {
+          runId,
+          data: { runId }
+        });
+        saveTodoStateSoon({ force: true });
+      }
+      if (!runId) throw new Error('UEWorkflow 后台执行没有返回 runId');
+      for (let attempt = 0; attempt < 360; attempt += 1) {
+        await sleepMs(attempt < 20 ? 500 : 1000);
+        const snapshot = await tauriInvoke('get_ueworkflow_master_execute_run', { runId });
+        const status = String(snapshot?.status || '');
+        if (status === 'success') return snapshot.result;
+        if (status === 'failed') throw new Error(snapshot?.error || 'UEWorkflow 执行包生成失败');
+        if (attempt % 6 === 0) {
+          const latest = findTodoTask(taskId);
+          if (latest?.task) {
+            setUEWorkflowLifecycle(latest.task, snapshot?.phase || 'package-generating', snapshot?.message || '正在生成执行包，后台还在运行。', {
+              runId,
+              data: { runId }
+            });
+            saveTodoStateSoon({ force: true });
+          }
+        }
+      }
+      throw new Error('UEWorkflow 执行包生成超时；后台任务可能仍在运行，请查看任务详情和日志。');
+    }
+
+    async function executeUEWorkflowTaskPackage(taskId) {
+      const key = String(taskId || '');
+      if (!key) return null;
+      const existing = ueWorkflowExecuteInFlight.get(key);
+      if (existing) {
+        showToast('虚幻工作流执行包正在生成，请稍等...');
+        return existing;
+      }
+      const run = executeUEWorkflowTaskPackageOnce(key)
+        .finally(() => {
+          if (ueWorkflowExecuteInFlight.get(key) === run) {
+            ueWorkflowExecuteInFlight.delete(key);
+          }
+        });
+      ueWorkflowExecuteInFlight.set(key, run);
+      return run;
+    }
+
+    async function executeUEWorkflowTaskPackageOnce(taskId) {
+      const found = findTodoTask(taskId);
+      if (!found || !tauriInvoke) return null;
+      if (agentTaskAutoSaveTimer) {
+        window.clearTimeout(agentTaskAutoSaveTimer);
+        agentTaskAutoSaveTimer = 0;
+      }
+      if (!ueWorkflowTaskHasDryRun(found.task) && !ueWorkflowTaskHasExecutePackage(found.task)) {
+        await runUEWorkflowDryRunForTodo(taskId);
+        return null;
+      }
+      const missing = ueWorkflowBindingMissing(ueWorkflowContextFromTask(found.task, found.workspace));
+      if (missing.length) {
+        showToast('请先补齐虚幻项目上下文：' + missing.join('、'), { kind: 'error' });
+        agentTaskDetailTaskId = found.task.id;
+        renderAgentTaskPanel({ force: true, allowDetailTransitionRender: true });
+        updateAgentTaskPromptPreview();
+        return null;
+      }
+      const providerModeBeforeExecute = agentTaskProviderModeForTask(found.task);
+      const pendingDispatch = {
+        id: makeTodoId('dispatch'),
+        workflow: AGENT_TASK_WORKFLOW_UE,
+        mode: providerModeBeforeExecute,
+        workspacePath: normalizeWorkspaceLaunchPath(found.workspace?.path || ''),
+        providerWorkspacePath: '',
+        launchedAt: Date.now(),
+        boundSessionId: '',
+        boundProvider: todoProviderForMode(providerModeBeforeExecute),
+        boundAt: 0,
+        sessionStatus: 'waiting',
+        launchError: '',
+        lastPrompt: '正在生成虚幻工作流执行包，等待 DevFlow 返回隔离环境。'
+      };
+      found.task.dispatches = Array.isArray(found.task.dispatches) ? found.task.dispatches : [];
+      pruneActiveUEWorkflowDispatches(found.task, todoProviderForMode(providerModeBeforeExecute));
+      found.task.dispatches.push(pendingDispatch);
+      found.task.workflow = AGENT_TASK_WORKFLOW_UE;
+      found.task.launchMode = providerModeBeforeExecute;
+      found.task.status = 'running';
+      setUEWorkflowLifecycle(found.task, 'package-started', '正在创建 DevFlow 隔离环境，执行包生成完成后才会打开目标 Agent。', {
+        data: {
+          taskWorkspacePath: pendingDispatch.workspacePath,
+          provider: pendingDispatch.boundProvider
+        }
+      });
+      agentTaskFilter = 'run';
+      agentTaskDetailTaskId = found.task.id;
+      clearAgentTaskDetailDraft(found.task.id);
+      renderAgentTaskPanel({ force: true, allowDetailTransitionRender: true });
+      updateAgentTaskPromptPreview();
+      saveTodoStateSoon({ force: true });
+      showToast('正在生成虚幻工作流执行包...');
+      try {
+        setUEWorkflowLifecycle(found.task, 'package-generating', '正在生成执行包，这一步会调用 DevFlow 创建隔离工作区。');
+        renderAgentTaskPanel({ force: true, allowDetailTransitionRender: true });
+        saveTodoStateSoon({ force: true });
+        const response = await runUEWorkflowMasterExecuteWithPolling(taskId, {
+          ...ueWorkflowTaskRequest(found),
+          confirmed: true,
+          dryRunAccepted: true,
+          confirmationBoundary: UE_WORKFLOW_MASTER_CONFIRMATION
+        });
+        const execution = ueWorkflowExecutionFromMasterResponse(response, 'master execute', '虚幻工作流执行包已生成');
+        const applied = applyUEWorkflowMasterResultToTask(taskId, response?.result, execution) || found;
+        const details = ueWorkflowMasterDetailsFromTask(applied.task);
+        const executionStatus = ueWorkflowTodoExecutionStatus(details);
+        if (executionStatus !== 'success') {
+          applied.task.dispatches = (Array.isArray(applied.task.dispatches) ? applied.task.dispatches : [])
+            .filter(dispatch => dispatch?.id !== pendingDispatch.id);
+          applied.task.status = 'ready';
+          setUEWorkflowLifecycle(applied.task, 'failed', '执行包未生成：' + ueWorkflowTodoExecutionSummary(details, 'DevFlow 未能创建隔离任务环境，已阻止派发 Provider'), {
+            status: 'failed'
+          });
+          agentTaskFilter = 'todo';
+          agentTaskDetailTaskId = applied.task.id;
+          await saveTodoState({ force: true });
+          renderAgentTaskPanel({ force: true, allowDetailTransitionRender: true });
+          updateAgentTaskPromptPreview();
+          showToast('执行包未生成：' + ueWorkflowTodoExecutionSummary(details, 'DevFlow 未能创建隔离任务环境，已阻止派发 Provider'), { kind: 'error' });
+          return response;
+        }
+        const providerWorkspacePath = ueWorkflowProviderWorkspacePath(details, applied.workspace, applied.task);
+        if (!providerWorkspacePath) {
+          applied.task.dispatches = (Array.isArray(applied.task.dispatches) ? applied.task.dispatches : [])
+            .filter(dispatch => dispatch?.id !== pendingDispatch.id);
+          applied.task.status = 'ready';
+          setUEWorkflowLifecycle(applied.task, 'failed', '执行包未生成：DevFlow 没有返回隔离 worktree 路径，已阻止派发 Provider', {
+            status: 'failed'
+          });
+          agentTaskFilter = 'todo';
+          agentTaskDetailTaskId = applied.task.id;
+          await saveTodoState({ force: true });
+          renderAgentTaskPanel({ force: true, allowDetailTransitionRender: true });
+          updateAgentTaskPromptPreview();
+          showToast('执行包未生成：DevFlow 没有返回隔离 worktree 路径，已阻止派发 Provider', { kind: 'error' });
+          return response;
+        }
+        const taskWorkspacePath = normalizeWorkspaceLaunchPath(applied.workspace?.path || found.workspace?.path || '');
+        if (!taskWorkspacePath) {
+          applied.task.dispatches = (Array.isArray(applied.task.dispatches) ? applied.task.dispatches : [])
+            .filter(dispatch => dispatch?.id !== pendingDispatch.id);
+          applied.task.status = 'ready';
+          setUEWorkflowLifecycle(applied.task, 'failed', '执行包未生成：任务没有可归属的 workspace，已阻止派发 Provider', {
+            status: 'failed'
+          });
+          agentTaskFilter = 'todo';
+          agentTaskDetailTaskId = applied.task.id;
+          await saveTodoState({ force: true });
+          renderAgentTaskPanel({ force: true, allowDetailTransitionRender: true });
+          updateAgentTaskPromptPreview();
+          showToast('执行包未生成：任务没有可打开的 workspace，已阻止派发 Provider', { kind: 'error' });
+          return response;
+        }
+        const providerMode = agentTaskProviderModeForTask(applied.task);
+        const provider = todoProviderForMode(providerMode) || ueWorkflowBusinessProvider(details);
+        const prompt = buildUEWorkflowProviderPrompt(applied.workspace, applied.task, details);
+        try {
+          await navigator.clipboard.writeText(prompt);
+        } catch (error) {
+          if (tauriInvoke) showToast(t('handoffClipboardFallback'));
+        }
+        applied.task.dispatches = Array.isArray(applied.task.dispatches) ? applied.task.dispatches : [];
+        pruneActiveUEWorkflowDispatches(applied.task, provider, pendingDispatch.id);
+        const dispatch = applied.task.dispatches.find(item => item?.id === pendingDispatch.id) || pendingDispatch;
+        dispatch.workflow = AGENT_TASK_WORKFLOW_UE;
+        dispatch.mode = providerMode;
+        dispatch.workspacePath = taskWorkspacePath;
+        dispatch.providerWorkspacePath = providerWorkspacePath;
+        dispatch.launchedAt = Date.now();
+        dispatch.boundSessionId = dispatch.boundSessionId || '';
+        dispatch.boundProvider = provider;
+        dispatch.boundAt = dispatch.boundAt || 0;
+        dispatch.sessionStatus = 'running';
+        dispatch.launchError = '';
+        dispatch.lastPrompt = prompt;
+        if (!applied.task.dispatches.includes(dispatch)) applied.task.dispatches.push(dispatch);
+        applied.task.workflow = AGENT_TASK_WORKFLOW_UE;
+        applied.task.launchMode = providerMode;
+        applied.task.status = 'running';
+        setUEWorkflowLifecycle(applied.task, 'package-ready', '执行包已生成，实际执行目录已经确定。', {
+          data: {
+            taskWorkspacePath,
+            providerWorkspacePath,
+            provider
+          }
+        });
+        setUEWorkflowLifecycle(applied.task, 'provider-launch-requested', '正在打开目标 Agent，打开路径是任务原 workspace；DevFlow 隔离目录只作为执行目录写入执行包。', {
+          data: {
+            taskWorkspacePath,
+            providerWorkspacePath,
+            provider
+          }
+        });
+        agentTaskFilter = 'run';
+        agentTaskDetailTaskId = applied.task.id;
+        clearAgentTaskDetailDraft(applied.task.id);
+        await saveTodoState({ force: true });
+        renderAgentTaskPanel({ force: true, allowDetailTransitionRender: true });
+        updateAgentTaskPromptPreview();
+        if (tauriInvoke) {
+          const launchRequest = {
+            request: {
+              mode: providerMode,
+              workspacePath: taskWorkspacePath,
+              prompt,
+              waitForAck: false
+            }
+          };
+          void tauriInvoke('launch_handoff', launchRequest)
+            .then(async () => {
+              const current = findTodoTask(taskId);
+              const currentDispatch = current?.task?.dispatches?.find(item => item?.id === dispatch.id);
+              if (current?.task) {
+                if (currentDispatch) {
+                  currentDispatch.sessionStatus = 'waiting';
+                  currentDispatch.launchError = '';
+                }
+                setUEWorkflowLifecycle(current.task, 'provider-opened', '目标 Agent 已打开，等待它写入任务标记后自动绑定。', {
+                  data: {
+                    taskWorkspacePath,
+                    providerWorkspacePath,
+                    provider
+                  }
+                });
+                await saveTodoState({ force: true, render: false });
+                renderAgentTaskPanel({ force: true, allowDetailTransitionRender: true });
+              }
+              scheduleTodoDispatchRefresh();
+            })
+            .catch(async error => {
+              const current = findTodoTask(taskId);
+              const currentDispatch = current?.task?.dispatches?.find(item => item?.id === dispatch.id);
+              if (current?.task) {
+                if (currentDispatch) {
+                  currentDispatch.sessionStatus = 'waiting';
+                  currentDispatch.launchError = String(error || '');
+                }
+                current.task.status = 'running';
+                setUEWorkflowLifecycle(current.task, 'provider-launch-failed', '目标 Agent 打开失败：' + String(error || '未知错误'), {
+                  status: 'running',
+                  data: {
+                    taskWorkspacePath,
+                    providerWorkspacePath,
+                    provider
+                  }
+                });
+                agentTaskFilter = 'run';
+                agentTaskDetailTaskId = current.task.id;
+                await saveTodoState({ force: true, render: false });
+                renderAgentTaskPanel({ force: true, allowDetailTransitionRender: true });
+              }
+              showToast('VS Code 会话打开失败：' + String(error || '未知错误'), { kind: 'error' });
+            });
+        }
+        showToast('执行包已生成，正在后台打开会话');
+        scheduleTodoDispatchRefresh();
+        return response;
+      } catch (error) {
+        const current = findTodoTask(taskId) || found;
+        if (current?.task) {
+          current.task.dispatches = (Array.isArray(current.task.dispatches) ? current.task.dispatches : [])
+            .filter(dispatch => dispatch?.id !== pendingDispatch.id);
+          current.task.status = 'ready';
+          setUEWorkflowLifecycle(current.task, 'failed', ueWorkflowFailureMessage('虚幻工作流执行包生成失败', error), {
+            status: 'failed'
+          });
+          agentTaskFilter = 'todo';
+          agentTaskDetailTaskId = current.task.id;
+          await saveTodoState({ force: true });
+          renderAgentTaskPanel({ force: true, allowDetailTransitionRender: true });
+          updateAgentTaskPromptPreview();
+        }
+        showToast(ueWorkflowFailureMessage('虚幻工作流执行包生成失败', error), { kind: 'error' });
+        console.error('[UEWorkflow] execute failed', error);
+        return null;
+      }
+    }
+
+    function renderAgentTaskUEWorkflowPlan(found, canEdit) {
+      if (!agentTaskUEWorkflowPlan || !agentTaskUEWorkflowPlanStages) return;
+      if (!found) {
+        agentTaskUEWorkflowPlan.hidden = true;
+        return;
+      }
+      const task = found.task;
+      const draft = agentTaskDetailDraftApplies(task.id) ? agentTaskDetailDraft : null;
+      const workflow = normalizedAgentTaskWorkflow(draft?.workflow || task.workflow || agentTaskWorkflowSelect?.value || DEFAULT_AGENT_TASK_WORKFLOW);
+      const details = ueWorkflowMasterDetailsFromTask(task);
+      const lifecycle = normalizeUEWorkflowLifecycle(task.ueWorkflowLifecycle);
+      const executed = ueWorkflowTaskHasExecutePackage(task);
+      const visible = !!found && (isUEWorkflowWorkflow(workflow) || !!details || executed);
+      agentTaskUEWorkflowPlan.hidden = !visible;
+      if (!visible) return;
+      const planned = !!details;
+      if (agentTaskUEWorkflowPlanState) {
+        const detailsStatus = details ? ueWorkflowTodoExecutionStatus(details) : '';
+        agentTaskUEWorkflowPlanState.textContent = lifecycle?.message
+          || (executed
+          ? '执行包已生成'
+          : ((detailsStatus === 'blocked' || detailsStatus === 'failed') ? '执行包未生成' : (planned ? '等待确认' : '等待预演')));
+      }
+      const lines = [];
+      if (lifecycle?.message) {
+        lines.push('当前进度：' + lifecycle.message);
+      }
+      const latest = latestTodoDispatch(task);
+      const taskWorkspacePath = normalizeWorkspaceLaunchPath(latest?.workspacePath || found.workspace?.path || '');
+      const providerWorkspacePath = normalizeWorkspaceLaunchPath(latest?.providerWorkspacePath || latest?.executionWorkspacePath || '');
+      if (taskWorkspacePath) lines.push('任务归属目录：' + taskWorkspacePath);
+      if (providerWorkspacePath) lines.push('实际执行目录：' + providerWorkspacePath);
+      if (latest?.launchError) lines.push('打开 Agent 失败：' + latest.launchError);
+      if (lifecycle?.events?.length) {
+        lifecycle.events.slice(-5).forEach(event => {
+          const time = event.at ? new Date(event.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+          lines.push([time, event.message || ueWorkflowLifecyclePhaseMessage(event.type)].filter(Boolean).join(' · '));
+        });
+      }
+      if (!planned) {
+        lines.push('先生成 dry-run，确认阶段计划、风险、产物路径和执行边界。');
+        ueWorkflowContextLines(ueWorkflowContextConfirmation(null, found.workspace, found.task)).forEach(line => lines.push(line));
+      } else {
+        const detailsStatus = ueWorkflowTodoExecutionStatus(details);
+        if (detailsStatus === 'blocked' || detailsStatus === 'failed') {
+          lines.push('执行包未生成：' + ueWorkflowTodoExecutionSummary(details, 'DevFlow 未能创建隔离任务环境，已阻止派发 Provider'));
+        }
+        ueWorkflowContextLines(ueWorkflowContextConfirmation(details, found.workspace, found.task)).forEach(line => lines.push(line));
+        (Array.isArray(details.stages) ? details.stages : []).slice(0, 5).forEach(stage => {
+          lines.push(`${stage.title || stage.id || '阶段'} · ${stage.summary || ''}`);
+        });
+        const blocked = Array.isArray(details.blockedActions) ? details.blockedActions : [];
+        if (blocked.length) lines.push('风险边界：' + blocked.slice(0, 4).join(' / '));
+        const artifacts = ueWorkflowResultArtifacts(details);
+        if (artifacts.length) lines.push('产物：' + artifacts.slice(0, 3).map(item => item.path || item.label).join(' / '));
+        lines.push('确认边界：' + (details.confirmationBoundary || UE_WORKFLOW_MASTER_CONFIRMATION));
+      }
+      if (!canEdit && task.status === 'running') {
+        lines.push('任务已派发，详情中保留执行记录和 provider 任务包。');
+      }
+      agentTaskUEWorkflowPlanStages.replaceChildren(...lines.map(line => appendText(document.createElement('div'), 'div', 'agenttask-ueworkflow-plan-line', line)));
+    }
+
+    function buildTodoPrompt(workspace, task, mode = 'agents', workflow = AGENT_TASK_WORKFLOW_STANDARD) {
+      if (isUEWorkflowWorkflow(workflow || task?.workflow)) return buildUEWorkflowTodoPrompt(workspace, task);
+      const target = agentTaskProviderModes.find(item => item.value === mode);
       const targetName = target ? handoffLaunchModeName(target) : mode;
       const completion = (task.acceptance || '').trim() || t('todoDefaultCompletion');
       const notes = (task.description || '').trim() || t('todoNoNotes');
@@ -8914,11 +11426,17 @@
     async function dispatchTodoTask(taskId, mode) {
       const found = findTodoTask(taskId);
       if (!found) return;
+      const workflow = agentTaskWorkflowForTask(found.task);
+      const resolvedMode = normalizedAgentTaskMode(mode || found.task.launchMode || DEFAULT_AGENT_TASK_LAUNCH_MODE);
+      if (isUEWorkflowWorkflow(workflow)) {
+        await executeUEWorkflowTaskPackage(taskId);
+        return;
+      }
       if (!found.workspace.path) {
         showToast(t('todoNoWorkspace'));
         return;
       }
-      const prompt = buildTodoPrompt(found.workspace, found.task, mode);
+      const prompt = buildTodoPrompt(found.workspace, found.task, resolvedMode, workflow);
       let promptCopied = true;
       try {
         await navigator.clipboard.writeText(prompt);
@@ -8931,7 +11449,8 @@
       }
       const dispatch = {
         id: makeTodoId('dispatch'),
-        mode,
+        workflow,
+        mode: resolvedMode,
         workspacePath: found.workspace.path,
         launchedAt: Date.now(),
         boundSessionId: '',
@@ -8941,6 +11460,8 @@
         lastPrompt: prompt
       };
       found.task.dispatches.push(dispatch);
+      found.task.workflow = workflow;
+      found.task.launchMode = resolvedMode;
       found.task.status = 'running';
       found.task.updatedAt = Date.now();
       agentTaskFilter = 'run';
@@ -8951,7 +11472,7 @@
         if (tauriInvoke) {
           await tauriInvoke('launch_handoff', {
             request: {
-              mode,
+              mode: resolvedMode,
               workspacePath: found.workspace.path,
               prompt
             }
@@ -8970,13 +11491,77 @@
       scheduleTodoDispatchRefresh();
     }
 
+    function executionFromModuleRunSnapshot(snapshot) {
+      if (!snapshot || typeof snapshot !== 'object') return null;
+      const taskInfo = snapshot.task && typeof snapshot.task === 'object' ? snapshot.task : {};
+      return normalizeTodoExecution({
+        runId: snapshot.runId || taskInfo.taskId || '',
+        task: taskInfo,
+        result: snapshot.result || null,
+        status: taskInfo.status || snapshot.result?.status || '',
+        summary: taskInfo.summary || snapshot.result?.summary || ''
+      });
+    }
+
+    async function applyModuleRunSnapshotToTodoTask(taskId, snapshot, options = {}) {
+      const found = findTodoTask(taskId);
+      if (!found) return null;
+      const execution = executionFromModuleRunSnapshot(snapshot);
+      if (!execution) return null;
+      found.task.execution = execution;
+      found.task.updatedAt = Date.now();
+      await saveTodoState({
+        force: true,
+        render: options.render !== false,
+        announce: false
+      });
+      return execution;
+    }
+
+    async function pollAgentTaskModuleRun(taskId, runId) {
+      if (!tauriInvoke || !runId) return null;
+      let latestSnapshot = null;
+      for (let attempt = 0; attempt < 240; attempt += 1) {
+        latestSnapshot = await tauriInvoke('get_module_command_run', { runId });
+        await applyModuleRunSnapshotToTodoTask(taskId, latestSnapshot, { render: attempt === 0 || !latestSnapshot?.running });
+        if (!latestSnapshot?.running) return latestSnapshot;
+        await new Promise(resolve => window.setTimeout(resolve, 500));
+      }
+      return latestSnapshot;
+    }
+
+    async function startAgentTaskModuleCommand(taskId, pluginName, moduleName, commandName = 'status') {
+      const found = findTodoTask(taskId);
+      if (!found || !tauriInvoke) return null;
+      const task = await tauriInvoke('start_module_command_run', {
+        request: {
+          pluginName,
+          moduleName,
+          commandName,
+          taskId: found.task.id
+        }
+      });
+      const runId = task?.taskId || found.task.id;
+      await applyModuleRunSnapshotToTodoTask(taskId, {
+        runId,
+        running: true,
+        cancelled: false,
+        task
+      }, { render: true });
+      return pollAgentTaskModuleRun(taskId, runId);
+    }
+
+    window.AgentWatcherModuleTasks = {
+      start: startAgentTaskModuleCommand,
+      applySnapshot: applyModuleRunSnapshotToTodoTask
+    };
+
     function syncTodoStateWithSessions(sessions) {
       todoLastSessions = (Array.isArray(sessions) ? sessions : []).map(normalizeSession);
-      const matchedTodoSessions = todoSessionMatchById(todoLastSessions);
       let changed = false;
       for (const workspace of Object.values(todoState.workspaces || {})) {
         for (const task of workspace.tasks || []) {
-          const matchedSession = matchedTodoSessions.get(String(task.id || '').toLowerCase());
+          const matchedSession = bestTodoSessionForTask(workspace, task, todoLastSessions);
           if (matchedSession && syncTodoTaskWithMatchedSession(workspace, task, matchedSession)) {
             changed = true;
           }
@@ -8984,17 +11569,25 @@
           const dispatch = latestTodoDispatch(task);
           if (!dispatch) continue;
           if (!dispatch.boundSessionId) {
-            const expectedProvider = todoProviderForMode(dispatch.mode);
-            const match = todoLastSessions
-              .filter(session => session.workspaceKey === workspace.key || (workspace.path && normalizedWorkspacePathKey(session.workspacePath) === normalizedWorkspacePathKey(workspace.path)))
-              .filter(session => session.provider === expectedProvider)
-              .filter(session => Number(session.updatedMs) + 60_000 >= Number(dispatch.launchedAt))
-              .sort((left, right) => Number(right.updatedMs) - Number(left.updatedMs))[0];
+            const expectedProvider = dispatch.boundProvider || todoProviderForMode(dispatch.mode);
+            const dispatchWorkspacePath = normalizeWorkspaceLaunchPath(dispatch.workspacePath || workspace.path || '');
+            const dispatchWorkspaceKey = normalizedWorkspacePathKey(dispatchWorkspacePath);
+            const taskId = String(task.id || '').toLowerCase();
+            const match = isUEWorkflowWorkflow(task.workflow)
+              ? bestTodoSessionForTask(workspace, task, todoLastSessions)
+              : todoLastSessions
+                .filter(session => {
+                  const sessionWorkspaceKey = normalizedWorkspacePathKey(session.workspacePath || '');
+                  return sessionContainsTodoId(session, taskId)
+                    || session.workspaceKey === workspace.key
+                    || (workspace.path && sessionWorkspaceKey === normalizedWorkspacePathKey(workspace.path))
+                    || (dispatchWorkspaceKey && sessionWorkspaceKey === dispatchWorkspaceKey);
+                })
+                .filter(session => !expectedProvider || session.provider === expectedProvider)
+                .filter(session => Number(session.updatedMs) + 60_000 >= Number(dispatch.launchedAt))
+                .sort((left, right) => Number(right.updatedMs) - Number(left.updatedMs))[0];
             if (match) {
-              dispatch.boundSessionId = String(match.id || '');
-              dispatch.boundProvider = match.provider || '';
-              dispatch.boundAt = Date.now();
-              changed = true;
+              changed = syncTodoTaskWithMatchedSession(workspace, task, match) || changed;
             }
           }
           if (dispatch.boundSessionId && task.status === 'running') {
@@ -9003,7 +11596,7 @@
               dispatch.sessionStatus = bound.status;
               changed = true;
             }
-            if (bound?.status === 'idle') {
+            if (bound?.status === 'idle' && (!isUEWorkflowWorkflow(task.workflow) || ueWorkflowTaskReadyForReview(task))) {
               task.status = 'review';
               task.updatedAt = Date.now();
               changed = true;
@@ -9298,7 +11891,7 @@
           language: ['en', 'zh'].includes(savedSettings.language) ? savedSettings.language : defaultSettings.language,
           theme: ['dark', 'light'].includes(savedSettings.theme) ? savedSettings.theme : defaultSettings.theme,
           layout: ['horizontal', 'vertical'].includes(savedSettings.layout) ? savedSettings.layout : defaultSettings.layout,
-          alwaysOnTop: savedSettings.alwaysOnTop !== false,
+          alwaysOnTop: isSilentDebugMode() ? false : savedSettings.alwaysOnTop !== false,
           includeCopilot: savedSettings.includeCopilot !== false,
           includeClaude: savedSettings.includeClaude !== false,
           includeCodex: savedSettings.includeCodex !== false,
@@ -9380,6 +11973,23 @@
 
     function isChildWindow() {
       return isPreviewWindow || isHandoffWindow || isTodoWindow || isPerformanceWindow;
+    }
+
+    function nativeWindowShouldFocus(requested = true) {
+      return !!requested && !isSilentDebugMode();
+    }
+
+    function effectiveAlwaysOnTop() {
+      return !isSilentDebugMode() && !!settings.alwaysOnTop;
+    }
+
+    function focusElementIfAllowed(element, options) {
+      if (isSilentDebugMode()) return;
+      element?.focus?.(options);
+    }
+
+    async function focusNativeWindowIfAllowed(windowRef) {
+      if (!isSilentDebugMode()) await windowRef.setFocus().catch(() => {});
     }
 
     function pageZoomFactor() {
@@ -9486,7 +12096,7 @@
         layout: settings.layout,
         agentTaskFlipMs: agentTaskFlipDurationMs(),
         agentTaskTitleSize: clampNumber(settings.agentTaskTitleSize, AGENT_TASK_TITLE_MIN_PX, AGENT_TASK_TITLE_MAX_PX, defaultSettings.agentTaskTitleSize),
-        alwaysOnTop: !!settings.alwaysOnTop,
+        alwaysOnTop: effectiveAlwaysOnTop(),
         performanceAgentProcesses: !!settings.performanceAgentProcesses,
         performanceUpdateSpeed: normalizePerformanceUpdateSpeed(settings.performanceUpdateSpeed)
       };
@@ -9555,7 +12165,7 @@
         layout: ['horizontal', 'vertical'].includes(payload.layout) ? payload.layout : settings.layout,
         agentTaskFlipMs: clampNumber(payload.agentTaskFlipMs, AGENT_TASK_FLIP_MIN_MS, AGENT_TASK_FLIP_MAX_MS, settings.agentTaskFlipMs),
         agentTaskTitleSize: clampNumber(payload.agentTaskTitleSize, AGENT_TASK_TITLE_MIN_PX, AGENT_TASK_TITLE_MAX_PX, settings.agentTaskTitleSize),
-        alwaysOnTop: typeof payload.alwaysOnTop === 'boolean' ? payload.alwaysOnTop : settings.alwaysOnTop,
+        alwaysOnTop: isSilentDebugMode() ? false : (typeof payload.alwaysOnTop === 'boolean' ? payload.alwaysOnTop : settings.alwaysOnTop),
         performanceAgentProcesses: typeof payload.performanceAgentProcesses === 'boolean' ? payload.performanceAgentProcesses : settings.performanceAgentProcesses,
         performanceUpdateSpeed: normalizePerformanceUpdateSpeed(payload.performanceUpdateSpeed || settings.performanceUpdateSpeed)
       };
@@ -9774,9 +12384,9 @@
     async function applyAlwaysOnTopSetting() {
       try {
         if (tauriInvoke) {
-          await tauriInvoke('set_window_always_on_top', { alwaysOnTop: settings.alwaysOnTop });
+          await tauriInvoke('set_window_always_on_top', { alwaysOnTop: effectiveAlwaysOnTop() });
         } else if (tauriWindow?.setAlwaysOnTop) {
-          await tauriWindow.setAlwaysOnTop(settings.alwaysOnTop);
+          await tauriWindow.setAlwaysOnTop(effectiveAlwaysOnTop());
         }
 
       } catch (error) {
@@ -9818,8 +12428,13 @@
       }
       window.clearTimeout(toastTimer);
       toast.textContent = message;
+      toast.classList.toggle('error', options.kind === 'error' || options.error === true);
       toast.classList.add('show');
-      toastTimer = window.setTimeout(() => toast.classList.remove('show'), 2200);
+      const duration = Number.isFinite(options.duration) ? options.duration : (options.kind === 'error' || options.error === true ? 12000 : 2200);
+      toastTimer = window.setTimeout(() => {
+        toast.classList.remove('show');
+        toast.classList.remove('error');
+      }, duration);
     }
 
     function updatePerformanceDebugMode() {
@@ -9836,7 +12451,11 @@
         return;
       }
       if (enabled && WebviewWindowClass) {
-        if (perfPanel) perfPanel.hidden = true;
+        if (perfPanel) {
+          perfPanel.hidden = false;
+          positionPerformancePanel(false);
+        }
+        startPerformanceDebug();
         startPerformanceFrontendDebug();
         if (!performanceWindowDesiredVisible || !nativePerformanceWindow) {
           showNativePerformanceWindow().catch(error => showToast(String(error)));
@@ -10087,13 +12706,16 @@
     function positionPerformancePanel(reset) {
       if (!perfPanel || perfPanel.hidden) return;
       const margin = 10;
+      const titlebarRect = document.querySelector('.watcher-window > .native-titlebar')?.getBoundingClientRect();
+      const reservedTop = isPerformanceWindow ? 0 : Math.max(40, Math.ceil(Number(titlebarRect?.bottom) || 0) + 8);
       const geometry = reset ? { left: null, top: null, ...PERFORMANCE_PANEL_DEFAULT_SIZE } : loadPerformancePanelGeometry();
       const width = Math.min(Math.max(geometry.width, PERFORMANCE_PANEL_MIN_WIDTH), Math.max(PERFORMANCE_PANEL_MIN_WIDTH, window.innerWidth - margin * 2));
-      const height = Math.min(Math.max(geometry.height, PERFORMANCE_PANEL_MIN_HEIGHT), Math.max(PERFORMANCE_PANEL_MIN_HEIGHT, window.innerHeight - margin * 2));
+      const maxHeight = Math.max(180, window.innerHeight - reservedTop - margin);
+      const height = Math.min(Math.max(geometry.height, Math.min(PERFORMANCE_PANEL_MIN_HEIGHT, maxHeight)), maxHeight);
       const defaultLeft = Math.max(margin, window.innerWidth - width - margin);
-      const defaultTop = Math.max(margin, window.innerHeight - height - margin);
+      const defaultTop = Math.max(reservedTop, window.innerHeight - height - margin);
       const left = Math.max(margin, Math.min(geometry.left ?? defaultLeft, window.innerWidth - width - margin));
-      const top = Math.max(margin, Math.min(geometry.top ?? defaultTop, window.innerHeight - height - margin));
+      const top = Math.max(reservedTop, Math.min(geometry.top ?? defaultTop, window.innerHeight - height - margin));
       perfPanel.style.right = 'auto';
       perfPanel.style.bottom = 'auto';
       perfPanel.style.left = Math.round(left) + 'px';
@@ -10279,6 +12901,7 @@
 
     async function samplePerformanceSnapshot(options = {}) {
       if (!shouldSamplePerformanceSnapshotHere() && !options.force) return;
+      if (watcherNativeWindowInteractionInProgress && !options.force) return;
       try {
         performanceSnapshot = tauriInvoke
           ? await tauriInvoke('get_performance_snapshot', { options: { includeAgentClients: !!settings.performanceAgentProcesses } })
@@ -10842,6 +13465,11 @@
           ? cwd + '在 VS Code 编辑器标签页中打开 Copilot；填入接续提示词'
           : cwd + 'open Copilot in a VS Code editor tab; insert "<handoff prompt>"';
       }
+      if (handoffLaunchMode === 'ueworkflow') {
+        return currentLang === 'zh'
+          ? cwd + '先生成虚幻工作流预演和执行包；再打开 Copilot 发送任务包'
+          : cwd + 'create the Unreal Workflow dry-run and package; then open Copilot with the task package';
+      }
       if (handoffLaunchMode === 'code-chat') {
         return currentLang === 'zh'
           ? cwd + '打开 Copilot CLI 编辑器标签页；填入接续提示词'
@@ -10867,6 +13495,7 @@
       if (handoffLaunchMode === 'codex-app') return t('handoffTargetAgentCodex');
       if (handoffLaunchMode === 'claude-panel') return t('handoffTargetAgentClaude');
       if (handoffLaunchMode === 'code-chat') return t('handoffTargetAgentCli');
+      if (handoffLaunchMode === 'ueworkflow') return t('handoffUnrealWorkflowLabel');
       return t('handoffTargetAgentCopilot');
     }
 
@@ -11110,6 +13739,11 @@
 
     async function openHandoffMenu(card, x, y) {
       setHandoffSource(card);
+      handoffOpen.onclick = event => {
+        event.preventDefault();
+        event.stopPropagation();
+        void openHandoffPanel();
+      };
       if (handoffMenuRevealFrame) window.cancelAnimationFrame(handoffMenuRevealFrame);
       window.clearTimeout(handoffMenuRevealTimer);
       handoffContextMenu.dataset.anchorX = String(x);
@@ -11171,17 +13805,31 @@
       });
     }
 
+    async function awaitNativeWindowStep(promise, timeoutMs, fallback = null) {
+      let timer = 0;
+      try {
+        return await Promise.race([
+          promise,
+          new Promise(resolve => {
+            timer = window.setTimeout(() => resolve(fallback), timeoutMs);
+          })
+        ]);
+      } finally {
+        if (timer) window.clearTimeout(timer);
+      }
+    }
+
     async function showNativeHandoffPanel() {
       if (!WebviewWindowClass || isHandoffWindow) return false;
 
       try {
-        const position = await nativeHandoffWindowPosition();
+        const position = await awaitNativeWindowStep(nativeHandoffWindowPosition(), 850, null);
+        if (!position) return false;
         const payload = publishHandoffData();
         handoffWindowDesiredVisible = true;
-        const existing = await usableNativeWindow('handoff-panel', nativeHandoffWindow);
+        const existing = await awaitNativeWindowStep(usableNativeWindow('handoff-panel', nativeHandoffWindow), 650, null);
         if (existing) {
-          await revealNativeHandoffWindow(existing);
-          return true;
+          return await awaitNativeWindowStep(revealNativeHandoffWindow(existing), 900, false);
         }
 
         createNativeHandoffWindow(position, true);
@@ -11313,7 +13961,7 @@
         await tauriEmitTo?.('handoff-panel', 'agentwatcher-handoff-data', latestHandoffPayload).catch(() => {});
       }
       await windowRef.show().catch(() => {});
-      await windowRef.setFocus().catch(() => {});
+      await focusNativeWindowIfAllowed(windowRef);
       return true;
     }
 
@@ -11328,7 +13976,7 @@
       emitRuntimeSettings('performance-panel');
       publishPerformanceFrontendData('performance-panel');
       await windowRef.show().catch(() => {});
-      await windowRef.setFocus().catch(() => {});
+      await focusNativeWindowIfAllowed(windowRef);
       return true;
     }
 
@@ -11346,7 +13994,7 @@
         await tauriEmitTo?.('todo-panel', 'agentwatcher-todo-select-workspace', { workspaceKey: selectedTodoWorkspaceKey }).catch(() => {});
       }
       await windowRef.show().catch(() => {});
-      await windowRef.setFocus().catch(() => {});
+      await focusNativeWindowIfAllowed(windowRef);
       return true;
     }
 
@@ -11391,10 +14039,10 @@
         resizable: true,
         decorations: false,
         transparent: true,
-        alwaysOnTop: !!settings.alwaysOnTop,
+        alwaysOnTop: effectiveAlwaysOnTop(),
         skipTaskbar: true,
         shadow: false,
-        focus: true,
+        focus: nativeWindowShouldFocus(true),
         visible: false,
         preventOverflow: false
       });
@@ -11438,10 +14086,10 @@
           resizable: true,
           decorations: false,
           transparent: true,
-          alwaysOnTop: !!settings.alwaysOnTop,
+          alwaysOnTop: effectiveAlwaysOnTop(),
           skipTaskbar: true,
           shadow: false,
-          focus: true,
+          focus: nativeWindowShouldFocus(true),
           visible: false,
           preventOverflow: false
         });
@@ -11463,10 +14111,11 @@
       selectedTodoWorkspaceKey = preferredTodoWorkspaceKey(workspaceKey, options);
       closeHandoffMenu();
       closeHandoffPanel();
+      if (document.body.classList.contains('is-rail-only')) await setRailOnly(false);
       setSettingsPanelOpenPreserveMode(false);
       setAgentTaskMode(true);
       renderTodoEverywhere();
-      requestAnimationFrame(() => agentTaskQuickTitle?.focus());
+      requestAnimationFrame(() => focusElementIfAllowed(agentTaskQuickTitle));
     }
 
     function preserveTaskModeDuring(action) {
@@ -11518,6 +14167,8 @@
       document.body.classList.toggle('is-task-settings-open', open);
       if (open) {
         checkBridgeStatus();
+        refreshUEWorkflowStatus({ silent: true });
+        refreshUEWorkflowRuntimeState({ silent: true });
         if (isAgentTaskMode) {
           agentTaskFace?.setAttribute('aria-hidden', 'false');
           watcherWindow?.setAttribute('aria-label', t('agentTaskFaceLabel'));
@@ -11537,6 +14188,7 @@
 
     function setAgentTaskMode(enabled) {
       const nextMode = !!enabled;
+      if (nextMode) ensureAgentTaskWindowExpanded();
       if (isAgentTaskMode !== nextMode) {
         if (agentTaskFlipTimer) {
           window.clearTimeout(agentTaskFlipTimer);
@@ -11580,6 +14232,16 @@
       if (agentTaskFace) {
         agentTaskFace.setAttribute('aria-hidden', isAgentTaskMode ? 'false' : 'true');
       }
+      if (isAgentTaskMode) void refreshUEWorkflowRuntimeState({ silent: true });
+    }
+
+    function restoreAgentTaskModeFromDom() {
+      if (!document.body.classList.contains('is-agent-task-mode')) return;
+      isAgentTaskMode = true;
+      watcherWindow?.setAttribute('aria-label', t('agentTaskFaceLabel'));
+      agentTaskFace?.setAttribute('aria-hidden', 'false');
+      applyModeSwitchLabel();
+      ensureAgentTaskWindowExpanded();
     }
 
     function applyModeSwitchLabel() {
@@ -11602,10 +14264,10 @@
           resizable: true,
           decorations: false,
           transparent: true,
-          alwaysOnTop: !!settings.alwaysOnTop,
+          alwaysOnTop: effectiveAlwaysOnTop(),
           skipTaskbar: true,
           shadow: false,
-          focus: !!focus,
+          focus: nativeWindowShouldFocus(focus),
           visible: false,
           preventOverflow: false
         });
@@ -11644,10 +14306,13 @@
       handoffId = makeHandoffId();
       handoffTask.value = '';
       updateHandoffPrompt();
-      if (await showNativeHandoffPanel()) return;
-      handoffLayer.hidden = false;
-      requestAnimationFrame(() => positionHandoffPanel(!handoffPanel.dataset.positioned));
-      setTimeout(() => handoffTask.focus(), 50);
+      const showInlinePanel = () => {
+        handoffLayer.hidden = false;
+        requestAnimationFrame(() => positionHandoffPanel(!handoffPanel.dataset.positioned));
+        setTimeout(() => focusElementIfAllowed(handoffTask), 50);
+      };
+      showInlinePanel();
+      void showNativeHandoffPanel().catch(() => {});
     }
 
     async function closeHandoffPanel() {
@@ -11703,6 +14368,8 @@
         title: firstLine || handoffSourceSession?.title || t('handoffTitle'),
         description: handoffPromptPreview.value,
         acceptance: '',
+        workflow: handoffLaunchMode === AGENT_TASK_WORKFLOW_UE ? AGENT_TASK_WORKFLOW_UE : AGENT_TASK_WORKFLOW_STANDARD,
+        launchMode: normalizedAgentTaskMode(handoffLaunchMode),
         status: 'ready',
         order: workspace.tasks.length,
         createdAt: Date.now(),
@@ -11726,7 +14393,7 @@
       try {
         await tauriInvoke('launch_handoff', {
           request: {
-            mode: handoffLaunchMode,
+            mode: handoffLaunchMode === 'ueworkflow' ? 'agents' : handoffLaunchMode,
             workspacePath: handoffTargetWorkspace,
             prompt: handoffPromptPreview.value
           }
@@ -12096,9 +14763,12 @@
       if (agentTaskAddSubmit) agentTaskAddSubmit.title = t('todoAdd');
       if (agentTaskDetailClose) agentTaskDetailClose.setAttribute('aria-label', t('todoCloseTaskDetail'));
       if (agentTaskDetailClose) agentTaskDetailClose.title = t('todoCloseTaskDetail');
-      if (agentTaskModeSelect) agentTaskModeSelect.setAttribute('aria-label', t('todoLaunchMode'));
-      if (agentTaskModeButton) agentTaskModeButton.setAttribute('aria-label', t('todoLaunchMode'));
-      if (agentTaskModeOptions) agentTaskModeOptions.setAttribute('aria-label', t('handoffProviderOptionsLabel'));
+      if (agentTaskWorkflowSelect) agentTaskWorkflowSelect.setAttribute('aria-label', t('agentTaskWorkflowLabel'));
+      if (agentTaskWorkflowButton) agentTaskWorkflowButton.setAttribute('aria-label', t('agentTaskWorkflowLabel'));
+      if (agentTaskWorkflowOptions) agentTaskWorkflowOptions.setAttribute('aria-label', t('agentTaskWorkflowOptionsLabel'));
+      if (agentTaskModeSelect) agentTaskModeSelect.setAttribute('aria-label', t('agentTaskTargetLabel'));
+      if (agentTaskModeButton) agentTaskModeButton.setAttribute('aria-label', t('agentTaskTargetLabel'));
+      if (agentTaskModeOptions) agentTaskModeOptions.setAttribute('aria-label', t('agentTaskAgentOptionsLabel'));
       if (agentTaskFace) agentTaskFace.setAttribute('aria-label', t('agentTaskFaceLabel'));
       if (agentTaskWorkspacePicker) agentTaskWorkspacePicker.setAttribute('aria-label', t('agentTaskWorkspaceLabel'));
       if (agentTaskWorkspaceOptions) agentTaskWorkspaceOptions.setAttribute('aria-label', t('agentTaskWorkspaceOptionsLabel'));
@@ -12157,9 +14827,11 @@
           updateHandoffPrompt();
         }
         if (shouldUpdateTodoForLanguage()) {
+          ensureAgentTaskWorkflowOptions();
           ensureAgentTaskModeOptions();
           renderTodoEverywhere({ force: true });
-        } else if (agentTaskModePopover && !agentTaskModePopover.hidden) {
+        } else if ((agentTaskWorkflowPopover && !agentTaskWorkflowPopover.hidden) || (agentTaskModePopover && !agentTaskModePopover.hidden)) {
+          ensureAgentTaskWorkflowOptions();
           ensureAgentTaskModeOptions();
         }
         updatePerformanceScopeControl();
@@ -12230,6 +14902,86 @@
       return isHorizontalLayout() ? { x: 0, y: offset } : { x: offset, y: 0 };
     }
 
+    function markWatcherNativeWindowInteractionStarted(settleMs = WATCHER_NATIVE_MOVE_SETTLE_MS) {
+      if (isPreviewWindow || isHandoffWindow || isTodoWindow || isPerformanceWindow) return;
+      watcherNativeWindowInteractionInProgress = true;
+      document.body.classList.add('is-native-window-interacting');
+      if (watcherNativeWindowInteractionSettleTimer) {
+        window.clearTimeout(watcherNativeWindowInteractionSettleTimer);
+        watcherNativeWindowInteractionSettleTimer = 0;
+      }
+      scheduleWatcherNativeWindowInteractionSettled(settleMs);
+    }
+
+    function settleWatcherNativeWindowInteraction() {
+      watcherNativeWindowInteractionSettleTimer = 0;
+      if (!watcherNativeWindowInteractionInProgress) return;
+      watcherNativeWindowInteractionInProgress = false;
+      document.body.classList.remove('is-native-window-interacting');
+      syncCardScale();
+      syncCompactRail();
+      syncWaitingAlertLayout({ force: true });
+      if (hasInputGuardedUiWork()) flushInputGuardedUi();
+      if (refreshQueued && !refreshInFlight) {
+        refreshQueued = false;
+        refreshSessions(true);
+      }
+    }
+
+    function scheduleWatcherNativeWindowInteractionSettled(settleMs = WATCHER_NATIVE_MOVE_SETTLE_MS) {
+      if (!watcherNativeWindowInteractionInProgress) return;
+      if (watcherNativeWindowInteractionSettleTimer) window.clearTimeout(watcherNativeWindowInteractionSettleTimer);
+      watcherNativeWindowInteractionSettleTimer = window.setTimeout(settleWatcherNativeWindowInteraction, settleMs);
+    }
+
+    function markWatcherNativeResizeStarted() {
+      if (isPreviewWindow || isHandoffWindow || isTodoWindow || isPerformanceWindow) return;
+      markWatcherNativeWindowInteractionStarted(WATCHER_NATIVE_RESIZE_SETTLE_MS);
+      watcherNativeResizeInProgress = true;
+      if (watcherNativeResizeSettleTimer) {
+        window.clearTimeout(watcherNativeResizeSettleTimer);
+        watcherNativeResizeSettleTimer = 0;
+      }
+    }
+
+    function settleWatcherNativeResize() {
+      watcherNativeResizeSettleTimer = 0;
+      if (!watcherNativeResizeInProgress) return;
+      watcherNativeResizeInProgress = false;
+      settleWatcherNativeWindowInteraction();
+      captureExpandedSize();
+      syncCardScale();
+      syncCompactRail();
+      syncWaitingAlertLayout({ force: true });
+      if (hasInputGuardedUiWork()) flushInputGuardedUi();
+    }
+
+    function scheduleWatcherNativeResizeSettled() {
+      if (!watcherNativeResizeInProgress) return;
+      if (watcherNativeResizeSettleTimer) window.clearTimeout(watcherNativeResizeSettleTimer);
+      watcherNativeResizeSettleTimer = window.setTimeout(settleWatcherNativeResize, WATCHER_NATIVE_RESIZE_SETTLE_MS);
+    }
+
+    function scheduleWatcherResizeLayout() {
+      if (watcherResizeLayoutFrame) return;
+      watcherResizeLayoutFrame = window.requestAnimationFrame(() => {
+        watcherResizeLayoutFrame = 0;
+        captureExpandedSize();
+        if (watcherNativeResizeInProgress) {
+          scheduleWatcherNativeResizeSettled();
+          return;
+        }
+        syncCardScale();
+        if (!sessionPreview.hidden) positionSessionPreview();
+        if (!workspacePickerPopover.hidden) updateWorkspacePickerGeometry();
+        if (providerPickerPopover && !providerPickerPopover.hidden) updateProviderPickerGeometry();
+        if (!handoffLayer.hidden) positionHandoffPanel(false);
+        if (settings.performanceDebug && !perfPanel.hidden) positionPerformancePanel(false);
+        syncCompactRail();
+        syncWaitingAlertLayout();
+      });
+    }
+
     function captureExpandedSize() {
       if (document.body.classList.contains('is-rail-only')) return;
       // Skip while a zoom transition is in flight: native zoom + setSize briefly
@@ -12243,8 +14995,29 @@
       };
     }
 
+    function ensureAgentTaskWindowExpanded() {
+      if (!expandedSize && document.body.classList.contains('is-rail-only')) {
+        expandedSize = {
+          width: Math.max(EXPANDED_DEFAULT_SIZE.width, EXPANDED_MIN_WIDTH),
+          height: Math.max(EXPANDED_DEFAULT_SIZE.height, EXPANDED_MIN_HEIGHT)
+        };
+      }
+      if (document.body.classList.contains('is-rail-only')) {
+        document.body.classList.remove('is-rail-only');
+        watcherWindow?.setAttribute('aria-hidden', 'false');
+        compactRail?.setAttribute('aria-expanded', 'true');
+        railLogo?.setAttribute('aria-expanded', 'true');
+        railLogo?.setAttribute('aria-pressed', 'false');
+        requestAnimationFrame(syncCompactRail);
+        void syncNativeWindowSize(false);
+        return;
+      }
+      requestAnimationFrame(syncCompactRail);
+    }
+
     async function syncNativeWindowSize(compact) {
       if (!tauriWindow || !LogicalSizeClass) return;
+      if (watcherNativeResizeInProgress && !compact) return;
       try {
         const desiredOffset = desiredNativeWaitingAlertOffset();
         const deltaX = desiredOffset.x - nativeWaitingAlertOffset.x;
@@ -12291,6 +15064,10 @@
     }
 
     async function setRailOnly(enabled) {
+      if (enabled && isAgentTaskMode) {
+        closeAgentTaskDetail();
+        setAgentTaskMode(false);
+      }
       if (enabled) captureExpandedSize();
       document.body.classList.toggle('is-rail-only', enabled);
       watcherWindow.setAttribute('aria-hidden', enabled ? 'true' : 'false');
@@ -12360,9 +15137,12 @@
       }
 
       try {
+        markWatcherNativeResizeStarted();
         await tauriWindow.startResizeDragging(resizeDirections[direction]);
       } catch (error) {
         showToast(String(error));
+      } finally {
+        scheduleWatcherNativeResizeSettled();
       }
     }
 
@@ -12384,9 +15164,12 @@
 
       if (typeof tauriWindow.startDragging === 'function') {
         try {
+          markWatcherNativeWindowInteractionStarted();
           await tauriWindow.startDragging();
         } catch (error) {
           showToast(String(error));
+        } finally {
+          scheduleWatcherNativeWindowInteractionSettled();
         }
         return;
       }
@@ -12407,6 +15190,7 @@
       let pendingMove = null;
       let moveQueued = false;
       let isDragging = true;
+      markWatcherNativeWindowInteractionStarted();
 
       async function applyPendingMove() {
         if (!isDragging) return;
@@ -12447,6 +15231,7 @@
         if (!isDragging) return;
         isDragging = false;
         pendingMove = null;
+        scheduleWatcherNativeWindowInteractionSettled(180);
         window.removeEventListener('pointermove', onPointerMove, true);
         window.removeEventListener('pointerup', stopWindowDrag, true);
         window.removeEventListener('pointercancel', stopWindowDrag, true);
@@ -13142,7 +15927,7 @@
           resizable: true,
           decorations: false,
           transparent: true,
-          alwaysOnTop: !!settings.alwaysOnTop,
+          alwaysOnTop: effectiveAlwaysOnTop(),
           skipTaskbar: true,
           shadow: false,
           focus: false,
@@ -13278,6 +16063,54 @@
 
       todoToggle?.addEventListener('click', () => openTodoPanel(selectedWorkspaceKey));
       todoNudgeOpen?.addEventListener('click', () => openTodoPanel(todoNudgeOpen.dataset.workspaceKey || selectedWorkspaceKey, { forceWorkspace: true }));
+      ueWorkflowRefresh?.addEventListener('click', refreshUEWorkflowSettings);
+      ueWorkflowEnableToggle?.addEventListener('click', toggleUEWorkflowEnabled);
+      ueWorkflowRepair?.addEventListener('click', () => {
+        runAgentTaskConfirmedAction(ueWorkflowRepair, {
+          key: 'ueworkflow-repair-links',
+          label: '安装/修复',
+          confirmLabel: '再次确认',
+          action: () => repairUEWorkflowLinks({ confirmed: true })
+        });
+      });
+      ueWorkflowProviderInstall?.addEventListener('click', () => {
+        runAgentTaskConfirmedAction(ueWorkflowProviderInstall, {
+          key: 'ueworkflow-provider-install',
+          label: '安装到 Provider',
+          confirmLabel: '再次确认',
+          action: () => installUEWorkflowProviders({ confirmed: true })
+        });
+      });
+      agentTaskUEWorkflowFill?.addEventListener('click', () => {
+        const found = findTodoTask(agentTaskDetailTaskId);
+        if (!found) return;
+        const context = mergeUEWorkflowContext(
+          deriveUEWorkflowBindingFromWorkspace(found.workspace),
+          ueWorkflowTaskContextFromInputs()
+        );
+        applyUEWorkflowTaskContextToInputs(context);
+        const draft = ensureAgentTaskDetailDraft(found);
+        if (draft) draft.ueWorkflowContext = context;
+        handleAgentTaskDetailInput();
+        const missing = ueWorkflowBindingMissing(context);
+        showToast(missing.length ? ('已自动填充，可补齐：' + missing.join('、')) : '虚幻项目上下文已填充');
+      });
+      [
+        agentTaskUEWorkflowBranch,
+        agentTaskUEWorkflowMainProject,
+        agentTaskUEWorkflowHostRoot,
+        agentTaskUEWorkflowPrimary,
+        agentTaskUEWorkflowDeps
+      ].filter(Boolean).forEach(input => {
+        input.addEventListener('input', () => {
+          syncUEWorkflowTaskContextDraftFromInputs();
+          handleAgentTaskDetailInput();
+        });
+        input.addEventListener('change', () => {
+          syncUEWorkflowTaskContextDraftFromInputs();
+          handleAgentTaskDetailInput();
+        });
+      });
       todoRefresh?.addEventListener('click', () => {
         loadTodoState();
         refreshSessions(true);
@@ -13368,6 +16201,29 @@
         input?.addEventListener('input', handleAgentTaskDetailInput);
         input?.addEventListener('change', () => saveAgentTaskDetail({ announce: false, render: false, silentInvalid: true }));
       });
+      agentTaskWorkflowButton?.addEventListener('click', () => agentTaskWorkflowPopover?.hidden ? openAgentTaskWorkflowPicker() : closeAgentTaskWorkflowPicker());
+      agentTaskWorkflowButton?.addEventListener('keydown', event => {
+        if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openAgentTaskWorkflowPicker();
+        } else if (event.key === 'Escape') {
+          event.preventDefault();
+          closeAgentTaskWorkflowPicker();
+        }
+      });
+      agentTaskWorkflowOptions?.addEventListener('click', event => {
+        const option = event.target.closest('.handoff-picker-option');
+        if (!option) return;
+        chooseAgentTaskWorkflow(option.dataset.mode);
+      });
+      agentTaskWorkflowOptions?.addEventListener('keydown', event => {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        closeAgentTaskWorkflowPicker();
+        agentTaskWorkflowButton?.focus();
+      });
+      agentTaskWorkflowSelect?.addEventListener('input', handleAgentTaskWorkflowChanged);
+      agentTaskWorkflowSelect?.addEventListener('change', handleAgentTaskWorkflowChanged);
       agentTaskModeButton?.addEventListener('click', () => agentTaskModePopover?.hidden ? openAgentTaskModePicker() : closeAgentTaskModePicker());
       agentTaskModeButton?.addEventListener('keydown', event => {
         if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
@@ -13389,8 +16245,9 @@
         closeAgentTaskModePicker();
         agentTaskModeButton?.focus();
       });
-      agentTaskModeSelect?.addEventListener('input', handleAgentTaskDetailInput);
-      agentTaskModeSelect?.addEventListener('change', handleAgentTaskDetailInput);
+      agentTaskModeSelect?.addEventListener('input', handleAgentTaskModeChanged);
+      agentTaskModeSelect?.addEventListener('change', handleAgentTaskModeChanged);
+      agentTaskDetailLayer?.addEventListener('click', handleAgentTaskDetailPrimaryClick, true);
       agentTaskDetailClose?.addEventListener('click', closeAgentTaskDetail);
       agentTaskBlock?.addEventListener('click', event => {
         const taskId = agentTaskDetailTaskId;
@@ -13433,7 +16290,8 @@
         closeAgentTaskWorkspacePicker();
       });
       document.addEventListener('keydown', event => {
-        if (event.key !== 'Escape' || !document.body.classList.contains('is-agent-task-mode')) return;
+        if (event.key !== 'Escape') return;
+        if (!document.body.classList.contains('is-agent-task-mode')) return;
         event.preventDefault();
         if (agentTaskDetailLayer && !agentTaskDetailLayer.hidden) {
           closeAgentTaskDetail({ animated: true });
@@ -13622,6 +16480,10 @@
 
     async function refreshSessions(silent) {
       if (!tauriInvoke) return;
+      if (watcherNativeWindowInteractionInProgress) {
+        refreshQueued = true;
+        return;
+      }
       if (refreshInFlight) {
         refreshQueued = true;
         return;
@@ -13672,6 +16534,10 @@
 
     function scheduleEventRefresh() {
       if (!tauriInvoke || eventRefreshTimer) return;
+      if (watcherNativeWindowInteractionInProgress) {
+        refreshQueued = true;
+        return;
+      }
       eventRefreshTimer = window.setTimeout(() => {
         eventRefreshTimer = 0;
         refreshSessions(true);
@@ -14039,6 +16905,7 @@
         const inHandoffMenu = handoffContextMenu.contains(event.target);
         const inHandoffWorkspacePicker = handoffWorkspacePicker.contains(event.target);
         const inHandoffProviderPicker = handoffProviderPicker.contains(event.target);
+        const inAgentTaskWorkflowPicker = !!agentTaskWorkflowPicker?.contains(event.target);
         const inAgentTaskModePicker = !!agentTaskModePicker?.contains(event.target);
         const onExpandButton = !!event.target.closest('.card-expand-btn');
 
@@ -14060,6 +16927,10 @@
 
         if (!handoffProviderPopover.hidden && !inHandoffProviderPicker) {
           closeHandoffProviderPicker();
+        }
+
+        if (agentTaskWorkflowPopover && !agentTaskWorkflowPopover.hidden && !inAgentTaskWorkflowPicker) {
+          closeAgentTaskWorkflowPicker();
         }
 
         if (agentTaskModePopover && !agentTaskModePopover.hidden && !inAgentTaskModePicker) {
@@ -14127,7 +16998,12 @@
         if (button) setPerformanceProcessSort(button.dataset.perfSort);
       });
       perfProcesses.addEventListener('pointerdown', startPerformanceColumnResize);
-      [appHeader, compactRail].forEach(source => source?.addEventListener('pointerdown', startWindowDrag));
+      const nativeDragSources = Array.from(new Set([
+        ...document.querySelectorAll('.native-titlebar'),
+        appHeader,
+        compactRail
+      ].filter(Boolean)));
+      nativeDragSources.forEach(source => source.addEventListener('pointerdown', startWindowDrag, true));
       windowActionButtons.forEach(button => button.addEventListener('click', () => runWindowAction(button.dataset.windowAction)));
       railLogo.addEventListener('click', toggleRailWindow);
       railLogo.addEventListener('keydown', event => {
@@ -14138,19 +17014,11 @@
       resizeHandles.forEach(handle => handle.addEventListener('pointerdown', resizeWatcherFromPointer));
 
       new ResizeObserver(() => {
-        requestAnimationFrame(syncCardScale);
-        requestAnimationFrame(syncCompactRail);
-        requestAnimationFrame(syncWaitingAlertLayout);
+        scheduleWatcherResizeLayout();
       }).observe(watcherWindow);
       window.addEventListener('resize', () => {
-        captureExpandedSize();
-        if (!sessionPreview.hidden) positionSessionPreview();
-        if (!workspacePickerPopover.hidden) updateWorkspacePickerGeometry();
-        if (providerPickerPopover && !providerPickerPopover.hidden) updateProviderPickerGeometry();
-        if (!handoffLayer.hidden) positionHandoffPanel(false);
-        if (settings.performanceDebug && !perfPanel.hidden) positionPerformancePanel(false);
-        requestAnimationFrame(syncCompactRail);
-        requestAnimationFrame(syncWaitingAlertLayout);
+        if (watcherNativeResizeInProgress) scheduleWatcherNativeResizeSettled();
+        scheduleWatcherResizeLayout();
       });
       captureExpandedSize();
       // Freeze the base size while the persisted zoom is applied so the native
@@ -14164,6 +17032,7 @@
       applyFilters();
       syncCompactRail();
       syncWaitingAlertLayout();
+      restoreAgentTaskModeFromDom();
       bindGlobalZoomShortcuts();
       if (tauriInvoke) {
         loadTodoState();

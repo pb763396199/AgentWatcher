@@ -20,3 +20,4 @@ src-tauri/gen/
 vscode-agentwatcher-bridge/*.vsix
 .agentwatcher/
 .tmp/
+.plugin-worktrees/

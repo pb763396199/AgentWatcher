@@ -29,7 +29,7 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - Session Preview 支持独立滚动、四角 resize 和尺寸持久化；预览正文只通过运行时事件传递，不写入 localStorage。
 - Handoff Panel 会同步主窗口 language/theme/layout/always-on-top 设置。
 - 右键 session 卡片可发起 handoff，并按目标路由到 Copilot、Copilot CLI 或 Claude。
-- Bridge handoff 会通过 ack 文件回报成功或失败，`launch_handoff` 等待确认时不阻塞主 UI。
+- VS Code 连接组件会通过 ack 文件回报 handoff 成功或失败，`launch_handoff` 等待确认时不阻塞主 UI。
 - 运行态页面移除了 VS Code 背景 mock 和 Windows taskbar mock，只保留透明悬浮工具 UI。
 - 支持主窗口整页缩放（Ctrl + / - / 0、Ctrl+滚轮），并持久化缩放比例（25%~500%）。
 - 新增 AgentTask / Todo 面板入口，任务流与会话卡片联动；任务状态变化可驱动会话归档策略。
@@ -48,7 +48,7 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - **悬浮预览**：悬停卡片右下角展开按钮显示最近用户输入和 AI 正文摘要，预览窗口可 resize 并记忆尺寸
 - **Handoff**：右键 session 卡片可携带上下文接续到 Copilot、Copilot CLI 或 Claude，新会话由目标 provider 负责承接
 - **Codex 会话接入**：接入 Codex 桌面会话，支持与 Copilot、Claude 一起显示状态与跳转
-- **VS Code Bridge**：首次启动自动安装 VS Code bridge extension，实现精确 session 跳转、handoff 路由和 ack 成功确认
+- **VS Code 连接组件**：首次启动自动安装连接组件，实现精确 session 跳转、handoff 路由和 ack 成功确认
 - **AgentTask / Todo**：新增 AgentTask 与 Todo 面板入口，任务状态与会话状态联动
 - **悬浮窗口**：Windows 悬浮应用，四角 resize，可任意方向缩放
 - **置顶控制**：设置面板内可实时打开或关闭 always-on-top
@@ -85,14 +85,11 @@ npm run package:exe
 ```
 artifacts/AgentWatcher/
   AgentWatcher.exe
-  vscode-agentwatcher-bridge/
-    agentwatcher-bridge-<version>.vsix
-    extension.js
-    package.json
-    README.md
+  vscode-connector/
+    connector package files
 ```
 
-用户只需将整个 `artifacts/AgentWatcher/` 文件夹复制到目标机器即可使用。发布目录会包含预打包的 VSIX，正常情况下目标机器不需要安装 Node.js 或 `npx`。
+用户只需将整个 `artifacts/AgentWatcher/` 文件夹复制到目标机器即可使用。发布目录会包含预打包的 VS Code 连接组件，正常情况下目标机器不需要安装 Node.js 或 `npx`。
 
 GitHub Release 使用 zip 分发，命名格式为：
 
@@ -112,80 +109,31 @@ npm run dev:ui
 
 然后访问 `http://127.0.0.1:1420`。
 
-## VS Code Bridge Extension
+## VS Code 连接组件
 
-AgentWatcher 使用自带的 VS Code bridge extension 实现精确 session 跳转。
-
-当前 Bridge 扩展 ID：`agentwatcher.agentwatcher-vscode-session-bridge`。这是唯一支持的稳定 ID；`safe1` / `safe2` / `safe3` / `safe4` 只属于历史临时测试 ID，install/update 必须清理这些 legacy 残留。
-
-Bridge 同时负责 session 跳转和 handoff 路由。handoff 目标覆盖 Copilot、Copilot CLI 和 Claude；执行完成后，Bridge 会写入 AgentWatcher 临时目录下的 ack 文件，让主应用确认成功或显示失败原因。
+AgentWatcher 使用自带的 VS Code 连接组件实现精确 session 跳转和 handoff 路由。组件由 AgentWatcher 自动安装、更新和校验；安装失败时会在设置面板给出可操作提示。
 
 ### 自动安装行为
 
-- **首次启动**：AgentWatcher 启动后会在后台自动检查 bridge extension 状态
+- **首次启动**：AgentWatcher 启动后会在后台自动检查 VS Code 连接组件状态。
 - **自动安装条件**：
-  - Bridge extension 未安装
-  - 或本地版本比已安装版本更新
-  - 或检测到历史 `safe1` / `safe2` / `safe3` / `safe4` Bridge 残留，需要清理
+  - VS Code 连接组件未安装。
+  - 或本地组件比已安装组件更新。
+  - 或检测到历史测试组件残留，需要清理。
 - **安装过程**：
-  - 安装稳定 VSIX 前，先通过 VS Code CLI best-effort 卸载历史临时扩展 ID
-  - 优先安装随 `artifacts/AgentWatcher/` 一起发布的 `agentwatcher-bridge-<version>.vsix`
-  - 开发目录中没有 VSIX 时，才回退到 `npx @vscode/vsce` 现场打包
-  - 自动安装：调用 VS Code CLI `code --install-extension <vsix> --force`
-  - 安装后校验稳定 ID 已安装，且历史临时 ID 不再残留；如果仍有残留，会返回明确错误，避免假成功
-  - 不阻塞 UI：安装在后台线程进行，不影响主界面使用
-- **VS Code CLI 查找顺序**：
-  1. PATH 环境变量中的 `code` / `code.cmd` / `code.exe`
-  2. `%LOCALAPPDATA%\Programs\Microsoft VS Code\bin\code.cmd`
-  3. `%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe`
-  4. `C:\Program Files\Microsoft VS Code\bin\code.cmd`
-  5. `C:\Program Files\Microsoft VS Code\Code.exe`
-  6. `C:\Program Files (x86)\Microsoft VS Code\bin\code.cmd`
-  7. `C:\Program Files (x86)\Microsoft VS Code\Code.exe`
+  - 安装前先通过 VS Code CLI 尝试清理历史测试组件。
+  - 优先安装随发布包一起提供的预打包连接组件。
+  - 开发目录中没有预打包组件时，才回退到现场打包。
+  - 安装后校验稳定组件已安装，且历史测试组件不再残留。
+  - 安装在后台线程进行，不阻塞主界面使用。
 
-### 手动管理 Bridge
+### 手动管理
 
-在设置面板（点击右上角 ⚙ 图标）中，可以查看 bridge 状态并手动安装/更新：
-
-- **Checking...**：正在检查 bridge 状态
-- **Bridge extension not installed**：未安装，点击 "Install" 按钮安装
-- **Update available**：有新版本，点击 "Update" 按钮更新
-- **Bridge installed and up to date**：已安装且是最新版本
-
-### Bridge 版本管理
-
-- **本地版本**：读取 `vscode-agentwatcher-bridge/package.json` 中的 `version` 字段
-- **已安装版本**：优先通过 `code --list-extensions --show-versions` 检查稳定 ID；CLI 不可用时，从 VS Code extensions 目录读取：
-  - `%USERPROFILE%\.vscode\extensions\agentwatcher.agentwatcher-vscode-session-bridge-*\package.json`
-  - `%USERPROFILE%\.vscode-insiders\extensions\agentwatcher.agentwatcher-vscode-session-bridge-*\package.json`
-- **历史版本清理**：legacy `safe1` / `safe2` / `safe3` / `safe4` 只用于检测清理需求，不会让 AgentWatcher 判断 Bridge 路由可用。
-
-### 手动安装或重装
-
-发布包用户优先使用随包 VSIX：
-
-```powershell
-code --install-extension .\vscode-agentwatcher-bridge\agentwatcher-bridge-*.vsix --force
-```
-
-在源码目录中验证时使用：
-
-```powershell
-code --install-extension .\artifacts\AgentWatcher\vscode-agentwatcher-bridge\agentwatcher-bridge-*.vsix --force
-```
-
-需要强制重装时，先卸载当前 Bridge，再重新安装随包 VSIX：
-
-```powershell
-code --uninstall-extension agentwatcher.agentwatcher-vscode-session-bridge
-code --install-extension .\vscode-agentwatcher-bridge\agentwatcher-bridge-*.vsix --force
-```
-
-如果机器上曾安装过历史测试扩展，VS Code 扩展面板里可能还能看到 `safe1` / `safe2` / `safe3` / `safe4`。AgentWatcher 的 install/update 会自动尝试卸载这些旧扩展；如果校验仍发现残留，会提示清理失败，避免排障时混淆。
+在设置面板中，可以查看 VS Code 连接组件状态并手动安装或更新。
 
 ### 故障排查
 
-**Bridge 安装失败**：
+**连接组件安装失败**：
 
 1. **检查 VS Code CLI**：
    ```powershell
@@ -193,37 +141,36 @@ code --install-extension .\vscode-agentwatcher-bridge\agentwatcher-bridge-*.vsix
    ```
    如果提示找不到命令，需要将 VS Code bin 目录添加到 PATH，或从 VS Code 内部运行 "Shell Command: Install 'code' command in PATH"。
 
-2. **检查随包 VSIX**：
-  确认 `artifacts/AgentWatcher/vscode-agentwatcher-bridge/` 下存在 `agentwatcher-bridge-<version>.vsix`。如果使用的是源码目录而不是发布目录，缺少 VSIX 时才需要 Node.js 和 `npx`。
+2. **检查随包组件**：
+   确认发布目录下存在 VS Code 连接组件。源码目录缺少预打包组件时，才需要 Node.js 和 `npx` 现场打包。
 
 3. **检查 Node.js 和 npx（仅源码回退打包需要）**：
    ```powershell
    npx --version
    ```
-  源码目录现场打包 Bridge 需要 `npx` 和 `@vscode/vsce`。
 
-4. **手动安装 Bridge**：
+4. **手动安装连接组件**：
    ```powershell
-  code --install-extension artifacts/AgentWatcher/vscode-agentwatcher-bridge/agentwatcher-bridge-*.vsix --force
+   code --install-extension <连接组件 VSIX> --force
    ```
 
-5. **确认当前 Bridge ID 唯一**：
-  ```powershell
-  code --list-extensions | findstr agentwatcher
-  ```
-  预期只看到 `agentwatcher.agentwatcher-vscode-session-bridge`，不应再出现 `safe1` / `safe2` / `safe3` / `safe4`。
+5. **确认当前组件唯一**：
+   ```powershell
+   code --list-extensions | findstr agentwatcher
+   ```
+   预期只看到当前稳定连接组件，不应再出现旧的 AgentWatcher 测试组件。
 
 **Session 跳转失败**：
 
-- 确保 Bridge extension 已启用：在 VS Code 中搜索 "AgentWatcher Bridge"
-- 重启 VS Code：有时需要重启 VS Code 使 extension 生效
-- 检查 session 路径：确保 session JSONL 文件存在且可访问
+- 确保 VS Code 连接组件已启用。
+- 重启 VS Code：有时需要重启 VS Code 使组件生效。
+- 检查 session 路径：确保 session JSONL 文件存在且可访问。
 
 ## Known Issues
 
-- Prompt handoff 的提示词插入目前整体仍依赖 clipboard bridge：Copilot、Copilot CLI 和 Claude 都由 Bridge 读取 clipboard 后，再通过各自的目标命令填入。非剪贴板 prompt 通道列入 Future，不作为本次 v0.1.3 发布阻断。
+- Prompt handoff 的提示词插入目前整体仍依赖 clipboard 通道：Copilot、Copilot CLI 和 Claude 都由 VS Code 连接组件读取 clipboard 后，再通过各自的目标命令填入。非剪贴板 prompt 通道列入 Future，不作为本次 v0.1.3 发布阻断。
 - 未来如果引入 prompt 临时文件，禁止写入项目目录，只允许写入 AgentWatcher 自身运行时临时目录或系统临时目录，例如 `%TEMP%\AgentWatcher\...`，并需要 token、TTL 和读取后清理。
-- 历史 `safe1` / `safe2` / `safe3` / `safe4` Bridge 扩展可能残留在开发机上；当前发布只以稳定 ID 为准，install/update 会尝试清理旧 ID。
+- 历史 VS Code 连接组件测试扩展可能残留在开发机上；当前发布只以稳定组件为准，install/update 会尝试清理旧 ID。
 - docs 是否进入 git 仍由发布前人工决定，当前文档仅记录准备状态，不默认改变仓库策略。
 
 ## Post-v0.1.x Roadmap
@@ -237,13 +184,13 @@ code --install-extension .\vscode-agentwatcher-bridge\agentwatcher-bridge-*.vsix
 ## 发布验证清单
 
 - [ ] 从发布目录启动 `AgentWatcher.exe`，确认不依赖源码目录。
-- [ ] 未安装 Bridge 时自动安装成功；旧版本 Bridge 时可更新；失败时 UI 有可操作提示。
-- [ ] 手动 `code --install-extension .\vscode-agentwatcher-bridge\agentwatcher-bridge-*.vsix --force` 可重装 Bridge。
+- [ ] 未安装 VS Code 连接组件时自动安装成功；旧版本连接组件时可更新；失败时 UI 有可操作提示。
+- [ ] 手动 `code --install-extension <连接组件 VSIX> --force` 可重装 VS Code 连接组件。
 - [ ] 点击 Copilot / Claude session 卡片可打开目标 workspace/session；失败时显示错误。
-- [ ] 右键 session 卡片可 handoff 到 Copilot、Copilot CLI 和 Claude，成功后 UI 收到 Bridge ack。
+- [ ] 右键 session 卡片可 handoff 到 Copilot、Copilot CLI 和 Claude，成功后 UI 收到连接组件 ack。
 - [ ] 中英切换、dark/light 切换能同步到主窗口、Session Preview 和 Handoff Panel。
 - [ ] Session Preview 内容只通过运行时事件传递，不写入 localStorage 或项目目录临时文件。
-- [ ] 发布包包含 `AgentWatcher.exe`、`vscode-agentwatcher-bridge/`、`agentwatcher-bridge-<version>.vsix`。
+- [ ] 发布包包含 `AgentWatcher.exe` 和 VS Code 连接组件。
 
 ## 数据来源
 
@@ -314,12 +261,12 @@ code --install-extension .\vscode-agentwatcher-bridge\agentwatcher-bridge-*.vsix
 - 实时刷新：按配置间隔自动扫描和更新 sessions
 - 管理横版 / 竖版窗口布局切换和设置持久化
 - 管理 Session Preview 的 DOM fallback 和 Tauri `session-preview` tooltip webview
-- 管理 Handoff Panel、跨 provider handoff 目标和 Bridge ack 状态提示
+- 管理 Handoff Panel、跨 provider handoff 目标和连接组件 ack 状态提示
 - 管理 AgentTask / Todo / Performance 面板的子窗口事件、同步和持久化交互
 
-### VS Code Bridge Extension (vscode-agentwatcher-bridge/)
+### VS Code 连接组件
 
-- 监听 `vscode://agentwatcher.agentwatcher-vscode-session-bridge/open` URI
+- 监听 AgentWatcher 的 VS Code 跳转 URI
 - 解析 session resource 并打开对应的 chat session
 - 支持 Copilot、Copilot CLI 和 Claude Code handoff 目标
 - 通过 AgentWatcher 临时目录 ack 文件回传 handoff 成功或失败

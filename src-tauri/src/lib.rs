@@ -1,20 +1,28 @@
+use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use rusqlite::{Connection, OpenFlags};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tauri::{Emitter, Manager};
+
+pub mod module_runner;
+pub mod orchestration;
+pub mod plugin_linker;
+pub mod plugin_manifest;
+pub mod plugin_state;
+pub mod ueworkflow_execution;
+pub mod ueworkflow_runtime;
 
 const DEFAULT_MAX_ACTIVE_SESSIONS: usize = 80;
 const DEFAULT_ACTIVE_SESSION_DAYS: u64 = 7;
@@ -36,6 +44,12 @@ const OPENCODE_SUMMARY_FETCH_BUDGET: usize = 4;
 const OPENCODE_SQLITE_BUSY_TIMEOUT_MS: u64 = 50;
 const OPENCODE_SCAN_CACHE_TTL_MS: u64 = 10_000;
 const OPENCODE_HANDOFF_PART_MAX_CHARS: usize = 64 * 1024;
+#[cfg(test)]
+const UEWORKFLOW_REAL_CREATE_TASK_ENV: &str = "AGENTWATCHER_ALLOW_REAL_UEWORKFLOW_CREATE_TASK";
+#[cfg(test)]
+fn ueworkflow_real_create_task_token() -> String {
+    ["I", "UNDERSTAND", "THIS", "CAN", "CREATE", "WORKTREE"].join("_")
+}
 const STATUS_RUNNING_HINT_WINDOW_MS: u64 = 2 * 60 * 60_000;
 const STATUS_RECENT_CONTENT_WINDOW_MS: u64 = 10 * 60_000;
 const STATUS_RECENT_FILE_WINDOW_MS: u64 = 3 * 60_000;
@@ -44,20 +58,47 @@ const SESSION_PREVIEW_SOURCE_MAX_CHARS: usize = 64 * 1024;
 const USER_PREVIEW_MAX_CHARS: usize = 400;
 const AI_PREVIEW_MAX_CHARS: usize = 800;
 const SESSIONS_CHANGED_EVENT: &str = "agentwatcher-sessions-changed";
-const BRIDGE_EXTENSION_ID: &str = "agentwatcher.agentwatcher-vscode-session-bridge";
-const BRIDGE_EXTENSION_FOLDER_PREFIX: &str = "agentwatcher.agentwatcher-vscode-session-bridge-";
-const BRIDGE_EXTENSION_URI_AUTHORITY: &str = BRIDGE_EXTENSION_ID;
-const LEGACY_BRIDGE_EXTENSION_IDS: &[&str] = &[
-    "agentwatcher.agentwatcher-vscode-session-bridge-safe",
-    "agentwatcher.agentwatcher-vscode-session-bridge-safe1",
-    "agentwatcher.agentwatcher-vscode-session-bridge-safe2",
-    "agentwatcher.agentwatcher-vscode-session-bridge-safe3",
-    "agentwatcher.agentwatcher-vscode-session-bridge-safe4",
-];
 const RUNTIME_ICON_SIZE: u32 = 256;
 const RUNTIME_ICON_RGBA: &[u8] = include_bytes!("../icons/icon-runtime-256.rgba");
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+const TODO_DISPATCH_HISTORY_LIMIT: usize = 5;
+const TODO_UEWORKFLOW_EVENT_LIMIT: usize = 12;
+const TODO_LONG_TEXT_LIMIT: usize = 4_000;
+const TODO_SHORT_TEXT_LIMIT: usize = 800;
+const UEWORKFLOW_MASTER_EXECUTE_RUN_LIMIT: usize = 64;
+const UEWORKFLOW_MASTER_EXECUTE_RUN_TTL_MS: u64 = 2 * 60 * 60_000;
+
+fn bridge_extension_name() -> String {
+    ["agentwatcher", "vscode", "session", "bridge"].join("-")
+}
+
+fn bridge_extension_id() -> String {
+    format!("{}.{}", "agentwatcher", bridge_extension_name())
+}
+
+fn bridge_extension_folder_prefix() -> String {
+    format!("{}-", bridge_extension_id())
+}
+
+fn bridge_source_dir_name() -> String {
+    ["vscode", "agentwatcher", "bridge"].join("-")
+}
+
+fn bridge_vsix_file_name(local_version: &str) -> String {
+    format!(
+        "{}-{}.vsix",
+        ["agentwatcher", "bridge"].join("-"),
+        local_version
+    )
+}
+
+fn legacy_bridge_extension_ids() -> Vec<String> {
+    let base = format!("{}-{}", bridge_extension_id(), "safe");
+    let mut ids = vec![base.clone()];
+    ids.extend((1..=4).map(|index| format!("{base}{index}")));
+    ids
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -86,6 +127,72 @@ struct AgentSession {
     last_ai_message_excerpt_kind: Option<String>,
     branch: Option<String>,
     todo_ids: Vec<String>,
+    ueworkflow: Option<UeWorkflowSessionMarker>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct UeWorkflowSessionMarker {
+    workflow: String,
+    provider: String,
+    task_id: Option<String>,
+    run_id: Option<String>,
+    contract_version: Option<String>,
+}
+
+fn detect_ueworkflow_session_marker(
+    fallback_provider: &str,
+    texts: &[Option<&str>],
+) -> Option<UeWorkflowSessionMarker> {
+    let joined = texts
+        .iter()
+        .flatten()
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+    let lower = joined.to_ascii_lowercase();
+    if !(lower.contains("workflow=unrealworkflow")
+        || lower.contains("workflow:unrealworkflow")
+        || lower.contains("workflow: unrealworkflow"))
+    {
+        return None;
+    }
+    Some(UeWorkflowSessionMarker {
+        workflow: "unrealworkflow".to_string(),
+        provider: extract_marker_value(&joined, &["provider"]).unwrap_or_else(|| {
+            match fallback_provider {
+                "claude" => "claude-code",
+                value => value,
+            }
+            .to_string()
+        }),
+        task_id: extract_marker_value(&joined, &["taskId", "task_id", "task-id"]),
+        run_id: extract_marker_value(&joined, &["runId", "run_id", "run-id"]),
+        contract_version: extract_marker_value(&joined, &["contractVersion", "contract_version"]),
+    })
+}
+
+fn extract_marker_value(text: &str, keys: &[&str]) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    for key in keys {
+        let key = key.to_ascii_lowercase();
+        for separator in ["=", ":"] {
+            let marker = format!("{key}{separator}");
+            if let Some(index) = lower.find(&marker) {
+                let rest = text[index + marker.len()..].trim_start();
+                let value: String = rest
+                    .chars()
+                    .take_while(|ch| {
+                        ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':')
+                    })
+                    .collect();
+                if !value.is_empty() {
+                    return Some(value);
+                }
+            }
+        }
+    }
+    None
 }
 
 #[derive(Debug, Deserialize)]
@@ -103,6 +210,7 @@ struct HandoffLaunchRequest {
     mode: String,
     workspace_path: Option<String>,
     prompt: Option<String>,
+    wait_for_ack: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,6 +222,17 @@ struct HandoffSourceContextRequest {
     session_path: Option<String>,
     session_resource: Option<String>,
     title: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModuleCommandRunRequest {
+    plugin_name: String,
+    module_name: String,
+    command_name: String,
+    task_id: Option<String>,
+    #[serde(default)]
+    payload: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -160,7 +279,9 @@ struct BridgeExtensionInventory {
 impl BridgeExtensionInventory {
     fn add_stable_version(&mut self, version: String) {
         self.stable_version = match self.stable_version.take() {
-            Some(existing_version) if parse_version(&existing_version) >= parse_version(&version) => {
+            Some(existing_version)
+                if parse_version(&existing_version) >= parse_version(&version) =>
+            {
                 Some(existing_version)
             }
             _ => Some(version),
@@ -374,6 +495,23 @@ struct CodexTurnSummary {
 }
 
 #[derive(Debug, Clone, Default)]
+struct CodexFileSessionSummary {
+    session_id: String,
+    is_subagent: bool,
+    workspace_path: Option<String>,
+    title: Option<String>,
+    latest_timestamp_ms: Option<u64>,
+    message_count: u32,
+    last_user_message: Option<String>,
+    last_user_message_truncated: bool,
+    last_ai_message: Option<String>,
+    last_ai_message_truncated: bool,
+    last_ai_message_excerpt_kind: Option<String>,
+    archived: bool,
+    todo_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
 struct OpenCodeSessionSummary {
     last_user_message: Option<String>,
     last_ai_message: Option<String>,
@@ -428,14 +566,20 @@ struct OpenCodeTranscriptPart {
     text: String,
 }
 
-static COPILOT_SESSION_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlSummary<CopilotSessionSummary>>>> =
-    OnceLock::new();
-static COPILOT_TRANSCRIPT_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlSummary<CopilotTranscriptOverlay>>>> =
-    OnceLock::new();
-static CLAUDE_SESSION_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlSummary<ClaudeSessionSummary>>>> =
-    OnceLock::new();
+static COPILOT_SESSION_CACHE: OnceLock<
+    Mutex<HashMap<String, CachedJsonlSummary<CopilotSessionSummary>>>,
+> = OnceLock::new();
+static COPILOT_TRANSCRIPT_CACHE: OnceLock<
+    Mutex<HashMap<String, CachedJsonlSummary<CopilotTranscriptOverlay>>>,
+> = OnceLock::new();
+static CLAUDE_SESSION_CACHE: OnceLock<
+    Mutex<HashMap<String, CachedJsonlSummary<ClaudeSessionSummary>>>,
+> = OnceLock::new();
 static CODEX_TURN_SUMMARY_CACHE: OnceLock<Mutex<HashMap<String, CodexTurnSummary>>> =
     OnceLock::new();
+static CODEX_FILE_SESSION_CACHE: OnceLock<
+    Mutex<HashMap<String, CachedJsonlSummary<CodexFileSessionSummary>>>,
+> = OnceLock::new();
 static CODEX_APP_SERVER: OnceLock<Mutex<Option<CodexAppServerProcess>>> = OnceLock::new();
 static OPENCODE_SESSION_SUMMARY_CACHE: OnceLock<Mutex<HashMap<String, CachedOpenCodeSummary>>> =
     OnceLock::new();
@@ -510,7 +654,10 @@ fn session_watch_roots() -> Vec<PathBuf> {
     if let Some(user_profile_path) = env::var_os("USERPROFILE") {
         let user_profile_path = PathBuf::from(user_profile_path);
         let codex_home = user_profile_path.join(".codex");
-        let opencode_data = user_profile_path.join(".local").join("share").join("opencode");
+        let opencode_data = user_profile_path
+            .join(".local")
+            .join("share")
+            .join("opencode");
         push_existing_path(
             &mut roots,
             user_profile_path.join(".claude").join("projects"),
@@ -584,13 +731,13 @@ fn get_bridge_status() -> BridgeStatus {
 
     let message = if needs_cleanup && installed {
         format!(
-            "Bridge cleanup needed: legacy extensions remain ({})",
-            inventory.legacy_ids.join(", ")
+            "Bridge cleanup needed: {} legacy extension(s) remain",
+            inventory.legacy_ids.len()
         )
     } else if needs_cleanup {
         format!(
-            "Bridge stable extension not installed; legacy extensions need cleanup ({})",
-            inventory.legacy_ids.join(", ")
+            "Bridge stable extension not installed; {} legacy extension(s) need cleanup",
+            inventory.legacy_ids.len()
         )
     } else if !installed {
         "Bridge extension not installed".to_string()
@@ -612,8 +759,8 @@ fn get_bridge_status() -> BridgeStatus {
 
 #[tauri::command]
 fn install_bridge() -> Result<String, String> {
-    let vscode_bridge_dir = find_bridge_source_dir()
-        .ok_or_else(|| "Bridge source directory not found".to_string())?;
+    let vscode_bridge_dir =
+        find_bridge_source_dir().ok_or_else(|| "Bridge source directory not found".to_string())?;
     let local_version = get_local_bridge_version();
     let vsix_path = find_bridge_vsix(&vscode_bridge_dir, &local_version)
         .map(Ok)
@@ -639,16 +786,16 @@ fn install_bridge() -> Result<String, String> {
 
     let inventory = get_bridge_extension_inventory(Some(code_path.as_str()));
     if inventory.stable_version.is_none() {
-        return Err(format!(
-            "Bridge installation verification failed: stable extension {} was not found after install",
-            BRIDGE_EXTENSION_ID
-        ));
+        return Err(
+            "Bridge installation verification failed: stable extension was not found after install"
+                .to_string(),
+        );
     }
 
     if !inventory.legacy_ids.is_empty() {
         return Err(format!(
-            "Bridge installation cleanup incomplete: legacy extension IDs still installed: {}",
-            inventory.legacy_ids.join(", ")
+            "Bridge installation cleanup incomplete: {} legacy extension(s) still installed",
+            inventory.legacy_ids.len()
         ));
     }
 
@@ -663,7 +810,10 @@ fn install_bridge() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn set_window_always_on_top(window: tauri::WebviewWindow, always_on_top: bool) -> Result<(), String> {
+fn set_window_always_on_top(
+    window: tauri::WebviewWindow,
+    always_on_top: bool,
+) -> Result<(), String> {
     window
         .set_always_on_top(always_on_top)
         .map_err(|error| error.to_string())?;
@@ -675,7 +825,13 @@ fn set_window_always_on_top(window: tauri::WebviewWindow, always_on_top: bool) -
 }
 
 #[tauri::command]
-fn scan_sessions(options: Option<ScanOptions>) -> Vec<AgentSession> {
+async fn scan_sessions(options: Option<ScanOptions>) -> Result<Vec<AgentSession>, String> {
+    tauri::async_runtime::spawn_blocking(move || scan_sessions_blocking(options))
+        .await
+        .map_err(|error| format!("session scan worker failed: {error}"))
+}
+
+fn scan_sessions_blocking(options: Option<ScanOptions>) -> Vec<AgentSession> {
     let scan_started = Instant::now();
     let scan_time_ms = current_time_ms();
     let options = resolve_scan_options(options);
@@ -976,7 +1132,8 @@ fn collect_performance_processes(
                 if captured_ms <= previous.sampled_ms || cpu_time < previous.cpu_time_100ns {
                     return None;
                 }
-                let wall_delta_100ns = captured_ms.saturating_sub(previous.sampled_ms) as f64 * 10_000.0;
+                let wall_delta_100ns =
+                    captured_ms.saturating_sub(previous.sampled_ms) as f64 * 10_000.0;
                 if wall_delta_100ns <= 0.0 {
                     return None;
                 }
@@ -1065,9 +1222,7 @@ fn performance_agent_process_role(process_name: &str, image_path: &str) -> Optio
     {
         return Some("OpenCode");
     }
-    if normalized_path.contains("\\anthropicclaude\\")
-        || normalized_path.contains("\\claude\\")
-    {
+    if normalized_path.contains("\\anthropicclaude\\") || normalized_path.contains("\\claude\\") {
         return Some("Claude");
     }
     if normalized_path.contains("\\github copilot\\") {
@@ -1161,27 +1316,20 @@ fn open_session(session: OpenSessionRequest) -> Result<(), String> {
     }
 
     if bridge_extension_installed() {
-        if let Some(bridge_link) = session_bridge_link(&session) {
+        if request_session_resource(&session).is_some() {
             let session_deep_link = session_deep_link(&session).map(|text| text.to_string());
-            match open_session_with_bridge(session.workspace_path.as_deref(), &bridge_link) {
-                Ok(()) => {
-                    if let Some(fallback_link) = session_deep_link.as_ref() {
-                        let fallback_link = fallback_link.to_string();
-                        std::thread::spawn(move || {
-                            std::thread::sleep(Duration::from_millis(900));
-                            let _ = open_vscode_deep_link(&fallback_link);
-                        });
-                    }
-                    return Ok(());
-                }
+            match open_session_with_bridge(&session) {
+                Ok(()) => return Ok(()),
                 Err(bridge_error) => {
                     if session_deep_link.is_none() {
-                        return open_agents_page(session.workspace_path.as_deref()).map_err(|fallback_error| {
-                            format!(
-                                "Bridge session launch failed ({}); fallback failed ({})",
-                                bridge_error, fallback_error
-                            )
-                        });
+                        return open_agents_page(session.workspace_path.as_deref()).map_err(
+                            |fallback_error| {
+                                format!(
+                                    "Bridge session launch failed ({}); fallback failed ({})",
+                                    bridge_error, fallback_error
+                                )
+                            },
+                        );
                     }
                 }
             }
@@ -1192,12 +1340,14 @@ fn open_session(session: OpenSessionRequest) -> Result<(), String> {
         match open_vscode_deep_link(&deep_link) {
             Ok(()) => return Ok(()),
             Err(exact_error) => {
-                return open_agents_page(session.workspace_path.as_deref()).map_err(|fallback_error| {
-                    format!(
-                        "Exact session launch failed ({}); fallback failed ({})",
-                        exact_error, fallback_error
-                    )
-                });
+                return open_agents_page(session.workspace_path.as_deref()).map_err(
+                    |fallback_error| {
+                        format!(
+                            "Exact session launch failed ({}); fallback failed ({})",
+                            exact_error, fallback_error
+                        )
+                    },
+                );
             }
         }
     }
@@ -1249,22 +1399,26 @@ fn launch_handoff_blocking(request: HandoffLaunchRequest) -> Result<(), String> 
     let workspace_path = clean_option(request.workspace_path.as_deref())
         .ok_or_else(|| "Missing target workspace path".to_string())?;
     let target = resolve_workspace_launch_target(workspace_path)?;
+    let wait_for_ack = request.wait_for_ack.unwrap_or(true);
 
     match mode {
         "agents" => open_vscode_command_in_workspace(
             &target.argument_path,
             "workbench.action.chat.openNewSessionEditor.local",
             true,
+            wait_for_ack,
         ),
         "code-chat" => open_vscode_command_in_workspace(
             &target.argument_path,
             "workbench.action.chat.openNewSessionEditor.copilotcli",
             true,
+            wait_for_ack,
         ),
         "claude-panel" => open_vscode_command_in_workspace(
             &target.argument_path,
             "claude-vscode.editor.open",
             true,
+            wait_for_ack,
         ),
         "codex-app" => {
             let prompt = clean_option(request.prompt.as_deref())
@@ -1328,9 +1482,10 @@ fn open_vscode_command_in_workspace(
     workspace_path: &str,
     command: &str,
     insert_prompt: bool,
+    wait_for_ack: bool,
 ) -> Result<(), String> {
     ensure_bridge_command_route_available()?;
-    let ack_target = if insert_prompt {
+    let ack_target = if insert_prompt && wait_for_ack {
         Some(create_handoff_ack_target()?)
     } else {
         None
@@ -1338,15 +1493,16 @@ fn open_vscode_command_in_workspace(
     open_workspace_in_new_window(workspace_path)?;
 
     let command_link = if insert_prompt {
-        let (ack_path, ack_token) = ack_target
-            .as_ref()
-            .ok_or_else(|| "Missing handoff acknowledgement target".to_string())?;
-        bridge_handoff_link(command, Some(ack_path.as_path()), Some(ack_token.as_str()))
+        if let Some((ack_path, ack_token)) = ack_target.as_ref() {
+            bridge_handoff_link(command, Some(ack_path.as_path()), Some(ack_token.as_str()))
+        } else {
+            bridge_handoff_link(command, None, None)
+        }
     } else {
         bridge_command_link(command)
     };
 
-    std::thread::sleep(Duration::from_millis(1600));
+    std::thread::sleep(Duration::from_millis(450));
     open_vscode_deep_link(&command_link)?;
 
     if let Some((ack_path, ack_token)) = ack_target {
@@ -1363,22 +1519,41 @@ fn create_handoff_ack_target() -> Result<(PathBuf, String), String> {
         .as_millis();
     let token = format!("{}-{}", std::process::id(), now);
     let dir = env::temp_dir().join("AgentWatcher").join("handoff-acks");
-    fs::create_dir_all(&dir).map_err(|error| format!("Failed to prepare handoff ack directory: {}", error))?;
+    fs::create_dir_all(&dir)
+        .map_err(|error| format!("Failed to prepare handoff ack directory: {}", error))?;
     Ok((dir.join(format!("{}.json", token)), token))
 }
 
 fn wait_for_handoff_ack(ack_path: &Path, token: &str) -> Result<(), String> {
-    let deadline = Instant::now() + Duration::from_secs(20);
+    wait_for_bridge_ack(
+        ack_path,
+        token,
+        Duration::from_secs(8),
+        "handoff prompt insertion",
+    )
+}
+
+fn wait_for_session_open_ack(ack_path: &Path, token: &str) -> Result<(), String> {
+    wait_for_bridge_ack(ack_path, token, Duration::from_secs(5), "session open")
+}
+
+fn wait_for_bridge_ack(
+    ack_path: &Path,
+    token: &str,
+    timeout: Duration,
+    action_label: &str,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
 
     while Instant::now() < deadline {
         if ack_path.exists() {
             let text = fs::read_to_string(ack_path)
-                .map_err(|error| format!("Failed to read handoff acknowledgement: {}", error))?;
+                .map_err(|error| format!("Failed to read bridge acknowledgement: {}", error))?;
             let ack: HandoffAck = serde_json::from_str(&text)
-                .map_err(|error| format!("Invalid handoff acknowledgement: {}", error))?;
+                .map_err(|error| format!("Invalid bridge acknowledgement: {}", error))?;
 
             if ack.token.as_deref() != Some(token) {
-                return Err("Handoff acknowledgement token mismatch".to_string());
+                return Err("Bridge acknowledgement token mismatch".to_string());
             }
 
             let _ = fs::remove_file(ack_path);
@@ -1389,13 +1564,23 @@ fn wait_for_handoff_ack(ack_path: &Path, token: &str) -> Result<(), String> {
             return Err(ack
                 .message
                 .filter(|message| !message.trim().is_empty())
-                .unwrap_or_else(|| "VS Code Bridge reported handoff failure".to_string()));
+                .unwrap_or_else(|| format!("VS Code Bridge reported {} failure", action_label)));
         }
 
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    Err("VS Code Bridge did not confirm handoff prompt insertion before timeout".to_string())
+    Err(format!(
+        "VS Code Bridge did not confirm {} before timeout",
+        action_label
+    ))
+}
+
+fn bridge_session_open_error_should_retry(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("workspace mismatch")
+        || lower.contains("target workspace")
+        || lower.contains("session open before timeout")
 }
 
 #[tauri::command]
@@ -1410,10 +1595,939 @@ fn save_todo_state(state: Value) -> Result<(), String> {
     write_todo_state_to_path(&path, &state)
 }
 
+#[tauri::command]
+fn scan_module_plugins() -> Result<Vec<plugin_manifest::AwDiscoveredPlugin>, String> {
+    let plugin_root = agentwatcher_plugin_root()?;
+    plugin_manifest::scan_plugin_root(&plugin_root)
+        .map_err(|error| format!("Failed to scan AgentWatcher plugins: {}", error))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginLinkApplyRequest {
+    plugin_name: String,
+    confirmed: bool,
+    dry_run_accepted: bool,
+    #[serde(default)]
+    expected_modules: Vec<PluginLinkExpectedModule>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginLinkExpectedModule {
+    module_name: String,
+    state: String,
+    mount_path: String,
+    expected_target: String,
+    worktree_branch: Option<String>,
+    managed_worktree: bool,
+    link_type: plugin_manifest::AwModuleLinkType,
+}
+
+#[tauri::command]
+fn get_plugin_link_status(
+    plugin_name: String,
+) -> Result<plugin_linker::AwPluginLinkStatus, String> {
+    let plugin_root = agentwatcher_plugin_root()?;
+    plugin_linker::get_plugin_link_status(&plugin_root, &plugin_name)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn install_plugin_links(
+    request: PluginLinkApplyRequest,
+) -> Result<plugin_linker::AwPluginLinkApplyResult, String> {
+    let plugin_root = agentwatcher_plugin_root()?;
+    validate_plugin_link_apply_request(&plugin_root, &request)?;
+    let result = plugin_linker::install_plugin_links(&plugin_root, &request.plugin_name, false)
+        .map_err(|error| error.to_string())?;
+    record_plugin_link_audit(&request.plugin_name, "installPluginLinks", &result)?;
+    Ok(result)
+}
+
+#[tauri::command]
+fn repair_plugin_links(
+    request: PluginLinkApplyRequest,
+) -> Result<plugin_linker::AwPluginLinkApplyResult, String> {
+    let plugin_root = agentwatcher_plugin_root()?;
+    validate_plugin_link_apply_request(&plugin_root, &request)?;
+    let result = plugin_linker::install_plugin_links(&plugin_root, &request.plugin_name, true)
+        .map_err(|error| error.to_string())?;
+    record_plugin_link_audit(&request.plugin_name, "repairPluginLinks", &result)?;
+    Ok(result)
+}
+
+fn validate_plugin_link_apply_request(
+    plugin_root: &Path,
+    request: &PluginLinkApplyRequest,
+) -> Result<(), String> {
+    if !request.confirmed || !request.dry_run_accepted {
+        return Err(
+            "Plugin link writes require confirmed=true and dryRunAccepted=true".to_string(),
+        );
+    }
+    if request.expected_modules.is_empty() {
+        return Err(
+            "Plugin link writes require expected module link states from dry-run".to_string(),
+        );
+    }
+    let status = plugin_linker::get_plugin_link_status(plugin_root, &request.plugin_name)
+        .map_err(|error| error.to_string())?;
+    validate_plugin_link_expected_modules(&status, &request.expected_modules)
+}
+
+fn validate_plugin_link_expected_modules(
+    status: &plugin_linker::AwPluginLinkStatus,
+    expected_modules: &[PluginLinkExpectedModule],
+) -> Result<(), String> {
+    let mut expected_by_module: HashMap<&str, &PluginLinkExpectedModule> = HashMap::new();
+    for expected in expected_modules {
+        if expected_by_module
+            .insert(expected.module_name.as_str(), expected)
+            .is_some()
+        {
+            return Err(format!(
+                "Plugin link dry-run state contains duplicate module {}",
+                expected.module_name
+            ));
+        }
+    }
+    if status.modules.len() != expected_by_module.len() {
+        return Err("Plugin link dry-run state no longer matches module count".to_string());
+    }
+    for current in &status.modules {
+        let expected = expected_by_module
+            .get(current.module_name.as_str())
+            .copied()
+            .ok_or_else(|| {
+                format!(
+                    "Plugin link dry-run state no longer contains current module {}",
+                    current.module_name
+                )
+            })?;
+        let current_state = serde_json::to_value(&current.state)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_else(|| format!("{:?}", current.state));
+        if current_state != expected.state
+            || current.mount_path != expected.mount_path
+            || current.expected_target != expected.expected_target
+            || current.worktree_branch != expected.worktree_branch
+            || current.managed_worktree != expected.managed_worktree
+            || current.link_type != expected.link_type
+        {
+            return Err(format!(
+                "Plugin link dry-run state changed for module {}",
+                expected.module_name
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn record_plugin_link_audit(
+    plugin_name: &str,
+    action: &str,
+    result: &plugin_linker::AwPluginLinkApplyResult,
+) -> Result<(), String> {
+    let path = plugin_state_path()?;
+    let actions = result
+        .modules
+        .iter()
+        .map(|module| format!("{}:{:?}", module.module_name, module.action))
+        .collect::<Vec<_>>()
+        .join(",");
+    plugin_state::record_plugin_audit(
+        &path,
+        plugin_name,
+        action,
+        Some(format!(
+            "confirmed dry-run link apply; changed={}; actions={}",
+            result.changed, actions
+        )),
+    )?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod plugin_link_apply_request_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_duplicate_expected_modules_that_omit_current_module() {
+        let status = link_status(vec![
+            link_module("DevFlow", "missingLink"),
+            link_module("AgentHub", "ready"),
+        ]);
+        let expected_modules = vec![
+            expected_module("DevFlow", "missingLink"),
+            expected_module("DevFlow", "missingLink"),
+        ];
+
+        let error = validate_plugin_link_expected_modules(&status, &expected_modules).unwrap_err();
+
+        assert!(error.contains("duplicate module DevFlow"));
+    }
+
+    #[test]
+    fn accepts_exact_one_to_one_expected_module_snapshot() {
+        let status = link_status(vec![
+            link_module("DevFlow", "missingLink"),
+            link_module("AgentHub", "ready"),
+        ]);
+        let expected_modules = vec![
+            expected_module("DevFlow", "missingLink"),
+            expected_module("AgentHub", "ready"),
+        ];
+
+        validate_plugin_link_expected_modules(&status, &expected_modules).unwrap();
+    }
+
+    #[test]
+    fn rejects_expected_module_when_worktree_topology_changed() {
+        let status = link_status(vec![link_module("DevFlow", "missingLink")]);
+        let mut expected_modules = vec![expected_module("DevFlow", "missingLink")];
+        expected_modules[0].worktree_branch = Some("agentwatcher/ueworkflow/other".to_string());
+
+        let error = validate_plugin_link_expected_modules(&status, &expected_modules).unwrap_err();
+
+        assert!(error.contains("dry-run state changed for module DevFlow"));
+    }
+
+    fn link_status(
+        modules: Vec<plugin_linker::AwModuleLinkStatus>,
+    ) -> plugin_linker::AwPluginLinkStatus {
+        plugin_linker::AwPluginLinkStatus {
+            plugin_name: "UEWorkflow".to_string(),
+            plugin_root: "plugin-root".to_string(),
+            workspace_root: "workspace-root".to_string(),
+            modules,
+        }
+    }
+
+    fn link_module(module_name: &str, state: &str) -> plugin_linker::AwModuleLinkStatus {
+        plugin_linker::AwModuleLinkStatus {
+            module_name: module_name.to_string(),
+            display_name: module_name.to_string(),
+            mount_path: format!("Modules/{module_name}"),
+            expected_target: format!("X:/Workspace/{module_name}"),
+            source_target: None,
+            worktree_branch: Some(format!(
+                "agentwatcher/ueworkflow/{}",
+                module_name.to_ascii_lowercase()
+            )),
+            managed_worktree: true,
+            actual_target: None,
+            link_type: plugin_manifest::AwModuleLinkType::Junction,
+            state: match state {
+                "ready" => plugin_linker::AwModuleLinkState::Ready,
+                "missingLink" => plugin_linker::AwModuleLinkState::MissingLink,
+                other => panic!("unsupported state {other}"),
+            },
+            message: "test".to_string(),
+        }
+    }
+
+    fn expected_module(module_name: &str, state: &str) -> PluginLinkExpectedModule {
+        PluginLinkExpectedModule {
+            module_name: module_name.to_string(),
+            state: state.to_string(),
+            mount_path: format!("Modules/{module_name}"),
+            expected_target: format!("X:/Workspace/{module_name}"),
+            worktree_branch: Some(format!(
+                "agentwatcher/ueworkflow/{}",
+                module_name.to_ascii_lowercase()
+            )),
+            managed_worktree: true,
+            link_type: plugin_manifest::AwModuleLinkType::Junction,
+        }
+    }
+}
+
+#[tauri::command]
+fn get_plugin_runtime_state(
+    plugin_name: String,
+) -> Result<plugin_state::AwPluginRuntimeState, String> {
+    ensure_plugin_exists(&plugin_name)?;
+    let path = plugin_state_path()?;
+    plugin_state::get_plugin_runtime_state(&path, &plugin_name)
+}
+
+#[tauri::command]
+fn set_plugin_enabled(
+    plugin_name: String,
+    enabled: bool,
+) -> Result<plugin_state::AwPluginRuntimeState, String> {
+    ensure_plugin_exists(&plugin_name)?;
+    let path = plugin_state_path()?;
+    plugin_state::set_plugin_enabled(
+        &path,
+        &plugin_name,
+        enabled,
+        Some("设置面板插件开关".to_string()),
+    )
+}
+
+#[tauri::command]
+fn get_orchestration_status() -> Result<orchestration::AwOrchestrationStatus, String> {
+    let current_dir = env::current_dir()
+        .map_err(|error| format!("Failed to determine AgentWatcher runtime directory: {error}"))?;
+    orchestration::get_orchestration_status(&current_dir)
+}
+
+#[tauri::command]
+fn commit_ueworkflow_dry_run(
+    request: ueworkflow_execution::AwUeWorkflowExecutionRequest,
+) -> Result<ueworkflow_execution::AwUeWorkflowExecutionRecord, String> {
+    let appdata = env::var_os("APPDATA").map(PathBuf::from).ok_or_else(|| {
+        "APPDATA is not available; cannot locate AgentWatcher UEWorkflow execution storage"
+            .to_string()
+    })?;
+    let root = ueworkflow_execution::execution_root_from_appdata(&appdata);
+    ueworkflow_execution::commit_dry_run_execution(&root, request)
+}
+
+#[tauri::command]
+fn commit_ueworkflow_knowledge_record(
+    request: ueworkflow_execution::AwUeWorkflowKnowledgeRequest,
+) -> Result<ueworkflow_execution::AwUeWorkflowKnowledgeRecord, String> {
+    let appdata = env::var_os("APPDATA").map(PathBuf::from).ok_or_else(|| {
+        "APPDATA is not available; cannot locate AgentWatcher UEWorkflow knowledge storage"
+            .to_string()
+    })?;
+    let root = ueworkflow_execution::knowledge_root_from_appdata(&appdata);
+    ueworkflow_execution::commit_knowledge_record(&root, request)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AwUwfDryRunCommandResponse {
+    command: Vec<String>,
+    result: Value,
+    execution_record: ueworkflow_execution::AwUeWorkflowExecutionRecord,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AwUwfExecuteCommandResponse {
+    command: Vec<String>,
+    result: Value,
+    knowledge_record: ueworkflow_execution::AwUeWorkflowKnowledgeRecord,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DebugRuntimeState {
+    silent_debug: bool,
+}
+
+fn agentwatcher_silent_debug_enabled() -> bool {
+    env::var("AGENTWATCHER_DEBUG_SILENT")
+        .ok()
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+fn get_debug_runtime_state() -> DebugRuntimeState {
+    DebugRuntimeState {
+        silent_debug: agentwatcher_silent_debug_enabled(),
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AwUwfMasterExecuteRunSnapshot {
+    run_id: String,
+    status: String,
+    phase: String,
+    started_ms: u64,
+    updated_ms: u64,
+    result: Option<AwUwfExecuteCommandResponse>,
+    error: Option<String>,
+}
+
+static UEWORKFLOW_MASTER_EXECUTE_RUNS: OnceLock<
+    Mutex<HashMap<String, AwUwfMasterExecuteRunSnapshot>>,
+> = OnceLock::new();
+static UEWORKFLOW_MASTER_EXECUTE_RUN_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+fn ueworkflow_master_execute_runs() -> &'static Mutex<HashMap<String, AwUwfMasterExecuteRunSnapshot>>
+{
+    UEWORKFLOW_MASTER_EXECUTE_RUNS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn make_ueworkflow_master_execute_run_id() -> String {
+    let sequence = UEWORKFLOW_MASTER_EXECUTE_RUN_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let now = current_time_ms();
+    format!("uwf-master-exec-{now}-{sequence}")
+}
+
+fn set_ueworkflow_master_execute_run(snapshot: AwUwfMasterExecuteRunSnapshot) {
+    if let Ok(mut runs) = ueworkflow_master_execute_runs().lock() {
+        runs.insert(snapshot.run_id.clone(), snapshot);
+        prune_ueworkflow_master_execute_runs_locked(&mut runs, current_time_ms());
+    }
+}
+
+fn prune_ueworkflow_master_execute_runs_locked(
+    runs: &mut HashMap<String, AwUwfMasterExecuteRunSnapshot>,
+    now_ms: u64,
+) {
+    runs.retain(|_, snapshot| {
+        snapshot.status == "running"
+            || now_ms.saturating_sub(snapshot.updated_ms) <= UEWORKFLOW_MASTER_EXECUTE_RUN_TTL_MS
+    });
+    if runs.len() <= UEWORKFLOW_MASTER_EXECUTE_RUN_LIMIT {
+        return;
+    }
+    let mut terminal_runs: Vec<(String, u64)> = runs
+        .iter()
+        .filter(|(_, snapshot)| snapshot.status != "running")
+        .map(|(run_id, snapshot)| (run_id.clone(), snapshot.updated_ms))
+        .collect();
+    terminal_runs.sort_by_key(|(_, updated_ms)| *updated_ms);
+    let mut overflow = runs
+        .len()
+        .saturating_sub(UEWORKFLOW_MASTER_EXECUTE_RUN_LIMIT);
+    for (run_id, _) in terminal_runs {
+        if overflow == 0 {
+            break;
+        }
+        if runs.remove(&run_id).is_some() {
+            overflow = overflow.saturating_sub(1);
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AwUwfExternalCommandRunResponse {
+    command: Vec<String>,
+    result: Value,
+    execution_record: Option<ueworkflow_execution::AwUeWorkflowExecutionRecord>,
+}
+
+#[tauri::command]
+fn get_ueworkflow_doctor() -> Result<ueworkflow_runtime::AwUwfCommandResponse, String> {
+    ueworkflow_runtime::run_doctor()
+}
+
+#[tauri::command]
+fn get_ueworkflow_modules() -> Result<ueworkflow_runtime::AwUwfCommandResponse, String> {
+    ueworkflow_runtime::run_modules()
+}
+
+#[tauri::command]
+fn get_ueworkflow_module_status(
+    module_name: String,
+) -> Result<ueworkflow_runtime::AwUwfCommandResponse, String> {
+    ueworkflow_runtime::run_module_status(&module_name)
+}
+
+#[tauri::command]
+fn run_ueworkflow_command(
+    request: ueworkflow_runtime::AwUwfExternalCommandRequest,
+) -> Result<AwUwfExternalCommandRunResponse, String> {
+    ensure_plugin_enabled("UEWorkflow")?;
+    let command_id = request.command_id.clone();
+    let goal = request
+        .goal
+        .clone()
+        .unwrap_or_else(|| format!("UEWorkflow 受控命令：{command_id}"));
+    let response = ueworkflow_runtime::run_external_command(&request)?;
+    let execution_record = if should_record_ueworkflow_external_command(&command_id) {
+        let appdata = env::var_os("APPDATA").map(PathBuf::from).ok_or_else(|| {
+            "APPDATA is not available; cannot locate AgentWatcher UEWorkflow execution storage"
+                .to_string()
+        })?;
+        let root = ueworkflow_execution::execution_root_from_appdata(&appdata);
+        Some(ueworkflow_execution::commit_external_command_execution(
+            &root,
+            &command_id,
+            &goal,
+            response.result.clone(),
+        )?)
+    } else {
+        None
+    };
+    Ok(AwUwfExternalCommandRunResponse {
+        command: response.command,
+        result: response.result,
+        execution_record,
+    })
+}
+
+fn should_record_ueworkflow_external_command(command_id: &str) -> bool {
+    command_id.ends_with(".execute")
+}
+
+#[tauri::command]
+fn get_ueworkflow_command_policy(
+) -> Result<Vec<ueworkflow_runtime::AwUwfExternalCommandPolicyView>, String> {
+    ensure_plugin_enabled("UEWorkflow")?;
+    Ok(ueworkflow_runtime::external_command_policy_views())
+}
+
+#[tauri::command]
+async fn run_ueworkflow_master_dry_run(
+    request: ueworkflow_runtime::AwUwfTaskRequest,
+) -> Result<AwUwfDryRunCommandResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || run_ueworkflow_master_dry_run_blocking(request))
+        .await
+        .map_err(|error| format!("Failed to wait for UEWorkflow dry-run task: {}", error))?
+}
+
+#[tauri::command]
+async fn run_ueworkflow_master_execute(
+    request: ueworkflow_runtime::AwUwfTaskRequest,
+) -> Result<AwUwfExecuteCommandResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || run_ueworkflow_master_execute_blocking(request))
+        .await
+        .map_err(|error| format!("Failed to wait for UEWorkflow execute task: {}", error))?
+}
+
+#[tauri::command]
+fn start_ueworkflow_master_execute_run(
+    request: ueworkflow_runtime::AwUwfTaskRequest,
+) -> Result<AwUwfMasterExecuteRunSnapshot, String> {
+    ensure_plugin_enabled("UEWorkflow")?;
+    let run_id = make_ueworkflow_master_execute_run_id();
+    let now = current_time_ms();
+    let snapshot = AwUwfMasterExecuteRunSnapshot {
+        run_id: run_id.clone(),
+        status: "running".to_string(),
+        phase: "package-generating".to_string(),
+        started_ms: now,
+        updated_ms: now,
+        result: None,
+        error: None,
+    };
+    set_ueworkflow_master_execute_run(snapshot.clone());
+    let started_ms = snapshot.started_ms;
+    std::thread::spawn({
+        let run_id = run_id.clone();
+        move || {
+            let result = run_ueworkflow_master_execute_blocking(request);
+            let updated_ms = current_time_ms();
+            let snapshot = match result {
+                Ok(response) => AwUwfMasterExecuteRunSnapshot {
+                    run_id,
+                    status: "success".to_string(),
+                    phase: "package-ready".to_string(),
+                    started_ms,
+                    updated_ms,
+                    result: Some(response),
+                    error: None,
+                },
+                Err(error) => AwUwfMasterExecuteRunSnapshot {
+                    run_id,
+                    status: "failed".to_string(),
+                    phase: "failed".to_string(),
+                    started_ms,
+                    updated_ms,
+                    result: None,
+                    error: Some(error),
+                },
+            };
+            set_ueworkflow_master_execute_run(snapshot);
+        }
+    });
+    Ok(snapshot)
+}
+
+#[tauri::command]
+fn get_ueworkflow_master_execute_run(
+    run_id: String,
+) -> Result<AwUwfMasterExecuteRunSnapshot, String> {
+    let mut runs = ueworkflow_master_execute_runs()
+        .lock()
+        .map_err(|_| "UEWorkflow execute run state is poisoned".to_string())?;
+    prune_ueworkflow_master_execute_runs_locked(&mut runs, current_time_ms());
+    runs.get(&run_id)
+        .cloned()
+        .ok_or_else(|| format!("UEWorkflow execute run not found: {run_id}"))
+}
+
+fn run_ueworkflow_master_dry_run_blocking(
+    request: ueworkflow_runtime::AwUwfTaskRequest,
+) -> Result<AwUwfDryRunCommandResponse, String> {
+    ensure_plugin_enabled("UEWorkflow")?;
+    let response = ueworkflow_runtime::run_master_dry_run(&request)?;
+    let appdata = env::var_os("APPDATA").map(PathBuf::from).ok_or_else(|| {
+        "APPDATA is not available; cannot locate AgentWatcher UEWorkflow execution storage"
+            .to_string()
+    })?;
+    let root = ueworkflow_execution::execution_root_from_appdata(&appdata);
+    let execution_record = ueworkflow_execution::commit_dry_run_execution(
+        &root,
+        ueworkflow_execution::AwUeWorkflowExecutionRequest {
+            goal: request.goal,
+            dry_run: response.result.clone(),
+        },
+    )?;
+    Ok(AwUwfDryRunCommandResponse {
+        command: response.command,
+        result: response.result,
+        execution_record,
+    })
+}
+
+fn run_ueworkflow_master_execute_blocking(
+    request: ueworkflow_runtime::AwUwfTaskRequest,
+) -> Result<AwUwfExecuteCommandResponse, String> {
+    ensure_plugin_enabled("UEWorkflow")?;
+    let appdata = env::var_os("APPDATA").map(PathBuf::from).ok_or_else(|| {
+        "APPDATA is not available; cannot locate AgentWatcher UEWorkflow knowledge storage"
+            .to_string()
+    })?;
+    let knowledge_root = ueworkflow_execution::knowledge_root_from_appdata(&appdata);
+    let team_knowledge_root = knowledge_root.join("UnrealWorkflowKnowledge");
+    let response = ueworkflow_runtime::run_master_execute(&request, &team_knowledge_root)?;
+    let knowledge_record = ueworkflow_execution::commit_knowledge_record(
+        &knowledge_root,
+        ueworkflow_execution::AwUeWorkflowKnowledgeRequest {
+            goal: request.goal,
+            task_id: request.task_id,
+            status: response
+                .result
+                .get("status")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            dry_run: Value::Null,
+            execution: response.result.clone(),
+            review: Value::Null,
+        },
+    )?;
+    Ok(AwUwfExecuteCommandResponse {
+        command: response.command,
+        result: response.result,
+        knowledge_record,
+    })
+}
+
+#[tauri::command]
+fn start_module_command_run(
+    request: ModuleCommandRunRequest,
+) -> Result<plugin_manifest::AwTaskExecutionInfo, String> {
+    let (plugin_name, module, command) = find_module_command_target(
+        &request.plugin_name,
+        &request.module_name,
+        &request.command_name,
+    )?;
+    match command.safety {
+        plugin_manifest::AwCommandSafety::ReadOnly | plugin_manifest::AwCommandSafety::DryRun => {}
+        plugin_manifest::AwCommandSafety::BoundedWrite => {
+            validate_bounded_write_payload(&command, request.payload.as_ref())?;
+            validate_bounded_write_runtime_policy(&command)?;
+        }
+    }
+    ensure_plugin_enabled(&plugin_name)?;
+    if matches!(
+        command.safety,
+        plugin_manifest::AwCommandSafety::BoundedWrite
+    ) {
+        record_bounded_write_audit(
+            &plugin_name,
+            &module.descriptor.name,
+            &command.name,
+            request.payload.as_ref(),
+        )?;
+    }
+    module_runner::start_module_command_run(
+        &plugin_name,
+        &module,
+        &command,
+        request.task_id,
+        request.payload,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn validate_bounded_write_payload(
+    command: &plugin_manifest::AwCommandDescriptor,
+    payload: Option<&Value>,
+) -> Result<(), String> {
+    let contract = command
+        .safety_contract
+        .as_ref()
+        .ok_or_else(|| "Bounded write command is missing a safety contract".to_string())?;
+    let Some(payload) = payload else {
+        return Err("Bounded write commands require a structured confirmation payload".to_string());
+    };
+    let Some(object) = payload.as_object() else {
+        return Err("Bounded write payload must be a JSON object".to_string());
+    };
+    if contract.requires_confirmation
+        && object.get("confirmed").and_then(Value::as_bool) != Some(true)
+    {
+        return Err("Bounded write payload must include confirmed=true".to_string());
+    }
+    if contract.requires_dry_run
+        && object.get("dryRunAccepted").and_then(Value::as_bool) != Some(true)
+    {
+        return Err("Bounded write payload must include dryRunAccepted=true".to_string());
+    }
+    let action = object
+        .get("action")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    if action.is_empty() {
+        return Err("Bounded write payload must include an action".to_string());
+    }
+    if !contract.allowed_actions.is_empty()
+        && !contract
+            .allowed_actions
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(action))
+    {
+        return Err(format!(
+            "Bounded write action is not declared in safetyContract.allowedActions: {action}"
+        ));
+    }
+    if let Some(boundary) = contract.confirmation_boundary.as_deref() {
+        let accepted_boundary = object
+            .get("confirmationBoundary")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or("");
+        if accepted_boundary != boundary {
+            return Err(format!(
+                "Bounded write payload must include confirmationBoundary={boundary}"
+            ));
+        }
+    }
+    if !contract.impact_scope.is_empty() {
+        let accepted_scope = object
+            .get("impactScopeAccepted")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                "Bounded write payload must include impactScopeAccepted from dry-run".to_string()
+            })?;
+        for required_scope in &contract.impact_scope {
+            if !accepted_scope
+                .iter()
+                .filter_map(Value::as_str)
+                .any(|accepted| accepted == required_scope)
+            {
+                return Err(format!(
+                    "Bounded write payload is missing accepted impact scope: {required_scope}"
+                ));
+            }
+        }
+    }
+    reject_unsafe_payload_keys(payload)?;
+    let text = serde_json::to_string(payload)
+        .map_err(|error| format!("Failed to serialize bounded write payload: {error}"))?;
+    if text.len() > 16 * 1024 {
+        return Err("Bounded write payload is too large".to_string());
+    }
+    Ok(())
+}
+
+fn record_bounded_write_audit(
+    plugin_name: &str,
+    module_name: &str,
+    command_name: &str,
+    payload: Option<&Value>,
+) -> Result<(), String> {
+    let action = payload
+        .and_then(Value::as_object)
+        .and_then(|object| object.get("action"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown");
+    let path = plugin_state_path()?;
+    plugin_state::record_plugin_audit(
+        &path,
+        plugin_name,
+        "boundedWriteCommand",
+        Some(format!(
+            "module={module_name}; command={command_name}; action={action}; confirmed dry-run safety contract accepted"
+        )),
+    )?;
+    Ok(())
+}
+
+fn validate_bounded_write_runtime_policy(
+    command: &plugin_manifest::AwCommandDescriptor,
+) -> Result<(), String> {
+    validate_bounded_write_runtime_policy_with_env(command, |key| env::var(key).ok())
+}
+
+fn validate_bounded_write_runtime_policy_with_env(
+    command: &plugin_manifest::AwCommandDescriptor,
+    env_value: impl Fn(&str) -> Option<String>,
+) -> Result<(), String> {
+    let Some(contract) = command.safety_contract.as_ref() else {
+        return Err("Bounded write command is missing a safety contract".to_string());
+    };
+    let Some(block) = contract.runtime_block.as_ref() else {
+        return Ok(());
+    };
+    if env_value(&block.override_env).as_deref() == Some(block.override_token.as_str()) {
+        return Ok(());
+    }
+
+    Err(format!(
+        "{}; set {}={} only for an explicitly approved live validation.",
+        block.reason, block.override_env, block.override_token
+    ))
+}
+
+fn reject_unsafe_payload_keys(value: &Value) -> Result<(), String> {
+    const BLOCKED_KEYS: &[&str] = &[
+        "shell",
+        "shellCommand",
+        "rawCommand",
+        "commandLine",
+        "powershell",
+        "cmd",
+        "script",
+        "rawUeBuild",
+        "rawUeBuildCommand",
+        "runRawUeBuild",
+        "ueBuildCommand",
+        "deletePath",
+        "removePath",
+        "destructiveDelete",
+        "externalWorktreeCreated",
+    ];
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                if BLOCKED_KEYS
+                    .iter()
+                    .any(|blocked| key.eq_ignore_ascii_case(blocked))
+                {
+                    return Err(format!(
+                        "Bounded write payload contains forbidden key: {key}"
+                    ));
+                }
+                reject_unsafe_payload_keys(child)?;
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                reject_unsafe_payload_keys(item)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_module_command_run(
+    run_id: String,
+) -> Result<module_runner::AwModuleCommandRunSnapshot, String> {
+    module_runner::get_module_command_run(&run_id).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn cancel_module_command_run(
+    run_id: String,
+) -> Result<module_runner::AwModuleCommandRunSnapshot, String> {
+    module_runner::cancel_module_command_run(&run_id).map_err(|error| error.to_string())
+}
+
+fn find_module_command_target(
+    plugin_name: &str,
+    module_name: &str,
+    command_name: &str,
+) -> Result<
+    (
+        String,
+        plugin_manifest::AwDiscoveredModule,
+        plugin_manifest::AwCommandDescriptor,
+    ),
+    String,
+> {
+    let plugins = scan_module_plugins()?;
+    let plugin = plugins
+        .iter()
+        .find(|plugin| plugin.descriptor.name == plugin_name)
+        .ok_or_else(|| format!("Plugin not found: {plugin_name}"))?;
+    let module = plugin
+        .modules
+        .iter()
+        .find(|module| module.descriptor.name == module_name)
+        .ok_or_else(|| format!("Module not found: {module_name}"))?;
+    let command = module
+        .descriptor
+        .commands
+        .iter()
+        .find(|command| command.name == command_name)
+        .ok_or_else(|| format!("Command not found: {command_name}"))?;
+
+    Ok((
+        plugin.descriptor.name.clone(),
+        module.clone(),
+        command.clone(),
+    ))
+}
+
+fn agentwatcher_plugin_root() -> Result<PathBuf, String> {
+    let mut candidates = Vec::new();
+
+    if let Some(source_root) = Path::new(env!("CARGO_MANIFEST_DIR")).parent() {
+        candidates.push(source_root.join("Plugins"));
+    }
+
+    if let Ok(exe_path) = env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            candidates.push(exe_dir.join("Plugins"));
+            if let Some(parent) = exe_dir.parent() {
+                candidates.push(parent.join("Plugins"));
+            }
+        }
+    }
+
+    for candidate in &candidates {
+        if candidate.exists() {
+            return Ok(candidate.clone());
+        }
+    }
+
+    candidates
+        .into_iter()
+        .last()
+        .ok_or_else(|| "Failed to determine AgentWatcher plugin root".to_string())
+}
+
+fn ensure_plugin_exists(plugin_name: &str) -> Result<(), String> {
+    let plugin_root = agentwatcher_plugin_root()?;
+    plugin_linker::get_plugin_link_status(&plugin_root, plugin_name)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn ensure_plugin_enabled(plugin_name: &str) -> Result<(), String> {
+    let path = plugin_state_path()?;
+    let state = plugin_state::get_plugin_runtime_state(&path, plugin_name)?;
+    if state.enabled {
+        Ok(())
+    } else {
+        Err(format!("Plugin is disabled: {plugin_name}"))
+    }
+}
+
+fn plugin_state_path() -> Result<PathBuf, String> {
+    let appdata = env::var_os("APPDATA").map(PathBuf::from).ok_or_else(|| {
+        "APPDATA is not available; cannot locate AgentWatcher plugin state".to_string()
+    })?;
+    Ok(plugin_state::plugin_state_path_from_appdata(&appdata))
+}
+
 fn todo_state_path() -> Result<PathBuf, String> {
-    let appdata = env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .ok_or_else(|| "APPDATA is not available; cannot locate AgentWatcher todo storage".to_string())?;
+    let appdata = env::var_os("APPDATA").map(PathBuf::from).ok_or_else(|| {
+        "APPDATA is not available; cannot locate AgentWatcher todo storage".to_string()
+    })?;
     Ok(todo_state_path_from_appdata(&appdata))
 }
 
@@ -1442,6 +2556,192 @@ fn read_todo_state_from_path(path: &Path) -> Result<Value, String> {
     serde_json::from_str(&text).map_err(|error| format!("Invalid todo state JSON: {}", error))
 }
 
+fn truncate_value_string(value: &mut Value, limit: usize) {
+    if let Some(text) = value.as_str() {
+        if text.len() > limit {
+            *value = Value::String(text.chars().take(limit).collect());
+        }
+    }
+}
+
+fn trim_array_to_last(value: &mut Value, limit: usize) {
+    if let Some(items) = value.as_array_mut() {
+        if items.len() > limit {
+            let remove_count = items.len() - limit;
+            items.drain(0..remove_count);
+        }
+    }
+}
+
+fn sanitize_todo_dispatch(dispatch: &mut Value) {
+    let Some(object) = dispatch.as_object_mut() else {
+        return;
+    };
+    for key in ["lastPrompt", "launchError"] {
+        if let Some(value) = object.get_mut(key) {
+            truncate_value_string(value, TODO_LONG_TEXT_LIMIT);
+        }
+    }
+    for key in ["sessionPath", "transcriptPath", "sessionResource"] {
+        if let Some(value) = object.get_mut(key) {
+            truncate_value_string(value, TODO_LONG_TEXT_LIMIT);
+        }
+    }
+}
+
+fn compact_ueworkflow_module_result(result: &Value) -> Value {
+    let mut compact = serde_json::Map::new();
+    if let Some(value) = result.get("module") {
+        compact.insert("module".to_string(), value.clone());
+    }
+    if let Some(value) = result.get("status") {
+        compact.insert("status".to_string(), value.clone());
+    }
+    if let Some(value) = result.get("message").or_else(|| result.get("error")) {
+        let mut value = value.clone();
+        truncate_value_string(&mut value, TODO_SHORT_TEXT_LIMIT);
+        compact.insert("message".to_string(), value);
+    }
+    if let Some(value) = result
+        .get("targetContext")
+        .or_else(|| result.pointer("/outcome/targetContext"))
+    {
+        compact.insert("targetContext".to_string(), value.clone());
+    }
+    if let Some(value) = result
+        .get("artifacts")
+        .or_else(|| result.pointer("/outcome/artifacts"))
+    {
+        let mut value = value.clone();
+        trim_array_to_last(&mut value, 20);
+        compact.insert("artifacts".to_string(), value);
+    }
+    Value::Object(compact)
+}
+
+fn compact_ueworkflow_master_result(details: &mut Value) {
+    if details.pointer("/kind").and_then(Value::as_str) != Some("UnrealWorkflowMasterResult") {
+        return;
+    }
+    if details
+        .get("summaryOnly")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let original = details.clone();
+    let mut compact = serde_json::Map::new();
+    compact.insert(
+        "kind".to_string(),
+        Value::String("UnrealWorkflowMasterResult".to_string()),
+    );
+    compact.insert("summaryOnly".to_string(), Value::Bool(true));
+    for key in [
+        "status",
+        "command",
+        "message",
+        "request",
+        "contextConfirmation",
+        "providerPackage",
+        "knowledgeClosure",
+    ] {
+        if let Some(value) = original.get(key) {
+            let mut value = value.clone();
+            if matches!(key, "message" | "knowledgeClosure") {
+                truncate_value_string(&mut value, TODO_SHORT_TEXT_LIMIT);
+            }
+            compact.insert(key.to_string(), value);
+        }
+    }
+    for (key, limit) in [
+        ("stages", 20_usize),
+        ("blockedActions", 30_usize),
+        ("sideEffects", 30_usize),
+        ("artifacts", 40_usize),
+    ] {
+        if let Some(value) = original.get(key) {
+            let mut value = value.clone();
+            trim_array_to_last(&mut value, limit);
+            compact.insert(key.to_string(), value);
+        }
+    }
+    if let Some(module_results) = original.get("moduleResults").and_then(Value::as_array) {
+        compact.insert(
+            "moduleResults".to_string(),
+            Value::Array(
+                module_results
+                    .iter()
+                    .take(20)
+                    .map(compact_ueworkflow_module_result)
+                    .collect(),
+            ),
+        );
+    }
+    *details = Value::Object(compact);
+}
+
+fn sanitize_todo_task(task: &mut Value) {
+    let Some(object) = task.as_object_mut() else {
+        return;
+    };
+    if let Some(dispatches) = object.get_mut("dispatches") {
+        trim_array_to_last(dispatches, TODO_DISPATCH_HISTORY_LIMIT);
+        if let Some(items) = dispatches.as_array_mut() {
+            for dispatch in items {
+                sanitize_todo_dispatch(dispatch);
+            }
+        }
+    }
+    if let Some(events) = object
+        .get_mut("ueWorkflowLifecycle")
+        .and_then(|value| value.get_mut("events"))
+    {
+        trim_array_to_last(events, TODO_UEWORKFLOW_EVENT_LIMIT);
+    }
+    if let Some(master) = object.get_mut("ueWorkflowMaster") {
+        compact_ueworkflow_master_result(master);
+    }
+    if let Some(details) = object
+        .get_mut("execution")
+        .and_then(|value| value.get_mut("result"))
+        .and_then(|value| value.get_mut("details"))
+    {
+        compact_ueworkflow_master_result(details);
+    }
+    if let Some(stdout) = object
+        .get_mut("execution")
+        .and_then(|value| value.get_mut("result"))
+        .and_then(|value| value.get_mut("stdoutExcerpt"))
+    {
+        truncate_value_string(stdout, TODO_SHORT_TEXT_LIMIT);
+    }
+    if let Some(stderr) = object
+        .get_mut("execution")
+        .and_then(|value| value.get_mut("result"))
+        .and_then(|value| value.get_mut("stderrExcerpt"))
+    {
+        truncate_value_string(stderr, TODO_SHORT_TEXT_LIMIT);
+    }
+}
+
+fn sanitize_todo_state_for_write(state: &Value) -> Value {
+    let mut sanitized = state.clone();
+    if let Some(workspaces) = sanitized
+        .get_mut("workspaces")
+        .and_then(Value::as_object_mut)
+    {
+        for workspace in workspaces.values_mut() {
+            if let Some(tasks) = workspace.get_mut("tasks").and_then(Value::as_array_mut) {
+                for task in tasks {
+                    sanitize_todo_task(task);
+                }
+            }
+        }
+    }
+    sanitized
+}
+
 fn write_todo_state_to_path(path: &Path, state: &Value) -> Result<(), String> {
     let parent = path
         .parent()
@@ -1449,7 +2749,8 @@ fn write_todo_state_to_path(path: &Path, state: &Value) -> Result<(), String> {
     fs::create_dir_all(parent)
         .map_err(|error| format!("Failed to prepare todo storage directory: {}", error))?;
 
-    let text = serde_json::to_string_pretty(state)
+    let sanitized = sanitize_todo_state_for_write(state);
+    let text = serde_json::to_string_pretty(&sanitized)
         .map_err(|error| format!("Failed to encode todo state: {}", error))?;
     let temp_path = path.with_extension("json.tmp");
     fs::write(&temp_path, text)
@@ -1458,8 +2759,7 @@ fn write_todo_state_to_path(path: &Path, state: &Value) -> Result<(), String> {
         fs::remove_file(path)
             .map_err(|error| format!("Failed to replace previous todo state: {}", error))?;
     }
-    fs::rename(&temp_path, path)
-        .map_err(|error| format!("Failed to replace todo state: {}", error))
+    fs::rename(&temp_path, path).map_err(|error| format!("Failed to replace todo state: {}", error))
 }
 
 fn ensure_bridge_command_route_available() -> Result<(), String> {
@@ -1516,19 +2816,31 @@ fn session_deep_link(session: &OpenSessionRequest) -> Option<String> {
     ))
 }
 
-fn session_bridge_link(session: &OpenSessionRequest) -> Option<String> {
+fn session_bridge_link(
+    session: &OpenSessionRequest,
+    ack_path: Option<&Path>,
+    ack_token: Option<&str>,
+) -> Option<String> {
     let session_resource = request_session_resource(session)?;
-    Some(format!(
-        "vscode://{}/open?target=editor&resource={}",
-        BRIDGE_EXTENSION_URI_AUTHORITY,
+    let mut link = format!(
+        "vscode://{}/open?target=editor&scopedResource={}",
+        bridge_extension_id(),
         percent_encode_query_component(&session_resource)
-    ))
+    );
+
+    if let Some(workspace_path) = clean_option(session.workspace_path.as_deref()) {
+        link.push_str("&workspacePath=");
+        link.push_str(&percent_encode_query_component(workspace_path));
+    }
+
+    append_bridge_ack_query(&mut link, ack_path, ack_token);
+    Some(link)
 }
 
 fn bridge_command_link(command: &str) -> String {
     format!(
         "vscode://{}/command?command={}",
-        BRIDGE_EXTENSION_URI_AUTHORITY,
+        bridge_extension_id(),
         percent_encode_query_component(command)
     )
 }
@@ -1536,21 +2848,26 @@ fn bridge_command_link(command: &str) -> String {
 fn bridge_handoff_link(command: &str, ack_path: Option<&Path>, ack_token: Option<&str>) -> String {
     let mut link = format!(
         "vscode://{}/handoff?command={}&insertPrompt=1",
-        BRIDGE_EXTENSION_URI_AUTHORITY,
+        bridge_extension_id(),
         percent_encode_query_component(command)
     );
 
+    append_bridge_ack_query(&mut link, ack_path, ack_token);
+    link
+}
+
+fn append_bridge_ack_query(link: &mut String, ack_path: Option<&Path>, ack_token: Option<&str>) {
     if let Some(ack_path) = ack_path {
         link.push_str("&ackPath=");
-        link.push_str(&percent_encode_query_component(&path_to_cli_string(ack_path)));
+        link.push_str(&percent_encode_query_component(&path_to_cli_string(
+            ack_path,
+        )));
     }
 
     if let Some(ack_token) = ack_token {
         link.push_str("&ackToken=");
         link.push_str(&percent_encode_query_component(ack_token));
     }
-
-    link
 }
 
 fn request_session_resource(session: &OpenSessionRequest) -> Option<String> {
@@ -1559,25 +2876,43 @@ fn request_session_resource(session: &OpenSessionRequest) -> Option<String> {
         .or_else(|| session_resource_from_request(session))
 }
 
-fn open_session_with_bridge(workspace_path: Option<&str>, bridge_link: &str) -> Result<(), String> {
-    if let Some(workspace_path) = clean_option(workspace_path) {
+fn open_session_with_bridge(session: &OpenSessionRequest) -> Result<(), String> {
+    if let Some(workspace_path) = clean_option(session.workspace_path.as_deref()) {
         open_workspace(workspace_path)?;
     }
 
-    const BRIDGE_OPEN_RETRIES: usize = 2;
-    const BRIDGE_OPEN_DELAY_MS: u64 = 900;
+    const BRIDGE_OPEN_ATTEMPTS: usize = 4;
+    const BRIDGE_OPEN_INITIAL_DELAY_MS: u64 = 1200;
+    const BRIDGE_OPEN_RETRY_DELAY_MS: u64 = 900;
 
-    let bridge_link = bridge_link.to_string();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(BRIDGE_OPEN_DELAY_MS));
-        let _ = open_vscode_deep_link(&bridge_link);
-        for _ in 1..BRIDGE_OPEN_RETRIES {
-            std::thread::sleep(Duration::from_millis(BRIDGE_OPEN_DELAY_MS));
-            let _ = open_vscode_deep_link(&bridge_link);
+    let mut last_error = None;
+    for attempt in 0..BRIDGE_OPEN_ATTEMPTS {
+        let (ack_path, ack_token) = create_handoff_ack_target()?;
+        let bridge_link = session_bridge_link(session, Some(ack_path.as_path()), Some(&ack_token))
+            .ok_or_else(|| "Missing AgentWatcher session resource.".to_string())?;
+
+        let delay_ms = if attempt == 0 {
+            BRIDGE_OPEN_INITIAL_DELAY_MS
+        } else {
+            BRIDGE_OPEN_RETRY_DELAY_MS
+        };
+        std::thread::sleep(Duration::from_millis(delay_ms));
+        open_vscode_deep_link(&bridge_link)?;
+
+        match wait_for_session_open_ack(&ack_path, &ack_token) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                let should_retry = bridge_session_open_error_should_retry(&error)
+                    && attempt + 1 < BRIDGE_OPEN_ATTEMPTS;
+                last_error = Some(error);
+                if !should_retry {
+                    break;
+                }
+            }
         }
-    });
+    }
 
-    Ok(())
+    Err(last_error.unwrap_or_else(|| "VS Code Bridge did not confirm session open.".to_string()))
 }
 
 fn open_workspace(workspace_path: &str) -> Result<(), String> {
@@ -1655,9 +2990,7 @@ fn vscode_file_url_path(workspace_path: &str) -> Option<String> {
         return None;
     }
 
-    if is_windows_drive_path(&path_text) {
-        path_text.insert(0, '/');
-    } else if !path_text.starts_with('/') {
+    if is_windows_drive_path(&path_text) || !path_text.starts_with('/') {
         path_text.insert(0, '/');
     }
 
@@ -1744,7 +3077,8 @@ where
 }
 
 fn clean_option(text: Option<&str>) -> Option<&str> {
-    text.map(str::trim).filter(|text_value| !text_value.is_empty())
+    text.map(str::trim)
+        .filter(|text_value| !text_value.is_empty())
 }
 
 fn scan_codex_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<AgentSession> {
@@ -1759,7 +3093,7 @@ fn scan_codex_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<
         params["archived"] = Value::Bool(false);
     }
 
-    let Ok(threads) = with_codex_app_server_client(|client| {
+    let threads = with_codex_app_server_client(|client| {
         let response = client.request("thread/list", params)?;
         let Some(thread_items) = response.get("data").and_then(Value::as_array) else {
             return Ok(Vec::new());
@@ -1768,7 +3102,8 @@ fn scan_codex_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<
         let mut scanned_threads = Vec::with_capacity(thread_items.len());
         let mut turn_fetch_budget = codex_scan_turn_fetch_budget(options);
         for thread_json in thread_items {
-            let Some(thread_id) = clean_option(string_at(thread_json, &["/id", "/sessionId"])) else {
+            let Some(thread_id) = clean_option(string_at(thread_json, &["/id", "/sessionId"]))
+            else {
                 continue;
             };
             let updated_ms = codex_thread_updated_ms(thread_json, scan_time_ms);
@@ -1790,16 +3125,93 @@ fn scan_codex_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<
             scanned_threads.push((thread_json.clone(), turn_summary));
         }
         Ok(scanned_threads)
-    }) else {
+    })
+    .unwrap_or_default();
+
+    let mut sessions: Vec<AgentSession> = threads
+        .iter()
+        .filter_map(|(thread_json, turn_summary)| {
+            read_codex_thread_with_summary(
+                thread_json,
+                scan_time_ms,
+                options,
+                turn_summary.as_ref(),
+            )
+        })
+        .collect();
+
+    let mut seen_thread_ids: HashSet<String> = sessions
+        .iter()
+        .filter_map(|session| session.id.strip_prefix("codex:").map(str::to_string))
+        .collect();
+
+    for session in scan_codex_file_sessions(scan_time_ms, options) {
+        let Some(thread_id) = session.id.strip_prefix("codex:") else {
+            sessions.push(session);
+            continue;
+        };
+        if seen_thread_ids.insert(thread_id.to_string()) {
+            sessions.push(session);
+        }
+    }
+
+    sessions
+}
+
+fn scan_codex_file_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<AgentSession> {
+    let Some(user_profile_path) = env::var_os("USERPROFILE") else {
         return Vec::new();
     };
 
-    threads
-        .iter()
-        .filter_map(|(thread_json, turn_summary)| {
-            read_codex_thread_with_summary(thread_json, scan_time_ms, options, turn_summary.as_ref())
+    let codex_home = PathBuf::from(user_profile_path).join(".codex");
+    let mut roots = vec![codex_home.join("sessions")];
+    if !options.hide_archived {
+        roots.push(codex_home.join("archived_sessions"));
+    }
+
+    let mut candidates = Vec::new();
+    for root in roots {
+        collect_codex_jsonl_candidates(&root, scan_time_ms, options, &mut candidates);
+    }
+
+    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.1));
+    candidates
+        .into_iter()
+        .take(candidate_scan_limit(options))
+        .filter_map(|(session_path, _)| {
+            read_codex_jsonl_session(&session_path, scan_time_ms, options)
         })
         .collect()
+}
+
+fn collect_codex_jsonl_candidates(
+    root_path: &Path,
+    scan_time_ms: u64,
+    options: &ResolvedScanOptions,
+    candidates: &mut Vec<(PathBuf, u64)>,
+) {
+    let mut pending_dirs = vec![root_path.to_path_buf()];
+    while let Some(directory_path) = pending_dirs.pop() {
+        for entry in read_directory(&directory_path) {
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                pending_dirs.push(entry_path);
+                continue;
+            }
+            if !has_extension(&entry_path, "jsonl") {
+                continue;
+            }
+            let modified_ms = dir_entry_modified_ms(&entry);
+            if !is_active_session(
+                fallback_updated_ms_from_modified(modified_ms, scan_time_ms),
+                scan_time_ms,
+                options,
+            ) {
+                continue;
+            }
+            candidates.push((entry_path, modified_ms));
+        }
+    }
 }
 
 fn codex_thread_list_limit(options: &ResolvedScanOptions) -> usize {
@@ -1816,8 +3228,51 @@ fn codex_scan_turn_fetch_budget(options: &ResolvedScanOptions) -> usize {
 
 fn codex_thread_updated_ms(thread_json: &Value, scan_time_ms: u64) -> u64 {
     timestamp_ms_from_json(thread_json)
-        .or_else(|| thread_json.pointer("/createdAt").and_then(timestamp_ms_from_value))
+        .or_else(|| {
+            thread_json
+                .pointer("/createdAt")
+                .and_then(timestamp_ms_from_value)
+        })
         .unwrap_or(scan_time_ms)
+}
+
+fn is_codex_subagent_thread_json(thread_json: &Value) -> bool {
+    is_codex_subagent_metadata(
+        clean_option(string_at(
+            thread_json,
+            &["/thread_source", "/threadSource", "/payload/thread_source"],
+        )),
+        clean_option(string_at(
+            thread_json,
+            &[
+                "/parent_thread_id",
+                "/parentThreadId",
+                "/payload/parent_thread_id",
+            ],
+        )),
+        thread_json
+            .pointer("/source")
+            .or_else(|| thread_json.pointer("/payload/source")),
+    )
+}
+
+fn is_codex_subagent_metadata(
+    thread_source: Option<&str>,
+    parent_thread_id: Option<&str>,
+    source_json: Option<&Value>,
+) -> bool {
+    if thread_source
+        .map(|source| source.eq_ignore_ascii_case("subagent"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    let has_subagent_source = source_json
+        .and_then(Value::as_object)
+        .map(|source| source.contains_key("subagent"))
+        .unwrap_or(false);
+    has_subagent_source && parent_thread_id.is_some()
 }
 
 fn cached_codex_turn_summary(thread_id: &str, updated_ms: u64) -> Option<CodexTurnSummary> {
@@ -1877,10 +3332,7 @@ fn fetch_codex_turn_summary(
 #[cfg(test)]
 fn codex_thread_with_turns(client: &mut CodexWsClient, thread_json: &Value) -> Value {
     let mut enriched_thread = thread_json.clone();
-    let Some(thread_id) = clean_option(string_at(
-        thread_json,
-        &["/id", "/sessionId"],
-    )) else {
+    let Some(thread_id) = clean_option(string_at(thread_json, &["/id", "/sessionId"])) else {
         return enriched_thread;
     };
 
@@ -1921,9 +3373,14 @@ fn read_codex_thread_with_summary(
     options: &ResolvedScanOptions,
     turn_summary: Option<&CodexTurnSummary>,
 ) -> Option<AgentSession> {
-    let thread_id = clean_option(string_at(thread_json, &["/id"]).or_else(|| string_at(thread_json, &["/sessionId"])))?;
+    let thread_id = clean_option(
+        string_at(thread_json, &["/id"]).or_else(|| string_at(thread_json, &["/sessionId"])),
+    )?;
     let updated_ms = codex_thread_updated_ms(thread_json, scan_time_ms);
     if !is_active_session(updated_ms, scan_time_ms, options) {
+        return None;
+    }
+    if is_codex_subagent_thread_json(thread_json) {
         return None;
     }
 
@@ -1935,11 +3392,18 @@ fn read_codex_thread_with_summary(
     let last_ai_raw = turn_summary.last_ai_message.clone();
     let message_count = turn_summary.message_count;
     let (last_user_message, last_user_message_truncated) = apply_user_preview_budget(last_user_raw);
-    let (last_ai_message, last_ai_message_truncated, last_ai_message_excerpt_kind) = apply_ai_preview_budget(last_ai_raw);
+    let (last_ai_message, last_ai_message_truncated, last_ai_message_excerpt_kind) =
+        apply_ai_preview_budget(last_ai_raw);
     let title = clean_option(string_at(thread_json, &["/name"]))
         .and_then(title_candidate_from_text)
         .or_else(|| preview.as_deref().and_then(title_candidate_from_text))
-        .unwrap_or_else(|| fallback_session_title("Codex", workspace_path.as_deref().unwrap_or("Codex"), thread_id));
+        .unwrap_or_else(|| {
+            fallback_session_title(
+                "Codex",
+                workspace_path.as_deref().unwrap_or("Codex"),
+                thread_id,
+            )
+        });
     let status = codex_status_from_thread_with_turn_status(
         thread_json,
         updated_ms,
@@ -1972,6 +3436,11 @@ fn read_codex_thread_with_summary(
         collect_todo_ids_from_text(text, &mut todo_ids);
     }
 
+    let ueworkflow = detect_ueworkflow_session_marker(
+        "codex",
+        &[last_user_message.as_deref(), last_ai_message.as_deref()],
+    );
+
     Some(AgentSession {
         id: format!("codex:{}", thread_id),
         provider: "codex".to_string(),
@@ -1997,7 +3466,345 @@ fn read_codex_thread_with_summary(
         last_ai_message_excerpt_kind,
         branch: None,
         todo_ids,
+        ueworkflow,
     })
+}
+
+fn read_codex_jsonl_session(
+    session_path: &Path,
+    scan_time_ms: u64,
+    options: &ResolvedScanOptions,
+) -> Option<AgentSession> {
+    let fingerprint = jsonl_fingerprint(session_path)?;
+    let fallback_updated_ms = fallback_updated_ms(&fingerprint, scan_time_ms);
+    if !is_active_session(fallback_updated_ms, scan_time_ms, options) {
+        return None;
+    }
+
+    let summary = cached_or_read_codex_file_session(session_path, &fingerprint)?;
+    if options.hide_archived && summary.archived {
+        return None;
+    }
+
+    let CodexFileSessionSummary {
+        session_id,
+        is_subagent,
+        workspace_path,
+        title,
+        latest_timestamp_ms,
+        message_count,
+        last_user_message,
+        last_user_message_truncated,
+        last_ai_message,
+        last_ai_message_truncated,
+        last_ai_message_excerpt_kind,
+        todo_ids,
+        ..
+    } = summary;
+    if is_subagent {
+        return None;
+    }
+
+    let (updated_ms, activity_source) =
+        latest_activity_ms(latest_timestamp_ms, fallback_updated_ms);
+    if !is_active_session(updated_ms, scan_time_ms, options) {
+        return None;
+    }
+
+    let status = status_from_activity(updated_ms, scan_time_ms, activity_source, None);
+    let workspace_path = workspace_path.filter(|path_text| !path_text.trim().is_empty());
+    let workspace = workspace_path
+        .as_deref()
+        .map(Path::new)
+        .and_then(display_name_from_path)
+        .or_else(|| session_path.parent().and_then(display_name_from_path))
+        .unwrap_or_else(|| "Codex".to_string());
+    let title = title.unwrap_or_else(|| fallback_session_title("Codex", &workspace, &session_id));
+    let session_path_text = path_to_string(session_path);
+    let session_resource = codex_thread_resource(&session_id);
+    let workspace_identity = build_workspace_identity(
+        "codex",
+        &session_id,
+        &workspace,
+        workspace_path.as_deref(),
+        Some(&session_path_text),
+        Some(&session_resource),
+    );
+    let ueworkflow = detect_ueworkflow_session_marker(
+        "codex",
+        &[last_user_message.as_deref(), last_ai_message.as_deref()],
+    );
+
+    Some(AgentSession {
+        id: format!("codex:{}", session_id),
+        provider: "codex".to_string(),
+        provider_label: "CX".to_string(),
+        title,
+        workspace: workspace_identity.name.clone(),
+        workspace_path,
+        workspace_key: workspace_identity.key,
+        workspace_name: workspace_identity.name,
+        workspace_label: workspace_identity.label,
+        workspace_group: workspace_identity.group,
+        workspace_discriminator: workspace_identity.discriminator,
+        session_path: Some(session_path_text),
+        session_resource: Some(session_resource),
+        status,
+        time_label: time_label(updated_ms, scan_time_ms),
+        updated_ms,
+        message_count,
+        last_user_message,
+        last_user_message_truncated,
+        last_ai_message,
+        last_ai_message_truncated,
+        last_ai_message_excerpt_kind,
+        branch: None,
+        todo_ids,
+        ueworkflow,
+    })
+}
+
+fn cached_or_read_codex_file_session(
+    session_path: &Path,
+    fingerprint: &JsonlFingerprint,
+) -> Option<CodexFileSessionSummary> {
+    let path_key = path_to_string(session_path);
+    if let Some(summary) = cached_jsonl_summary(&CODEX_FILE_SESSION_CACHE, &path_key, fingerprint) {
+        return Some(summary);
+    }
+
+    let summary = read_codex_file_session_summary(session_path, fingerprint)?;
+    store_jsonl_summary(
+        &CODEX_FILE_SESSION_CACHE,
+        path_key,
+        fingerprint,
+        summary.clone(),
+    );
+    Some(summary)
+}
+
+fn read_codex_file_session_summary(
+    session_path: &Path,
+    fingerprint: &JsonlFingerprint,
+) -> Option<CodexFileSessionSummary> {
+    let mut session_id =
+        codex_session_id_from_path(session_path).unwrap_or_else(|| "unknown".to_string());
+    let mut is_subagent = false;
+    let mut workspace_path = None;
+    let mut title = None;
+    let mut latest_timestamp_ms = None;
+    let mut first_user_message = None;
+    let mut last_user_message = None;
+    let mut last_ai_message = None;
+    let mut todo_ids = Vec::new();
+    let mut archived = false;
+    let mut head_message_count = 0u32;
+    let mut tail_message_count = 0u32;
+
+    visit_jsonl_head_values(
+        session_path,
+        fingerprint.len,
+        COPILOT_TITLE_SAMPLE_LINES,
+        |_, json_value| {
+            if is_archived_json(json_value) {
+                archived = true;
+            }
+            latest_timestamp_ms =
+                newest_timestamp_ms(latest_timestamp_ms, timestamp_ms_from_json(json_value));
+            if string_at(json_value, &["/type"]) == Some("session_meta") {
+                if let Some(next_session_id) =
+                    string_at(json_value, &["/payload/id", "/payload/sessionId"])
+                {
+                    session_id = clean_label(next_session_id, 96);
+                }
+                if is_codex_subagent_metadata(
+                    clean_option(string_at(
+                        json_value,
+                        &["/payload/thread_source", "/payload/threadSource"],
+                    )),
+                    clean_option(string_at(
+                        json_value,
+                        &["/payload/parent_thread_id", "/payload/parentThreadId"],
+                    )),
+                    json_value.pointer("/payload/source"),
+                ) {
+                    is_subagent = true;
+                }
+            }
+            if workspace_path.is_none() {
+                workspace_path = string_at(json_value, &["/payload/cwd", "/cwd"])
+                    .filter(|path_text| !path_text.trim().is_empty())
+                    .map(str::to_string);
+            }
+            if let Some(user_text) = codex_jsonl_user_text(json_value) {
+                head_message_count = head_message_count.saturating_add(1);
+                collect_todo_ids_from_text(&user_text, &mut todo_ids);
+                if !is_codex_context_user_text(&user_text) {
+                    if title.is_none() {
+                        title = title_candidate_from_text(&user_text);
+                    }
+                    if first_user_message.is_none() {
+                        first_user_message = Some(user_text);
+                    }
+                }
+            } else if codex_jsonl_ai_text(json_value).is_some() {
+                head_message_count = head_message_count.saturating_add(1);
+            }
+        },
+    )?;
+
+    let tail_covers_file = tail_sample_covers_file(fingerprint.len);
+    let _ = visit_jsonl_tail_values(session_path, fingerprint.len, |json_value| {
+        if is_archived_json(json_value) {
+            archived = true;
+        }
+        latest_timestamp_ms =
+            newest_timestamp_ms(latest_timestamp_ms, timestamp_ms_from_json(json_value));
+        if let Some(user_text) = codex_jsonl_user_text(json_value) {
+            tail_message_count = tail_message_count.saturating_add(1);
+            collect_todo_ids_from_text(&user_text, &mut todo_ids);
+            if !is_user_system_error_text(&user_text) && !is_codex_context_user_text(&user_text) {
+                if title.is_none() {
+                    title = title_candidate_from_text(&user_text);
+                }
+                last_user_message = Some(user_text);
+            }
+        } else if let Some(ai_text) = codex_jsonl_ai_text(json_value) {
+            tail_message_count = tail_message_count.saturating_add(1);
+            collect_todo_ids_from_text(&ai_text, &mut todo_ids);
+            if !is_ai_model_noise_text(&ai_text) {
+                last_ai_message = Some(ai_text);
+            }
+        }
+    });
+
+    let (last_user_message, last_user_message_truncated) =
+        apply_user_preview_budget(last_user_message.or(first_user_message));
+    let (last_ai_message, last_ai_message_truncated, last_ai_message_excerpt_kind) =
+        apply_ai_preview_budget(last_ai_message);
+
+    Some(CodexFileSessionSummary {
+        session_id,
+        is_subagent,
+        workspace_path,
+        title,
+        latest_timestamp_ms,
+        message_count: sampled_message_count(
+            head_message_count,
+            tail_message_count,
+            tail_covers_file,
+        ),
+        last_user_message,
+        last_user_message_truncated,
+        last_ai_message,
+        last_ai_message_truncated,
+        last_ai_message_excerpt_kind,
+        archived,
+        todo_ids,
+    })
+}
+
+fn codex_session_id_from_path(session_path: &Path) -> Option<String> {
+    let file_name = file_stem(session_path)?;
+    let uuid_tail = file_name
+        .char_indices()
+        .rev()
+        .nth(35)
+        .map(|(index, _)| &file_name[index..])?;
+    if looks_like_uuid(uuid_tail) {
+        Some(uuid_tail.to_string())
+    } else {
+        Some(clean_label(&file_name, 96))
+    }
+}
+
+fn looks_like_uuid(text: &str) -> bool {
+    if text.len() != 36 {
+        return false;
+    }
+    text.chars().enumerate().all(|(index, ch)| {
+        if matches!(index, 8 | 13 | 18 | 23) {
+            ch == '-'
+        } else {
+            ch.is_ascii_hexdigit()
+        }
+    })
+}
+
+fn codex_jsonl_user_text(json_value: &Value) -> Option<String> {
+    if string_at(json_value, &["/type"]) == Some("event_msg")
+        && string_at(json_value, &["/payload/type"]) == Some("user_message")
+    {
+        return string_at(json_value, &["/payload/message"]).and_then(clean_preview_text);
+    }
+
+    let payload = json_value.pointer("/payload")?;
+    if string_at(json_value, &["/type"]) == Some("response_item")
+        && string_at(payload, &["/type"]) == Some("message")
+        && string_at(payload, &["/role"]) == Some("user")
+    {
+        return codex_response_message_text(payload);
+    }
+
+    None
+}
+
+fn codex_jsonl_ai_text(json_value: &Value) -> Option<String> {
+    if string_at(json_value, &["/type"]) == Some("event_msg") {
+        match string_at(json_value, &["/payload/type"]) {
+            Some("agent_message") => {
+                return string_at(json_value, &["/payload/message"]).and_then(clean_preview_text);
+            }
+            Some("task_complete") => {
+                return string_at(json_value, &["/payload/last_agent_message"])
+                    .and_then(clean_preview_text);
+            }
+            _ => {}
+        }
+    }
+
+    let payload = json_value.pointer("/payload")?;
+    if string_at(json_value, &["/type"]) == Some("response_item")
+        && string_at(payload, &["/type"]) == Some("message")
+        && string_at(payload, &["/role"]) == Some("assistant")
+    {
+        return codex_response_message_text(payload);
+    }
+
+    None
+}
+
+fn codex_response_message_text(message_payload: &Value) -> Option<String> {
+    if let Some(text) = string_at(message_payload, &["/content"]) {
+        return clean_preview_text(text);
+    }
+
+    let content_items = json_array_at(message_payload, &["/content"])?;
+    let mut parts = Vec::new();
+    for content_item in content_items {
+        match string_at(content_item, &["/type"]) {
+            Some("input_text") | Some("output_text") | Some("text") => {
+                if let Some(text) = string_at(content_item, &["/text"]) {
+                    if let Some(clean) = clean_preview_text(text) {
+                        parts.push(clean);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    clean_preview_text(&parts.join("\n"))
+}
+
+fn is_codex_context_user_text(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    trimmed.starts_with("# AGENTS.md instructions")
+        || trimmed.starts_with("<environment_context>")
+        || trimmed.contains("\n<environment_context>")
+        || trimmed.starts_with("Current task state:")
 }
 
 #[cfg(test)]
@@ -2030,7 +3837,8 @@ fn codex_turn_summary_from_turns(turns: &[Value]) -> CodexTurnSummary {
                         }
                     }
                     Some("agentMessage") => {
-                        if let Some(text) = string_at(item, &["/text"]).and_then(clean_preview_text) {
+                        if let Some(text) = string_at(item, &["/text"]).and_then(clean_preview_text)
+                        {
                             last_ai_message = Some(text);
                             message_count = message_count.saturating_add(1);
                         }
@@ -2052,8 +3860,16 @@ fn codex_turn_summary_from_turns(turns: &[Value]) -> CodexTurnSummary {
 
 fn codex_turn_timestamp_ms(turn_json: &Value) -> Option<u64> {
     timestamp_ms_from_json(turn_json)
-        .or_else(|| turn_json.pointer("/startedAt").and_then(timestamp_ms_from_value))
-        .or_else(|| turn_json.pointer("/completedAt").and_then(timestamp_ms_from_value))
+        .or_else(|| {
+            turn_json
+                .pointer("/startedAt")
+                .and_then(timestamp_ms_from_value)
+        })
+        .or_else(|| {
+            turn_json
+                .pointer("/completedAt")
+                .and_then(timestamp_ms_from_value)
+        })
 }
 
 fn codex_user_message_text(item: &Value) -> Option<String> {
@@ -2243,11 +4059,8 @@ fn scan_opencode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> V
         if !is_active_session(row_updated_ms, scan_time_ms, options) {
             continue;
         }
-        let summary = cached_or_read_opencode_session_summary(
-            &connection,
-            &row,
-            &mut summary_fetch_budget,
-        );
+        let summary =
+            cached_or_read_opencode_session_summary(&connection, &row, &mut summary_fetch_budget);
         if let Some(session) = read_opencode_session_row(&row, summary, scan_time_ms, options) {
             sessions.push(session);
             if sessions.len() >= options.max_sessions {
@@ -2263,7 +4076,13 @@ fn scan_opencode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> V
 fn opencode_db_path() -> Option<PathBuf> {
     env::var_os("USERPROFILE")
         .map(PathBuf::from)
-        .map(|user_profile| user_profile.join(".local").join("share").join("opencode").join("opencode.db"))
+        .map(|user_profile| {
+            user_profile
+                .join(".local")
+                .join("share")
+                .join("opencode")
+                .join("opencode.db")
+        })
 }
 
 fn opencode_session_scan_limit(options: &ResolvedScanOptions) -> usize {
@@ -2444,7 +4263,12 @@ fn read_opencode_session_row(
         .unwrap_or_else(|| "OpenCode".to_string());
     let title = clean_option(Some(row.title.as_str()))
         .and_then(title_candidate_from_text)
-        .or_else(|| summary.last_user_message.as_deref().and_then(title_candidate_from_text))
+        .or_else(|| {
+            summary
+                .last_user_message
+                .as_deref()
+                .and_then(title_candidate_from_text)
+        })
         .unwrap_or_else(|| fallback_session_title("OpenCode", &workspace_hint, &row.id));
     let status = status_from_activity(
         updated_ms,
@@ -2466,6 +4290,11 @@ fn read_opencode_session_row(
         apply_user_preview_budget(summary.last_user_message);
     let (last_ai_message, last_ai_message_truncated, last_ai_message_excerpt_kind) =
         apply_ai_preview_budget(summary.last_ai_message);
+
+    let ueworkflow = detect_ueworkflow_session_marker(
+        "opencode",
+        &[last_user_message.as_deref(), last_ai_message.as_deref()],
+    );
 
     Some(AgentSession {
         id: format!("opencode:{}", row.id),
@@ -2492,6 +4321,7 @@ fn read_opencode_session_row(
         last_ai_message_excerpt_kind,
         branch: None,
         todo_ids,
+        ueworkflow,
     })
 }
 
@@ -2565,14 +4395,17 @@ fn opencode_session_summary(connection: &Connection, session_id: &str) -> OpenCo
                 if string_at(&part_json, &["/type"]) != Some("text") {
                     continue;
                 }
-                let Some(text) = string_at(&part_json, &["/text"]).and_then(clean_preview_text) else {
+                let Some(text) = string_at(&part_json, &["/text"]).and_then(clean_preview_text)
+                else {
                     continue;
                 };
                 match message_json.and_then(|message| string_at(message, &["/role"])) {
                     Some("user") if summary.last_user_message.is_none() => {
                         summary.last_user_message = Some(text);
                     }
-                    Some("assistant") if summary.last_ai_message.is_none() && !is_ai_model_noise_text(&text) => {
+                    Some("assistant")
+                        if summary.last_ai_message.is_none() && !is_ai_model_noise_text(&text) =>
+                    {
                         summary.last_ai_message = Some(text);
                     }
                     _ => {}
@@ -2674,7 +4507,10 @@ fn read_opencode_session_metadata(
             time_updated: current_time_ms(),
             time_archived: None,
         }),
-        Err(error) => Err(format!("Failed to read OpenCode session metadata: {}", error)),
+        Err(error) => Err(format!(
+            "Failed to read OpenCode session metadata: {}",
+            error
+        )),
     }
 }
 
@@ -2782,7 +4618,10 @@ fn opencode_tool_part_handoff_text(part_json: &Value) -> Option<String> {
     let tool = string_at(part_json, &["/tool"]).unwrap_or("unknown");
     let status = string_at(part_json, &["/state/status"]).unwrap_or("unknown");
     let call_id = string_at(part_json, &["/callID"]).unwrap_or("");
-    let mut lines = vec![format!("[tool: {} status={} callID={}]", tool, status, call_id)];
+    let mut lines = vec![format!(
+        "[tool: {} status={} callID={}]",
+        tool, status, call_id
+    )];
 
     if let Some(input) = part_json.pointer("/state/input") {
         if !input.is_null() {
@@ -2836,25 +4675,28 @@ fn render_opencode_handoff_source_markdown(
     output.push_str("# AgentWatcher OpenCode Source Session\n\n");
     output.push_str("This file is generated by AgentWatcher for cross-provider handoff. Source session A is reference context only; the new task in session B has priority.\n\n");
     output.push_str("## Metadata\n\n");
-    output.push_str(&format!("- Provider: OpenCode\n"));
+    output.push_str("- Provider: OpenCode\n");
     output.push_str(&format!("- Session ID: {}\n", row.id));
     output.push_str(&format!("- Title: {}\n", row.title));
     output.push_str(&format!("- Workspace: {}\n", row.directory));
-    output.push_str(&format!("- Session resource: {}\n", opencode_session_resource(&row.id)));
+    output.push_str(&format!(
+        "- Session resource: {}\n",
+        opencode_session_resource(&row.id)
+    ));
     output.push_str(&format!("- Message count: {}\n", messages.len()));
     output.push_str("\n## Transcript\n\n");
 
     if messages.is_empty() {
-        output.push_str("_No OpenCode message/part rows were readable from the local SQLite database._\n");
+        output.push_str(
+            "_No OpenCode message/part rows were readable from the local SQLite database._\n",
+        );
         return output;
     }
 
     for message in messages {
         output.push_str(&format!(
             "### {} · {} · {}\n\n",
-            message.role,
-            message.id,
-            message.time_ms
+            message.role, message.id, message.time_ms
         ));
         if message.parts.is_empty() {
             output.push_str("_No readable parts._\n\n");
@@ -2915,14 +4757,20 @@ fn opencode_handoff_inline_summary(
         .and_then(|message| message.parts.iter().find(|part| part.label == "text"))
         .map(|part| limit_chars(&part.text, 1_200));
     let mut lines = vec![
-        format!("OpenCode source file was exported from SQLite for session {}.", row.id),
+        format!(
+            "OpenCode source file was exported from SQLite for session {}.",
+            row.id
+        ),
         format!("Exported message count: {}.", messages.len()),
     ];
     if let Some(last_user) = last_user {
         lines.push(format!("Latest user text in export: {}", last_user));
     }
     if let Some(last_assistant) = last_assistant {
-        lines.push(format!("Latest assistant text in export: {}", last_assistant));
+        lines.push(format!(
+            "Latest assistant text in export: {}",
+            last_assistant
+        ));
     }
     clean_preview_text(&lines.join("\n"))
 }
@@ -3036,7 +4884,10 @@ fn opencode_part_mentions_user_control(part_json: &Value) -> bool {
 }
 
 fn opencode_session_resource(session_id: &str) -> String {
-    format!("opencode://sessions/{}", percent_encode_path_segment(session_id))
+    format!(
+        "opencode://sessions/{}",
+        percent_encode_path_segment(session_id)
+    )
 }
 
 fn open_codex_session(session: &OpenSessionRequest) -> Result<(), String> {
@@ -3078,7 +4929,8 @@ fn open_codex_session(session: &OpenSessionRequest) -> Result<(), String> {
     }
 
     open_codex_workspace(
-        clean_option(session.workspace_path.as_deref()).ok_or_else(|| "Missing Codex workspace path".to_string())?,
+        clean_option(session.workspace_path.as_deref())
+            .ok_or_else(|| "Missing Codex workspace path".to_string())?,
     )
 }
 
@@ -3119,7 +4971,8 @@ fn open_opencode_session(session: &OpenSessionRequest) -> Result<(), String> {
     let session_id = raw_request_session_id(session.id.as_deref())
         .map(str::to_string)
         .or_else(|| {
-            clean_option(session.session_resource.as_deref()).and_then(opencode_session_id_from_resource)
+            clean_option(session.session_resource.as_deref())
+                .and_then(opencode_session_id_from_resource)
         })
         .ok_or_else(|| "Missing OpenCode session id".to_string())?;
 
@@ -3178,19 +5031,29 @@ fn current_owned_opencode_web_server_port() -> Option<u16> {
 }
 
 fn start_owned_opencode_web_server() -> Result<u16, String> {
-    let opencode_cli = find_opencode_cli_path().ok_or_else(|| "OpenCode CLI not found".to_string())?;
+    let opencode_cli =
+        find_opencode_cli_path().ok_or_else(|| "OpenCode CLI not found".to_string())?;
     let port = reserve_localhost_port()?;
     let mut command = Command::new(opencode_cli);
-    command.args(["serve", "--hostname", "127.0.0.1", "--port", &port.to_string()]);
+    command.args([
+        "serve",
+        "--hostname",
+        "127.0.0.1",
+        "--port",
+        &port.to_string(),
+    ]);
     command.stdin(Stdio::null());
     command.stdout(Stdio::null());
     command.stderr(Stdio::null());
-    let mut child = spawn_hidden(command).map_err(|error| format!("Failed to start OpenCode Web server: {}", error))?;
+    let mut child = spawn_hidden(command)
+        .map_err(|error| format!("Failed to start OpenCode Web server: {}", error))?;
 
     let start = Instant::now();
     while start.elapsed() <= Duration::from_millis(6_000) {
         if probe_opencode_web_server(port) {
-            if let Ok(mut server_guard) = OPENCODE_WEB_SERVER.get_or_init(|| Mutex::new(None)).lock() {
+            if let Ok(mut server_guard) =
+                OPENCODE_WEB_SERVER.get_or_init(|| Mutex::new(None)).lock()
+            {
                 *server_guard = Some(OpenCodeWebServerProcess { port, child });
             }
             return Ok(port);
@@ -3200,7 +5063,10 @@ fn start_owned_opencode_web_server() -> Result<u16, String> {
 
     let _ = child.kill();
     let _ = child.wait();
-    Err(format!("OpenCode Web server did not become ready on port {}", port))
+    Err(format!(
+        "OpenCode Web server did not become ready on port {}",
+        port
+    ))
 }
 
 fn reserve_localhost_port() -> Result<u16, String> {
@@ -3339,11 +5205,15 @@ fn opencode_desktop_is_running() -> bool {
     {
         let mut command = Command::new("tasklist.exe");
         command.args(["/FI", "IMAGENAME eq OpenCode.exe", "/NH"]);
-        return spawn_hidden_with_output(command)
+        spawn_hidden_with_output(command)
             .ok()
             .filter(|output| output.status.success())
-            .map(|output| String::from_utf8_lossy(&output.stdout).to_ascii_lowercase().contains("opencode.exe"))
-            .unwrap_or(false);
+            .map(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .to_ascii_lowercase()
+                    .contains("opencode.exe")
+            })
+            .unwrap_or(false)
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -3372,7 +5242,11 @@ fn opencode_new_session_deep_link(workspace_path: &str, prompt: &str) -> String 
     link
 }
 
-fn spawn_visible_terminal(title: &str, executable: &str, arguments: &[&str]) -> std::io::Result<Child> {
+fn spawn_visible_terminal(
+    title: &str,
+    executable: &str,
+    arguments: &[&str],
+) -> std::io::Result<Child> {
     let mut command = Command::new("cmd.exe");
     command.args(["/C", "start", title, executable]);
     command.args(arguments);
@@ -3393,7 +5267,8 @@ fn opencode_cli_run_supports_interactive(opencode_cli: &str) -> bool {
 }
 
 fn launch_opencode_cli_handoff(workspace_path: &str, prompt: &str) -> Result<String, String> {
-    let opencode_cli = find_opencode_cli_path().ok_or_else(|| "OpenCode CLI not found".to_string())?;
+    let opencode_cli =
+        find_opencode_cli_path().ok_or_else(|| "OpenCode CLI not found".to_string())?;
     if opencode_cli_run_supports_interactive(&opencode_cli) {
         spawn_visible_terminal(
             "AgentWatcher OpenCode",
@@ -3541,7 +5416,10 @@ fn ensure_codex_app_server() -> Result<u16, String> {
                 }
                 let _ = child.kill();
                 let _ = child.wait();
-                last_error = Some(format!("Codex app-server did not become ready on {}", listen_url));
+                last_error = Some(format!(
+                    "Codex app-server did not become ready on {}",
+                    listen_url
+                ));
             }
             Err(error) => {
                 last_error = Some(format!("Failed to start Codex app-server: {}", error));
@@ -3777,15 +5655,15 @@ fn websocket_read_text(stream: &mut TcpStream) -> Result<String, String> {
         let mut payload_len = u64::from(header[1] & 0x7F);
         if payload_len == 126 {
             let mut extended = [0u8; 2];
-            stream
-                .read_exact(&mut extended)
-                .map_err(|error| format!("Failed to read Codex WebSocket frame length: {}", error))?;
+            stream.read_exact(&mut extended).map_err(|error| {
+                format!("Failed to read Codex WebSocket frame length: {}", error)
+            })?;
             payload_len = u64::from(u16::from_be_bytes(extended));
         } else if payload_len == 127 {
             let mut extended = [0u8; 8];
-            stream
-                .read_exact(&mut extended)
-                .map_err(|error| format!("Failed to read Codex WebSocket frame length: {}", error))?;
+            stream.read_exact(&mut extended).map_err(|error| {
+                format!("Failed to read Codex WebSocket frame length: {}", error)
+            })?;
             payload_len = u64::from_be_bytes(extended);
         }
         if payload_len > 16 * 1024 * 1024 {
@@ -3869,9 +5747,15 @@ fn base64_standard(bytes: &[u8]) -> String {
 fn find_codex_cli_path() -> Option<String> {
     let mut candidates = Vec::new();
     if let Some(appdata_path) = env::var_os("APPDATA") {
-        candidates.push(path_to_string(&PathBuf::from(appdata_path).join("npm").join("codex.cmd")));
+        candidates.push(path_to_string(
+            &PathBuf::from(appdata_path).join("npm").join("codex.cmd"),
+        ));
     }
-    candidates.extend(["codex.cmd", "codex.exe", "codex"].iter().map(|candidate| candidate.to_string()));
+    candidates.extend(
+        ["codex.cmd", "codex.exe", "codex"]
+            .iter()
+            .map(|candidate| candidate.to_string()),
+    );
 
     for candidate in candidates {
         let mut command = Command::new(&candidate);
@@ -3928,14 +5812,18 @@ fn scan_copilot_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Ve
                 continue;
             }
             let modified_ms = dir_entry_modified_ms(&session_entry);
-            if !is_active_session(fallback_updated_ms_from_modified(modified_ms, scan_time_ms), scan_time_ms, options) {
+            if !is_active_session(
+                fallback_updated_ms_from_modified(modified_ms, scan_time_ms),
+                scan_time_ms,
+                options,
+            ) {
                 continue;
             }
             candidates.push((session_path, workspace_info.clone(), modified_ms));
         }
     }
 
-    candidates.sort_by(|left, right| right.2.cmp(&left.2));
+    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.2));
     candidates
         .into_iter()
         .take(candidate_scan_limit(options))
@@ -3997,20 +5885,24 @@ fn read_copilot_session(
             push_unique_todo_id(&mut todo_ids, todo_id);
         }
         if overlay.last_ai_message.is_some() {
-            let (message, truncated, excerpt_kind) = apply_ai_preview_budget(overlay.last_ai_message);
+            let (message, truncated, excerpt_kind) =
+                apply_ai_preview_budget(overlay.last_ai_message);
             last_ai_message = message;
             last_ai_message_truncated = truncated;
             last_ai_message_excerpt_kind = excerpt_kind;
         }
     }
 
-    let (updated_ms, activity_source) = latest_activity_ms(latest_timestamp_ms, fallback_updated_ms);
+    let (updated_ms, activity_source) =
+        latest_activity_ms(latest_timestamp_ms, fallback_updated_ms);
     if !is_active_session(updated_ms, scan_time_ms, options) {
         return None;
     }
 
     let status = status_from_activity(updated_ms, scan_time_ms, activity_source, status_hint);
-    let title = title.unwrap_or_else(|| fallback_session_title("Copilot", &workspace_info.display_name, &session_id));
+    let title = title.unwrap_or_else(|| {
+        fallback_session_title("Copilot", &workspace_info.display_name, &session_id)
+    });
     let session_resource = copilot_session_resource(&session_id);
     let session_path_text = path_to_string(session_path);
     let workspace_identity = build_workspace_identity(
@@ -4020,6 +5912,11 @@ fn read_copilot_session(
         workspace_info.path_text.as_deref(),
         Some(&session_path_text),
         Some(&session_resource),
+    );
+
+    let ueworkflow = detect_ueworkflow_session_marker(
+        "copilot",
+        &[last_user_message.as_deref(), last_ai_message.as_deref()],
     );
 
     Some(AgentSession {
@@ -4047,6 +5944,7 @@ fn read_copilot_session(
         last_ai_message_excerpt_kind,
         branch: None,
         todo_ids,
+        ueworkflow,
     })
 }
 
@@ -4055,7 +5953,9 @@ fn scan_claude_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec
         return Vec::new();
     };
 
-    let projects_root = PathBuf::from(user_profile_path).join(".claude").join("projects");
+    let projects_root = PathBuf::from(user_profile_path)
+        .join(".claude")
+        .join("projects");
 
     let mut project_paths = Vec::new();
     let mut candidates: Vec<(PathBuf, u64)> = Vec::new();
@@ -4071,18 +5971,24 @@ fn scan_claude_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec
                 continue;
             }
             let modified_ms = dir_entry_modified_ms(&session_entry);
-            if !is_active_session(fallback_updated_ms_from_modified(modified_ms, scan_time_ms), scan_time_ms, options) {
+            if !is_active_session(
+                fallback_updated_ms_from_modified(modified_ms, scan_time_ms),
+                scan_time_ms,
+                options,
+            ) {
                 continue;
             }
             candidates.push((session_path, modified_ms));
         }
     }
 
-    candidates.sort_by(|left, right| right.1.cmp(&left.1));
+    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.1));
     let mut sessions: Vec<AgentSession> = candidates
         .into_iter()
         .take(candidate_scan_limit(options))
-        .filter_map(|(session_path, _)| read_claude_jsonl_session(&session_path, scan_time_ms, options))
+        .filter_map(|(session_path, _)| {
+            read_claude_jsonl_session(&session_path, scan_time_ms, options)
+        })
         .collect();
 
     let mut known_session_paths: HashSet<String> = sessions
@@ -4090,7 +5996,11 @@ fn scan_claude_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec
         .filter_map(|session| session.session_path.clone())
         .collect();
     for project_path in project_paths {
-        for indexed_session in read_claude_index(&project_path.join("sessions-index.json"), scan_time_ms, options) {
+        for indexed_session in read_claude_index(
+            &project_path.join("sessions-index.json"),
+            scan_time_ms,
+            options,
+        ) {
             let is_known = indexed_session
                 .session_path
                 .as_ref()
@@ -4140,7 +6050,8 @@ fn read_claude_jsonl_session(
         return None;
     }
 
-    let (updated_ms, activity_source) = latest_activity_ms(latest_timestamp_ms, fallback_updated_ms);
+    let (updated_ms, activity_source) =
+        latest_activity_ms(latest_timestamp_ms, fallback_updated_ms);
     if !is_active_session(updated_ms, scan_time_ms, options) {
         return None;
     }
@@ -4163,6 +6074,11 @@ fn read_claude_jsonl_session(
         workspace_path.as_deref(),
         Some(&session_path_text),
         Some(&session_resource),
+    );
+
+    let ueworkflow = detect_ueworkflow_session_marker(
+        "claude",
+        &[last_user_message.as_deref(), last_ai_message.as_deref()],
     );
 
     Some(AgentSession {
@@ -4190,6 +6106,7 @@ fn read_claude_jsonl_session(
         last_ai_message_excerpt_kind,
         branch,
         todo_ids,
+        ueworkflow,
     })
 }
 
@@ -4203,7 +6120,12 @@ fn cached_or_read_copilot_session(
     }
 
     let summary = read_copilot_session_summary(session_path, fingerprint)?;
-    store_jsonl_summary(&COPILOT_SESSION_CACHE, path_key, fingerprint, summary.clone());
+    store_jsonl_summary(
+        &COPILOT_SESSION_CACHE,
+        path_key,
+        fingerprint,
+        summary.clone(),
+    );
     Some(summary)
 }
 
@@ -4223,24 +6145,31 @@ fn read_copilot_session_summary(
     let mut head_message_count = 0u32;
     let mut tail_message_count = 0u32;
 
-    visit_jsonl_head_values(session_path, fingerprint.len, COPILOT_TITLE_SAMPLE_LINES, |_, json_value| {
-        collect_todo_ids_from_copilot_requests(json_value, &mut todo_ids);
-        if is_archived_json(json_value) {
-            archived = true;
-        }
-        if let Some(next_session_id) = string_at(json_value, &["/v/sessionId", "/sessionId"]) {
-            session_id = clean_label(next_session_id, 96);
-        }
-        if is_copilot_message_event(json_value) {
-            head_message_count = head_message_count.saturating_add(1);
-        }
-        if let Some(next_title) = copilot_alias_title_text(json_value).and_then(title_candidate_from_text) {
-            alias_title = Some(next_title);
-        }
-        if prompt_title.is_none() {
-            prompt_title = copilot_title_text(json_value).and_then(title_candidate_from_text);
-        }
-    })?;
+    visit_jsonl_head_values(
+        session_path,
+        fingerprint.len,
+        COPILOT_TITLE_SAMPLE_LINES,
+        |_, json_value| {
+            collect_todo_ids_from_copilot_requests(json_value, &mut todo_ids);
+            if is_archived_json(json_value) {
+                archived = true;
+            }
+            if let Some(next_session_id) = string_at(json_value, &["/v/sessionId", "/sessionId"]) {
+                session_id = clean_label(next_session_id, 96);
+            }
+            if is_copilot_message_event(json_value) {
+                head_message_count = head_message_count.saturating_add(1);
+            }
+            if let Some(next_title) =
+                copilot_alias_title_text(json_value).and_then(title_candidate_from_text)
+            {
+                alias_title = Some(next_title);
+            }
+            if prompt_title.is_none() {
+                prompt_title = copilot_title_text(json_value).and_then(title_candidate_from_text);
+            }
+        },
+    )?;
 
     let tail_covers_file = tail_sample_covers_file(fingerprint.len);
     let _ = visit_jsonl_tail_values(session_path, fingerprint.len, |json_value| {
@@ -4248,7 +6177,8 @@ fn read_copilot_session_summary(
         if is_archived_json(json_value) {
             archived = true;
         }
-        latest_timestamp_ms = newest_timestamp_ms(latest_timestamp_ms, timestamp_ms_from_json(json_value));
+        latest_timestamp_ms =
+            newest_timestamp_ms(latest_timestamp_ms, timestamp_ms_from_json(json_value));
         if is_copilot_message_event(json_value) {
             tail_message_count = tail_message_count.saturating_add(1);
         }
@@ -4265,7 +6195,9 @@ fn read_copilot_session_summary(
             }
         }
         update_copilot_status_hint(&mut status_hint, json_value);
-        if let Some(next_title) = copilot_alias_title_text(json_value).and_then(title_candidate_from_text) {
+        if let Some(next_title) =
+            copilot_alias_title_text(json_value).and_then(title_candidate_from_text)
+        {
             alias_title = Some(next_title);
         }
     });
@@ -4277,14 +6209,20 @@ fn read_copilot_session_summary(
         last_ai_message = read_latest_copilot_ai_message(session_path, fingerprint.len);
     }
 
-    let (last_user_message, last_user_message_truncated) = apply_user_preview_budget(last_user_message);
-    let (last_ai_message, last_ai_message_truncated, last_ai_message_excerpt_kind) = apply_ai_preview_budget(last_ai_message);
+    let (last_user_message, last_user_message_truncated) =
+        apply_user_preview_budget(last_user_message);
+    let (last_ai_message, last_ai_message_truncated, last_ai_message_excerpt_kind) =
+        apply_ai_preview_budget(last_ai_message);
     Some(CopilotSessionSummary {
         session_id,
         title: alias_title.or(prompt_title),
         status_hint,
         latest_timestamp_ms,
-        message_count: sampled_message_count(head_message_count, tail_message_count, tail_covers_file),
+        message_count: sampled_message_count(
+            head_message_count,
+            tail_message_count,
+            tail_covers_file,
+        ),
         last_user_message,
         last_user_message_truncated,
         last_ai_message,
@@ -4305,7 +6243,12 @@ fn cached_or_read_claude_session(
     }
 
     let summary = read_claude_session_summary(session_path, fingerprint)?;
-    store_jsonl_summary(&CLAUDE_SESSION_CACHE, path_key, fingerprint, summary.clone());
+    store_jsonl_summary(
+        &CLAUDE_SESSION_CACHE,
+        path_key,
+        fingerprint,
+        summary.clone(),
+    );
     Some(summary)
 }
 
@@ -4329,53 +6272,61 @@ fn read_claude_session_summary(
     let mut head_message_count = 0u32;
     let mut tail_message_count = 0u32;
 
-    visit_jsonl_head_values(session_path, fingerprint.len, CLAUDE_TITLE_SAMPLE_LINES, |_, json_value| {
-        if is_archived_json(json_value) {
-            archived = true;
-        }
-        if workspace_path.is_none() {
-            workspace_path = string_at(json_value, &["/cwd"]).map(str::to_string);
-        }
-        if branch.is_none() {
-            branch = string_at(json_value, &["/gitBranch", "/branch"])
-                .filter(|branch_text| !branch_text.trim().is_empty())
-                .map(|branch_text| clean_label(branch_text, 48));
-        }
+    visit_jsonl_head_values(
+        session_path,
+        fingerprint.len,
+        CLAUDE_TITLE_SAMPLE_LINES,
+        |_, json_value| {
+            if is_archived_json(json_value) {
+                archived = true;
+            }
+            if workspace_path.is_none() {
+                workspace_path = string_at(json_value, &["/cwd"]).map(str::to_string);
+            }
+            if branch.is_none() {
+                branch = string_at(json_value, &["/gitBranch", "/branch"])
+                    .filter(|branch_text| !branch_text.trim().is_empty())
+                    .map(|branch_text| clean_label(branch_text, 48));
+            }
 
-        let event_type = string_at(json_value, &["/type"]);
-        if is_claude_message_event(json_value) {
-            head_message_count = head_message_count.saturating_add(1);
-        }
-        if let Some(next_title) = claude_alias_title_text(json_value).and_then(title_candidate_from_text) {
-            alias_title = Some(next_title);
-        } else if slug_title.is_none() {
-            slug_title = string_at(json_value, &["/slug"]).and_then(title_candidate_from_text);
-        }
-        if event_type == Some("user") {
-            if let Some(clean_text) = claude_clean_user_text(json_value) {
-                collect_todo_ids_from_text(&clean_text, &mut todo_ids);
-                if prompt_title.is_none() {
-                    prompt_title = title_candidate_from_text(&clean_text);
+            let event_type = string_at(json_value, &["/type"]);
+            if is_claude_message_event(json_value) {
+                head_message_count = head_message_count.saturating_add(1);
+            }
+            if let Some(next_title) =
+                claude_alias_title_text(json_value).and_then(title_candidate_from_text)
+            {
+                alias_title = Some(next_title);
+            } else if slug_title.is_none() {
+                slug_title = string_at(json_value, &["/slug"]).and_then(title_candidate_from_text);
+            }
+            if event_type == Some("user") {
+                if let Some(clean_text) = claude_clean_user_text(json_value) {
+                    collect_todo_ids_from_text(&clean_text, &mut todo_ids);
+                    if prompt_title.is_none() {
+                        prompt_title = title_candidate_from_text(&clean_text);
+                    }
+                    if first_user_message.is_none() {
+                        first_user_message = Some(clean_text);
+                    }
                 }
-                if first_user_message.is_none() {
-                    first_user_message = Some(clean_text);
+            } else if event_type == Some("last-prompt") {
+                if let Some(lp_text) = string_at(json_value, &["/lastPrompt"]) {
+                    if prompt_title.is_none() {
+                        prompt_title = title_candidate_from_text(lp_text);
+                    }
                 }
             }
-        } else if event_type == Some("last-prompt") {
-            if let Some(lp_text) = string_at(json_value, &["/lastPrompt"]) {
-                if prompt_title.is_none() {
-                    prompt_title = title_candidate_from_text(lp_text);
-                }
-            }
-        }
-    })?;
+        },
+    )?;
 
     let tail_covers_file = tail_sample_covers_file(fingerprint.len);
     let _ = visit_jsonl_tail_values(session_path, fingerprint.len, |json_value| {
         if is_archived_json(json_value) {
             archived = true;
         }
-        latest_timestamp_ms = newest_timestamp_ms(latest_timestamp_ms, timestamp_ms_from_json(json_value));
+        latest_timestamp_ms =
+            newest_timestamp_ms(latest_timestamp_ms, timestamp_ms_from_json(json_value));
         if is_claude_message_event(json_value) {
             tail_message_count = tail_message_count.saturating_add(1);
         }
@@ -4402,8 +6353,14 @@ fn read_claude_session_summary(
             }
             _ => {}
         }
-        update_claude_status_hint(&mut status_hint, &mut pending_ask_user_question_ids, json_value);
-        if let Some(next_title) = claude_alias_title_text(json_value).and_then(title_candidate_from_text) {
+        update_claude_status_hint(
+            &mut status_hint,
+            &mut pending_ask_user_question_ids,
+            json_value,
+        );
+        if let Some(next_title) =
+            claude_alias_title_text(json_value).and_then(title_candidate_from_text)
+        {
             alias_title = Some(next_title);
         } else if slug_title.is_none() {
             slug_title = string_at(json_value, &["/slug"]).and_then(title_candidate_from_text);
@@ -4417,15 +6374,21 @@ fn read_claude_session_summary(
         last_ai_message = read_latest_claude_ai_message(session_path, fingerprint.len);
     }
 
-    let (last_user_message, last_user_message_truncated) = apply_user_preview_budget(last_user_message.or(first_user_message));
-    let (last_ai_message, last_ai_message_truncated, last_ai_message_excerpt_kind) = apply_ai_preview_budget(last_ai_message);
+    let (last_user_message, last_user_message_truncated) =
+        apply_user_preview_budget(last_user_message.or(first_user_message));
+    let (last_ai_message, last_ai_message_truncated, last_ai_message_excerpt_kind) =
+        apply_ai_preview_budget(last_ai_message);
     Some(ClaudeSessionSummary {
         title: alias_title.or(slug_title).or(prompt_title),
         workspace_path,
         branch,
         status_hint,
         latest_timestamp_ms,
-        message_count: sampled_message_count(head_message_count, tail_message_count, tail_covers_file),
+        message_count: sampled_message_count(
+            head_message_count,
+            tail_message_count,
+            tail_covers_file,
+        ),
         last_user_message,
         last_user_message_truncated,
         last_ai_message,
@@ -4510,7 +6473,8 @@ fn collect_todo_ids_from_text(text: &str, todo_ids: &mut Vec<String>) {
             index = start + 5;
             continue;
         }
-        if cursor < bytes.len() && (bytes[cursor].is_ascii_alphanumeric() || bytes[cursor] == b'-') {
+        if cursor < bytes.len() && (bytes[cursor].is_ascii_alphanumeric() || bytes[cursor] == b'-')
+        {
             index = cursor;
             continue;
         }
@@ -4541,19 +6505,31 @@ fn read_copilot_transcript_overlay(session_path: &Path) -> Option<CopilotTranscr
     let transcript_path = copilot_transcript_path(session_path)?;
     let fingerprint = jsonl_fingerprint(&transcript_path)?;
     let path_key = path_to_string(&transcript_path);
-    if let Some(overlay) = cached_jsonl_summary(&COPILOT_TRANSCRIPT_CACHE, &path_key, &fingerprint) {
+    if let Some(overlay) = cached_jsonl_summary(&COPILOT_TRANSCRIPT_CACHE, &path_key, &fingerprint)
+    {
         return Some(overlay);
     }
-    let text = read_file_suffix_text(&transcript_path, fingerprint.len, COPILOT_TRANSCRIPT_SCAN_BYTES)?;
+    let text = read_file_suffix_text(
+        &transcript_path,
+        fingerprint.len,
+        COPILOT_TRANSCRIPT_SCAN_BYTES,
+    )?;
     let overlay = copilot_transcript_overlay_from_text(&text)?;
-    store_jsonl_summary(&COPILOT_TRANSCRIPT_CACHE, path_key, &fingerprint, overlay.clone());
+    store_jsonl_summary(
+        &COPILOT_TRANSCRIPT_CACHE,
+        path_key,
+        &fingerprint,
+        overlay.clone(),
+    );
     Some(overlay)
 }
 
 fn copilot_unstarted_ask_is_recent(overlay: &CopilotTranscriptOverlay, scan_time_ms: u64) -> bool {
     overlay
         .unstarted_ask_timestamp_ms
-        .map(|timestamp_ms| scan_time_ms.saturating_sub(timestamp_ms) <= COPILOT_UNSTARTED_ASK_WAITING_WINDOW_MS)
+        .map(|timestamp_ms| {
+            scan_time_ms.saturating_sub(timestamp_ms) <= COPILOT_UNSTARTED_ASK_WAITING_WINDOW_MS
+        })
         .unwrap_or(false)
 }
 
@@ -4576,8 +6552,13 @@ fn copilot_transcript_overlay_from_text(text: &str) -> Option<CopilotTranscriptO
     let mut saw_activity = false;
 
     for line_text in text.lines() {
-        let Some(json_value) = json_value_from_jsonl_line(line_text) else { continue; };
-        overlay.latest_timestamp_ms = newest_timestamp_ms(overlay.latest_timestamp_ms, timestamp_ms_from_json(&json_value));
+        let Some(json_value) = json_value_from_jsonl_line(line_text) else {
+            continue;
+        };
+        overlay.latest_timestamp_ms = newest_timestamp_ms(
+            overlay.latest_timestamp_ms,
+            timestamp_ms_from_json(&json_value),
+        );
 
         match string_at(&json_value, &["/type"]) {
             Some("user.message") => {
@@ -4587,7 +6568,9 @@ fn copilot_transcript_overlay_from_text(text: &str) -> Option<CopilotTranscriptO
                 if let Some(raw_content) = string_at(&json_value, &["/data/content"]) {
                     collect_todo_ids_from_text(raw_content, &mut overlay.todo_ids);
                 }
-                if let Some(content) = string_at(&json_value, &["/data/content"]).and_then(clean_preview_text) {
+                if let Some(content) =
+                    string_at(&json_value, &["/data/content"]).and_then(clean_preview_text)
+                {
                     overlay.last_user_message = Some(content);
                     saw_activity = true;
                 }
@@ -4597,7 +6580,9 @@ fn copilot_transcript_overlay_from_text(text: &str) -> Option<CopilotTranscriptO
                 unstarted_ask_tool_ids.clear();
                 unstarted_ask_timestamp_ms = None;
                 let mut parts = Vec::new();
-                if let Some(content) = string_at(&json_value, &["/data/content"]).and_then(clean_preview_text) {
+                if let Some(content) =
+                    string_at(&json_value, &["/data/content"]).and_then(clean_preview_text)
+                {
                     parts.push(content);
                 }
                 if collect_copilot_transcript_ask_requests(
@@ -4618,7 +6603,9 @@ fn copilot_transcript_overlay_from_text(text: &str) -> Option<CopilotTranscriptO
                         unstarted_ask_tool_ids.remove(tool_call_id);
                         started_ask_tool_ids.insert(tool_call_id.to_string());
                     }
-                    if let Some(message) = question_tool_preview_text(json_value.pointer("/data/arguments").unwrap_or(&json_value)) {
+                    if let Some(message) = question_tool_preview_text(
+                        json_value.pointer("/data/arguments").unwrap_or(&json_value),
+                    ) {
                         overlay.last_ai_message = Some(message);
                     }
                 }
@@ -4631,7 +6618,9 @@ fn copilot_transcript_overlay_from_text(text: &str) -> Option<CopilotTranscriptO
                 }
                 saw_activity = true;
             }
-            Some("assistant.message_delta") | Some("assistant.turn_end") | Some("assistant.turn_start") => {
+            Some("assistant.message_delta")
+            | Some("assistant.turn_end")
+            | Some("assistant.turn_start") => {
                 saw_activity = true;
             }
             _ => {}
@@ -4664,7 +6653,9 @@ fn collect_copilot_transcript_ask_requests(
     unstarted_ask_tool_ids: &mut HashSet<String>,
     parts: &mut Vec<String>,
 ) -> bool {
-    let Some(tool_requests) = tool_requests.and_then(Value::as_array) else { return false; };
+    let Some(tool_requests) = tool_requests.and_then(Value::as_array) else {
+        return false;
+    };
     let mut found_ask_request = false;
     for request in tool_requests {
         if string_at(request, &["/name"]) != Some("vscode_askQuestions") {
@@ -4674,7 +6665,9 @@ fn collect_copilot_transcript_ask_requests(
         if let Some(tool_call_id) = string_at(request, &["/toolCallId"]) {
             unstarted_ask_tool_ids.insert(tool_call_id.to_string());
         }
-        if let Some(message) = question_tool_preview_text(request.pointer("/arguments").unwrap_or(request)) {
+        if let Some(message) =
+            question_tool_preview_text(request.pointer("/arguments").unwrap_or(request))
+        {
             parts.push(message);
         }
     }
@@ -4691,11 +6684,9 @@ fn read_latest_claude_user_message(session_path: &Path, file_len: u64) -> Option
     for line_text in text.lines().rev() {
         if let Some(json_value) = json_value_from_jsonl_line(line_text) {
             match string_at(&json_value, &["/type"]) {
-                Some("last-prompt") => {
-                    if last_prompt_fallback.is_none() {
-                        if let Some(lp_text) = string_at(&json_value, &["/lastPrompt"]) {
-                            last_prompt_fallback = clean_preview_text(lp_text);
-                        }
+                Some("last-prompt") if last_prompt_fallback.is_none() => {
+                    if let Some(lp_text) = string_at(&json_value, &["/lastPrompt"]) {
+                        last_prompt_fallback = clean_preview_text(lp_text);
                     }
                 }
                 Some("user") => {
@@ -4741,7 +6732,8 @@ fn cached_jsonl_summary<T: Clone>(
     cache_guard
         .get(path_key)
         .filter(|cached_summary| {
-            cached_summary.len == fingerprint.len && cached_summary.modified_ms == fingerprint.modified_ms
+            cached_summary.len == fingerprint.len
+                && cached_summary.modified_ms == fingerprint.modified_ms
         })
         .map(|cached_summary| cached_summary.summary.clone())
 }
@@ -4767,7 +6759,11 @@ fn store_jsonl_summary<T>(
 
 fn jsonl_fingerprint(session_path: &Path) -> Option<JsonlFingerprint> {
     let metadata = fs::metadata(session_path).ok()?;
-    let modified_ms = metadata.modified().ok().and_then(system_time_ms).unwrap_or(0);
+    let modified_ms = metadata
+        .modified()
+        .ok()
+        .and_then(system_time_ms)
+        .unwrap_or(0);
 
     Some(JsonlFingerprint {
         len: metadata.len(),
@@ -4797,10 +6793,17 @@ fn dir_entry_modified_ms(entry: &fs::DirEntry) -> u64 {
 }
 
 fn candidate_scan_limit(options: &ResolvedScanOptions) -> usize {
-    options.max_sessions.saturating_mul(4).max(options.max_sessions + 20).max(120)
+    options
+        .max_sessions
+        .saturating_mul(4)
+        .max(options.max_sessions + 20)
+        .max(120)
 }
 
-fn latest_activity_ms(latest_timestamp_ms: Option<u64>, fallback_updated_ms: u64) -> (u64, ActivitySource) {
+fn latest_activity_ms(
+    latest_timestamp_ms: Option<u64>,
+    fallback_updated_ms: u64,
+) -> (u64, ActivitySource) {
     match latest_timestamp_ms {
         Some(timestamp_ms) if timestamp_ms >= fallback_updated_ms => {
             (timestamp_ms, ActivitySource::ContentTimestamp)
@@ -4846,7 +6849,10 @@ fn read_file_prefix_text(session_path: &Path, file_len: u64, max_bytes: usize) -
     let mut file = File::open(session_path).ok()?;
     let read_len = file_len.min(max_bytes as u64);
     let mut bytes = Vec::with_capacity(read_len as usize);
-    Read::by_ref(&mut file).take(read_len).read_to_end(&mut bytes).ok()?;
+    Read::by_ref(&mut file)
+        .take(read_len)
+        .read_to_end(&mut bytes)
+        .ok()?;
 
     if file_len > max_bytes as u64 && !bytes.ends_with(b"\n") {
         truncate_after_last_newline(&mut bytes);
@@ -4862,7 +6868,10 @@ fn read_file_suffix_text(session_path: &Path, file_len: u64, max_bytes: usize) -
     file.seek(SeekFrom::Start(start_offset)).ok()?;
 
     let mut bytes = Vec::with_capacity(read_len as usize);
-    Read::by_ref(&mut file).take(read_len).read_to_end(&mut bytes).ok()?;
+    Read::by_ref(&mut file)
+        .take(read_len)
+        .read_to_end(&mut bytes)
+        .ok()?;
 
     if start_offset > 0 {
         drop_partial_first_line(&mut bytes);
@@ -4900,7 +6909,11 @@ fn tail_sample_covers_file(file_len: u64) -> bool {
     file_len <= JSONL_TAIL_SAMPLE_BYTES as u64
 }
 
-fn sampled_message_count(head_message_count: u32, tail_message_count: u32, tail_covers_file: bool) -> u32 {
+fn sampled_message_count(
+    head_message_count: u32,
+    tail_message_count: u32,
+    tail_covers_file: bool,
+) -> u32 {
     if tail_covers_file {
         tail_message_count
     } else {
@@ -4911,9 +6924,9 @@ fn sampled_message_count(head_message_count: u32, tail_message_count: u32, tail_
 fn update_copilot_status_hint(status_hint: &mut Option<SessionStatusHint>, json_value: &Value) {
     if let Some(response_hint) = copilot_response_status_hint(json_value) {
         *status_hint = Some(response_hint);
-    } else if copilot_request_finished_status_hint(json_value) {
-        *status_hint = Some(SessionStatusHint::Running);
-    } else if input_text_from_copilot_event(json_value).is_some() {
+    } else if copilot_request_finished_status_hint(json_value)
+        || input_text_from_copilot_event(json_value).is_some()
+    {
         *status_hint = Some(SessionStatusHint::Running);
     }
 }
@@ -5016,7 +7029,9 @@ fn copilot_response_preview_text(json_value: &Value) -> Option<String> {
     None
 }
 
-fn copilot_visible_response_text<'a>(response_items: impl Iterator<Item = &'a Value>) -> Option<String> {
+fn copilot_visible_response_text<'a>(
+    response_items: impl Iterator<Item = &'a Value>,
+) -> Option<String> {
     let mut text_parts = Vec::new();
 
     for response_item in response_items {
@@ -5052,7 +7067,10 @@ fn copilot_visible_response_item_text(response_item: &Value) -> Option<String> {
 }
 
 fn is_copilot_question_tool_id(response_item: &Value) -> bool {
-    matches!(string_at(response_item, &["/toolId"]), Some("vscode_askQuestions"))
+    matches!(
+        string_at(response_item, &["/toolId"]),
+        Some("vscode_askQuestions")
+    )
 }
 
 fn copilot_direct_response_text(response_item: &Value) -> Option<String> {
@@ -5113,7 +7131,10 @@ fn collect_question_tool_preview_parts(value: &Value, parts: &mut Vec<String>) {
             append_question_field(object, "question", parts);
             append_question_field(object, "prompt", parts);
             append_question_field(object, "message", parts);
-            append_question_options(object.get("options").or_else(|| object.get("choices")), parts);
+            append_question_options(
+                object.get("options").or_else(|| object.get("choices")),
+                parts,
+            );
 
             for key in [
                 "questions",
@@ -5146,7 +7167,11 @@ fn collect_question_tool_preview_parts_from_str(text: &str, parts: &mut Vec<Stri
     }
 }
 
-fn append_question_field(object: &serde_json::Map<String, Value>, key: &str, parts: &mut Vec<String>) {
+fn append_question_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    parts: &mut Vec<String>,
+) {
     if let Some(text) = object.get(key).and_then(Value::as_str) {
         let trimmed = text.trim();
         if !trimmed.is_empty() {
@@ -5156,7 +7181,9 @@ fn append_question_field(object: &serde_json::Map<String, Value>, key: &str, par
 }
 
 fn append_question_options(options: Option<&Value>, parts: &mut Vec<String>) {
-    let Some(options) = options else { return; };
+    let Some(options) = options else {
+        return;
+    };
     let mut option_parts = Vec::new();
     match options {
         Value::Array(items) => {
@@ -5210,7 +7237,11 @@ fn question_option_text(value: &Value) -> Option<String> {
 }
 
 fn is_pure_markdown_fence(text: &str) -> bool {
-    let lines: Vec<&str> = text.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
     !lines.is_empty() && lines.len() <= 2 && lines.iter().all(|line| line.starts_with("```"))
 }
 
@@ -5231,7 +7262,9 @@ fn update_claude_status_hint(
     if let Some(content_blocks) = json_array_at(json_value, &["/message/content"]) {
         for content_block in content_blocks {
             match string_at(content_block, &["/type"]) {
-                Some("tool_use") if string_at(content_block, &["/name"]) == Some("AskUserQuestion") => {
+                Some("tool_use")
+                    if string_at(content_block, &["/name"]) == Some("AskUserQuestion") =>
+                {
                     if let Some(tool_use_id) = string_at(content_block, &["/id"]) {
                         pending_ask_user_question_ids.insert(tool_use_id.to_string());
                     }
@@ -5266,7 +7299,10 @@ fn is_copilot_message_event(json_value: &Value) -> bool {
 }
 
 fn is_claude_message_event(json_value: &Value) -> bool {
-    matches!(string_at(json_value, &["/type"]), Some("user") | Some("assistant"))
+    matches!(
+        string_at(json_value, &["/type"]),
+        Some("user") | Some("assistant")
+    )
 }
 
 const CLAUDE_CONTEXT_PREFIXES: &[&str] = &[
@@ -5279,7 +7315,9 @@ const CLAUDE_CONTEXT_PREFIXES: &[&str] = &[
 
 fn is_claude_context_text(text: &str) -> bool {
     let trimmed = text.trim_start();
-    CLAUDE_CONTEXT_PREFIXES.iter().any(|prefix| trimmed.starts_with(prefix))
+    CLAUDE_CONTEXT_PREFIXES
+        .iter()
+        .any(|prefix| trimmed.starts_with(prefix))
 }
 
 fn claude_interactive_user_text(json_value: &Value) -> Option<String> {
@@ -5295,7 +7333,11 @@ fn claude_interactive_user_text(json_value: &Value) -> Option<String> {
         if string_at(block, &["/type"]) != Some("tool_result") {
             continue;
         }
-        if bool_at(json_value, &["/toolUseResult/skipped", "/toolUseResult/isSkipped"]) == Some(true) {
+        if bool_at(
+            json_value,
+            &["/toolUseResult/skipped", "/toolUseResult/isSkipped"],
+        ) == Some(true)
+        {
             continue;
         }
         if let Some(answers) = json_value.pointer("/toolUseResult/answers") {
@@ -5461,21 +7503,29 @@ fn claude_assistant_text(json_value: &Value) -> Option<String> {
 }
 
 fn is_claude_question_tool_name(content_block: &Value) -> bool {
-    let Some(tool_name) = string_at(content_block, &["/name"]) else { return false; };
+    let Some(tool_name) = string_at(content_block, &["/name"]) else {
+        return false;
+    };
     let normalized: String = tool_name
         .chars()
         .filter(|ch| ch.is_ascii_alphanumeric())
         .flat_map(char::to_lowercase)
         .collect();
-    matches!(normalized.as_str(), "askuserquestion" | "askquestion" | "question")
+    matches!(
+        normalized.as_str(),
+        "askuserquestion" | "askquestion" | "question"
+    )
 }
 
 fn text_from_content_blocks(content_value: Option<&Value>) -> Option<&str> {
-    content_value.and_then(Value::as_array).and_then(|content_blocks| {
-        content_blocks.iter().find_map(|content_block| {
-            string_at(content_block, &["/text"]).filter(|text_value| !text_value.trim().is_empty())
+    content_value
+        .and_then(Value::as_array)
+        .and_then(|content_blocks| {
+            content_blocks.iter().find_map(|content_block| {
+                string_at(content_block, &["/text"])
+                    .filter(|text_value| !text_value.trim().is_empty())
+            })
         })
-    })
 }
 
 fn read_claude_index(
@@ -5511,8 +7561,8 @@ fn read_claude_entry(
         return None;
     }
 
-    let raw_session_id = string_at(entry_json, &["/sessionId", "/id"])
-        .map(|session_id| clean_label(session_id, 96));
+    let raw_session_id =
+        string_at(entry_json, &["/sessionId", "/id"]).map(|session_id| clean_label(session_id, 96));
     let session_path = string_at(entry_json, &["/fullPath", "/path"]).map(str::to_string);
     let workspace_path = string_at(entry_json, &["/projectPath", "/cwd"]).map(str::to_string);
     let session_id = raw_session_id.unwrap_or_else(|| {
@@ -5525,7 +7575,11 @@ fn read_claude_entry(
     let updated_ms = entry_json
         .get("fileMtime")
         .and_then(millis_from_value)
-        .or_else(|| session_path.as_deref().and_then(|path_text| modified_time_ms(Path::new(path_text))))
+        .or_else(|| {
+            session_path
+                .as_deref()
+                .and_then(|path_text| modified_time_ms(Path::new(path_text)))
+        })
         .unwrap_or_else(|| modified_time_ms(index_path).unwrap_or(scan_time_ms));
     if !is_active_session(updated_ms, scan_time_ms, options) {
         return None;
@@ -5541,10 +7595,19 @@ fn read_claude_entry(
         .or_else(|| index_path.parent().and_then(display_name_from_path))
         .unwrap_or_else(|| "Claude".to_string());
     let first_prompt = string_at(entry_json, &["/firstPrompt"]).and_then(clean_preview_text);
-    let title = string_at(entry_json, &["/aiTitle", "/customTitle", "/sessionTitle", "/title", "/slug"])
-        .and_then(title_candidate_from_text)
-        .or_else(|| first_prompt.as_deref().and_then(title_candidate_from_text))
-        .unwrap_or_else(|| format!("Claude {}", short_id(&session_id)));
+    let title = string_at(
+        entry_json,
+        &[
+            "/aiTitle",
+            "/customTitle",
+            "/sessionTitle",
+            "/title",
+            "/slug",
+        ],
+    )
+    .and_then(title_candidate_from_text)
+    .or_else(|| first_prompt.as_deref().and_then(title_candidate_from_text))
+    .unwrap_or_else(|| format!("Claude {}", short_id(&session_id)));
     let message_count = entry_json
         .get("messageCount")
         .and_then(Value::as_u64)
@@ -5567,6 +7630,8 @@ fn read_claude_entry(
         session_path.as_deref(),
         Some(&session_resource),
     );
+    let ueworkflow =
+        detect_ueworkflow_session_marker("claude", &[first_prompt_preview.0.as_deref()]);
 
     Some(AgentSession {
         id: format!("claude:{}", session_id),
@@ -5593,6 +7658,7 @@ fn read_claude_entry(
         last_ai_message_excerpt_kind: None,
         branch,
         todo_ids,
+        ueworkflow,
     })
 }
 #[derive(Debug, Clone)]
@@ -5603,7 +7669,6 @@ struct WorkspaceIdentity {
     group: String,
     discriminator: String,
 }
-
 
 #[derive(Debug, Clone)]
 struct WorkspaceInfo {
@@ -5619,7 +7684,9 @@ fn build_workspace_identity(
     session_path: Option<&str>,
     session_resource: Option<&str>,
 ) -> WorkspaceIdentity {
-    let segments = workspace_path.map(workspace_path_segments).unwrap_or_default();
+    let segments = workspace_path
+        .map(workspace_path_segments)
+        .unwrap_or_default();
     let name = workspace_path
         .and_then(|path_text| path_segments_basename(&workspace_path_segments(path_text)))
         .filter(|path_name| !path_name.trim().is_empty())
@@ -5627,7 +7694,9 @@ fn build_workspace_identity(
     let (label, group, discriminator) = workspace_label_parts(&name, &segments);
     let key = workspace_path
         .and_then(normalized_workspace_path_key)
-        .unwrap_or_else(|| fallback_workspace_key(provider, session_id, session_path, session_resource, &label));
+        .unwrap_or_else(|| {
+            fallback_workspace_key(provider, session_id, session_path, session_resource, &label)
+        });
 
     WorkspaceIdentity {
         key,
@@ -5716,7 +7785,11 @@ fn looks_like_uga_branch(branch: &str) -> bool {
     upper_branch == "DEV"
         || upper_branch
             .strip_prefix("DEV_")
-            .map(|suffix| suffix.chars().all(|branch_char| branch_char.is_ascii_digit() || branch_char == '_'))
+            .map(|suffix| {
+                suffix
+                    .chars()
+                    .all(|branch_char| branch_char.is_ascii_digit() || branch_char == '_')
+            })
             .unwrap_or(false)
 }
 
@@ -5913,7 +7986,10 @@ fn json_array_at<'json>(json_value: &'json Value, pointers: &[&str]) -> Option<&
         .find_map(|pointer| json_value.pointer(pointer).and_then(Value::as_array))
 }
 
-fn newest_timestamp_ms(current_timestamp_ms: Option<u64>, candidate_timestamp_ms: Option<u64>) -> Option<u64> {
+fn newest_timestamp_ms(
+    current_timestamp_ms: Option<u64>,
+    candidate_timestamp_ms: Option<u64>,
+) -> Option<u64> {
     match (current_timestamp_ms, candidate_timestamp_ms) {
         (Some(current_timestamp_ms), Some(candidate_timestamp_ms)) => {
             Some(current_timestamp_ms.max(candidate_timestamp_ms))
@@ -5946,7 +8022,11 @@ fn timestamp_ms_from_json(json_value: &Value) -> Option<u64> {
         "/v/time",
     ]
     .iter()
-    .find_map(|pointer| json_value.pointer(pointer).and_then(timestamp_ms_from_value))
+    .find_map(|pointer| {
+        json_value
+            .pointer(pointer)
+            .and_then(timestamp_ms_from_value)
+    })
 }
 
 fn copilot_alias_title_text(json_value: &Value) -> Option<&str> {
@@ -6107,7 +8187,11 @@ fn copilot_interactive_user_text(json_value: &Value) -> Option<String> {
     clean_preview_text(&answer_parts.join(", "))
 }
 
-fn collect_copilot_carousel_answer(carousel_item: &Value, answer_value: &Value, answer_parts: &mut Vec<String>) {
+fn collect_copilot_carousel_answer(
+    carousel_item: &Value,
+    answer_value: &Value,
+    answer_parts: &mut Vec<String>,
+) {
     if is_skipped_json(answer_value) {
         return;
     }
@@ -6288,7 +8372,10 @@ fn looks_like_identifier(title_text: &str) -> bool {
 
 fn fallback_session_title(provider_name: &str, workspace_name: &str, session_id: &str) -> String {
     let workspace_title = clean_label(workspace_name, 60);
-    if !workspace_title.is_empty() && workspace_title != "Unknown" && workspace_title != provider_name {
+    if !workspace_title.is_empty()
+        && workspace_title != "Unknown"
+        && workspace_title != provider_name
+    {
         format!("{} {}", provider_name, workspace_title)
     } else {
         format!("{} {}", provider_name, short_id(session_id))
@@ -6522,12 +8609,16 @@ const AI_MODEL_NOISE_SUBSTRINGS: &[&str] = &[
 ];
 
 fn is_user_system_error_text(text: &str) -> bool {
-    USER_SYSTEM_ERROR_SUBSTRINGS.iter().any(|s| text.contains(s))
+    USER_SYSTEM_ERROR_SUBSTRINGS
+        .iter()
+        .any(|s| text.contains(s))
 }
 
 fn is_ai_model_noise_text(text: &str) -> bool {
     let lower_text = text.to_ascii_lowercase();
-    AI_MODEL_NOISE_SUBSTRINGS.iter().any(|s| lower_text.contains(s))
+    AI_MODEL_NOISE_SUBSTRINGS
+        .iter()
+        .any(|s| lower_text.contains(s))
 }
 
 fn apply_tail_budget(cleaned: &str, max_chars: usize) -> (String, bool) {
@@ -6537,7 +8628,11 @@ fn apply_tail_budget(cleaned: &str, max_chars: usize) -> (String, bool) {
         return (text.to_string(), false);
     }
     let start_char = char_count - max_chars;
-    let start_byte = text.char_indices().nth(start_char).map(|(i, _)| i).unwrap_or(0);
+    let start_byte = text
+        .char_indices()
+        .nth(start_char)
+        .map(|(i, _)| i)
+        .unwrap_or(0);
     let raw_tail = &text[start_byte..];
     let tail = if let Some(newline_index) = raw_tail.find('\n') {
         if newline_index <= 80 {
@@ -6549,23 +8644,42 @@ fn apply_tail_budget(cleaned: &str, max_chars: usize) -> (String, bool) {
         raw_tail
     };
     let tail = tail.trim_start();
-    (format!("...{}{}", if tail.contains('\n') { "\n" } else { "" }, tail), true)
+    (
+        format!("...{}{}", if tail.contains('\n') { "\n" } else { "" }, tail),
+        true,
+    )
 }
 
 fn apply_user_preview_budget(msg: Option<String>) -> (Option<String>, bool) {
-    let Some(text) = msg else { return (None, false); };
+    let Some(text) = msg else {
+        return (None, false);
+    };
     let (result, trunc) = apply_tail_budget(&text, USER_PREVIEW_MAX_CHARS);
-    if result.is_empty() { (None, false) } else { (Some(result), trunc) }
+    if result.is_empty() {
+        (None, false)
+    } else {
+        (Some(result), trunc)
+    }
 }
 
 fn apply_ai_preview_budget(msg: Option<String>) -> (Option<String>, bool, Option<String>) {
-    let Some(text) = msg else { return (None, false, None); };
+    let Some(text) = msg else {
+        return (None, false, None);
+    };
     let clean = text.trim();
     // Tail-first: show the most recent content of the AI response.
     // No error-keyword prioritization — model/system errors are filtered upstream.
     let (result, trunc) = apply_tail_budget(clean, AI_PREVIEW_MAX_CHARS);
-    let excerpt_kind = if trunc { Some("tail".to_string()) } else { None };
-    if result.is_empty() { (None, false, None) } else { (Some(result), trunc, excerpt_kind) }
+    let excerpt_kind = if trunc {
+        Some("tail".to_string())
+    } else {
+        None
+    };
+    if result.is_empty() {
+        (None, false, None)
+    } else {
+        (Some(result), trunc, excerpt_kind)
+    }
 }
 
 fn short_id(session_id: &str) -> String {
@@ -6613,7 +8727,9 @@ fn timestamp_ms_from_value(json_value: &Value) -> Option<u64> {
 
 fn iso_timestamp_ms(timestamp_text: &str) -> Option<u64> {
     let trimmed_timestamp = timestamp_text.trim();
-    let separator_index = trimmed_timestamp.find('T').or_else(|| trimmed_timestamp.find(' '))?;
+    let separator_index = trimmed_timestamp
+        .find('T')
+        .or_else(|| trimmed_timestamp.find(' '))?;
     let date_text = &trimmed_timestamp[..separator_index];
     let time_text = &trimmed_timestamp[separator_index + 1..];
 
@@ -6653,7 +8769,11 @@ fn iso_timestamp_ms(timestamp_text: &str) -> Option<u64> {
         return None;
     }
 
-    Some((utc_seconds as u64).saturating_mul(1000).saturating_add(fractional_ms))
+    Some(
+        (utc_seconds as u64)
+            .saturating_mul(1000)
+            .saturating_add(fractional_ms),
+    )
 }
 
 fn split_fractional_ms(remainder_text: &str) -> Option<(u64, &str)> {
@@ -6831,7 +8951,11 @@ fn spawn_code_cli(arguments: &[String]) -> Result<(), String> {
 }
 
 fn spawn_code_cli_in(current_dir: Option<&str>, arguments: &[String]) -> Result<(), String> {
-    let mut candidates = vec!["code".to_string(), "code.cmd".to_string(), "code.exe".to_string()];
+    let mut candidates = vec![
+        "code".to_string(),
+        "code.cmd".to_string(),
+        "code.exe".to_string(),
+    ];
 
     if let Some(local_appdata_path) = env::var_os("LOCALAPPDATA") {
         let local_appdata_path = PathBuf::from(local_appdata_path);
@@ -6899,7 +9023,10 @@ fn get_local_bridge_version() -> String {
 }
 
 fn bridge_version_needs_update(local_version: &str, installed_version: &str) -> bool {
-    match (parse_version(local_version), parse_version(installed_version)) {
+    match (
+        parse_version(local_version),
+        parse_version(installed_version),
+    ) {
         (Some(local), Some(installed)) => local > installed,
         (Some(_), None) => true,
         _ => false,
@@ -6918,7 +9045,9 @@ fn get_bridge_extension_inventory(code_path: Option<&str>) -> BridgeExtensionInv
     inventory
 }
 
-fn bridge_extension_inventory_from_cli(code_path: &str) -> Result<BridgeExtensionInventory, String> {
+fn bridge_extension_inventory_from_cli(
+    code_path: &str,
+) -> Result<BridgeExtensionInventory, String> {
     let mut list_cmd = Command::new(code_path);
     list_cmd.args(["--list-extensions", "--show-versions"]);
     let output = spawn_hidden_with_output(list_cmd)
@@ -6931,7 +9060,9 @@ fn bridge_extension_inventory_from_cli(code_path: &str) -> Result<BridgeExtensio
         ));
     }
 
-    Ok(bridge_extension_inventory_from_cli_output(&String::from_utf8_lossy(&output.stdout)))
+    Ok(bridge_extension_inventory_from_cli_output(
+        &String::from_utf8_lossy(&output.stdout),
+    ))
 }
 
 fn bridge_extension_inventory_from_cli_output(output: &str) -> BridgeExtensionInventory {
@@ -6947,10 +9078,10 @@ fn bridge_extension_inventory_from_cli_output(output: &str) -> BridgeExtensionIn
             .map(|(id, version)| (id.trim(), version.trim()))
             .unwrap_or((line, "unknown"));
 
-        if extension_id.eq_ignore_ascii_case(BRIDGE_EXTENSION_ID) {
+        if extension_id.eq_ignore_ascii_case(&bridge_extension_id()) {
             inventory.add_stable_version(version.to_string());
         } else if let Some(legacy_id) = legacy_bridge_extension_id(extension_id) {
-            inventory.add_legacy_id(legacy_id);
+            inventory.add_legacy_id(&legacy_id);
         }
     }
 
@@ -6967,7 +9098,9 @@ fn bridge_extension_inventory_from_extension_folders() -> BridgeExtensionInvento
 
     for extensions_dir in [
         user_profile_path.join(".vscode").join("extensions"),
-        user_profile_path.join(".vscode-insiders").join("extensions"),
+        user_profile_path
+            .join(".vscode-insiders")
+            .join("extensions"),
     ] {
         for entry in read_directory(&extensions_dir) {
             let folder_name = entry.file_name().to_string_lossy().to_string();
@@ -6977,14 +9110,14 @@ fn bridge_extension_inventory_from_extension_folders() -> BridgeExtensionInvento
 
             if package_extension_id
                 .as_deref()
-                .map(|extension_id| extension_id.eq_ignore_ascii_case(BRIDGE_EXTENSION_ID))
+                .map(|extension_id| extension_id.eq_ignore_ascii_case(&bridge_extension_id()))
                 .unwrap_or(false)
-                || extension_folder_version_suffix(&folder_name, BRIDGE_EXTENSION_ID).is_some()
+                || extension_folder_version_suffix(&folder_name, &bridge_extension_id()).is_some()
             {
                 inventory.add_stable_version(extension_version_from_folder(
                     package_json.as_ref(),
                     &folder_name,
-                    BRIDGE_EXTENSION_ID,
+                    &bridge_extension_id(),
                 ));
                 continue;
             }
@@ -6994,7 +9127,7 @@ fn bridge_extension_inventory_from_extension_folders() -> BridgeExtensionInvento
                 .and_then(legacy_bridge_extension_id)
                 .or_else(|| legacy_bridge_extension_id_from_folder(&folder_name))
             {
-                inventory.add_legacy_id(legacy_id);
+                inventory.add_legacy_id(&legacy_id);
             }
         }
     }
@@ -7019,9 +9152,13 @@ fn extension_version_from_folder(
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-fn extension_folder_version_suffix<'a>(folder_name: &'a str, extension_id: &str) -> Option<&'a str> {
-    let suffix = if extension_id.eq_ignore_ascii_case(BRIDGE_EXTENSION_ID) {
-        folder_name.strip_prefix(BRIDGE_EXTENSION_FOLDER_PREFIX)?
+fn extension_folder_version_suffix<'a>(
+    folder_name: &'a str,
+    extension_id: &str,
+) -> Option<&'a str> {
+    let suffix = if extension_id.eq_ignore_ascii_case(&bridge_extension_id()) {
+        let prefix = bridge_extension_folder_prefix();
+        folder_name.strip_prefix(&prefix)?
     } else {
         folder_name.strip_prefix(extension_id)?.strip_prefix('-')?
     };
@@ -7032,36 +9169,37 @@ fn extension_folder_version_suffix<'a>(folder_name: &'a str, extension_id: &str)
     Some(suffix)
 }
 
-fn legacy_bridge_extension_id(extension_id: &str) -> Option<&'static str> {
-    LEGACY_BRIDGE_EXTENSION_IDS
-        .iter()
-        .copied()
+fn legacy_bridge_extension_id(extension_id: &str) -> Option<String> {
+    legacy_bridge_extension_ids()
+        .into_iter()
         .find(|legacy_id| extension_id.eq_ignore_ascii_case(legacy_id))
 }
 
-fn legacy_bridge_extension_id_from_folder(folder_name: &str) -> Option<&'static str> {
-    LEGACY_BRIDGE_EXTENSION_IDS
-        .iter()
-        .copied()
+fn legacy_bridge_extension_id_from_folder(folder_name: &str) -> Option<String> {
+    legacy_bridge_extension_ids()
+        .into_iter()
         .find(|legacy_id| extension_folder_version_suffix(folder_name, legacy_id).is_some())
 }
 
 fn uninstall_legacy_bridge_extensions(code_path: &str) -> Vec<String> {
     let mut warnings = Vec::new();
 
-    for &extension_id in LEGACY_BRIDGE_EXTENSION_IDS {
+    for (index, extension_id) in legacy_bridge_extension_ids().into_iter().enumerate() {
+        let legacy_label = format!("legacy extension {}", index + 1);
         let mut uninstall_cmd = Command::new(code_path);
-        uninstall_cmd.args(["--uninstall-extension", extension_id]);
+        uninstall_cmd.args(["--uninstall-extension", extension_id.as_str()]);
 
         match spawn_hidden_with_output(uninstall_cmd) {
-            Ok(output) if output.status.success() || bridge_uninstall_output_is_not_installed(&output) => {}
+            Ok(output)
+                if output.status.success() || bridge_uninstall_output_is_not_installed(&output) => {
+            }
             Ok(output) => warnings.push(format!(
                 "{}: {} {}",
-                extension_id,
+                legacy_label,
                 String::from_utf8_lossy(&output.stderr).trim(),
                 String::from_utf8_lossy(&output.stdout).trim()
             )),
-            Err(error) => warnings.push(format!("{}: {}", extension_id, error)),
+            Err(error) => warnings.push(format!("{}: {}", legacy_label, error)),
         }
     }
 
@@ -7082,7 +9220,7 @@ fn bridge_uninstall_output_is_not_installed(output: &std::process::Output) -> bo
 fn find_bridge_source_dir() -> Option<PathBuf> {
     bridge_base_dirs()
         .into_iter()
-        .map(|base_dir| base_dir.join("vscode-agentwatcher-bridge"))
+        .map(|base_dir| base_dir.join(bridge_source_dir_name()))
         .find(|bridge_dir| bridge_dir.join("package.json").exists())
 }
 
@@ -7103,7 +9241,8 @@ fn find_bridge_vsix(bridge_dir: &Path, local_version: &str) -> Option<PathBuf> {
 
         fallback_vsix = Some(match fallback_vsix {
             Some(existing_path)
-                if modified_time_ms(&existing_path).unwrap_or(0) >= modified_time_ms(&path).unwrap_or(0) =>
+                if modified_time_ms(&existing_path).unwrap_or(0)
+                    >= modified_time_ms(&path).unwrap_or(0) =>
             {
                 existing_path
             }
@@ -7120,14 +9259,17 @@ fn package_bridge_vsix(bridge_dir: &Path, local_version: &str) -> Result<PathBuf
     fs::create_dir_all(&package_dir)
         .map_err(|error| format!("Failed to prepare bridge package directory: {}", error))?;
 
-    let vsix_path = package_dir.join(format!(
-        "agentwatcher-bridge-{}.vsix",
-        safe_file_name_token(local_version)
-    ));
+    let vsix_path = package_dir.join(bridge_vsix_file_name(&safe_file_name_token(local_version)));
 
     let mut package_cmd = Command::new(npx_path);
     package_cmd
-        .args(["--yes", "@vscode/vsce", "package", "--skip-license", "--out"])
+        .args([
+            "--yes",
+            "@vscode/vsce",
+            "package",
+            "--skip-license",
+            "--out",
+        ])
         .arg(&vsix_path)
         .current_dir(bridge_dir);
 
@@ -7206,17 +9348,23 @@ fn find_code_cli_path() -> Option<String> {
                 .join("Microsoft VS Code")
                 .join("Code.exe")
         }),
-        Some(PathBuf::from("C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd")),
-        Some(PathBuf::from("C:\\Program Files\\Microsoft VS Code\\Code.exe")),
-        Some(PathBuf::from("C:\\Program Files (x86)\\Microsoft VS Code\\bin\\code.cmd")),
-        Some(PathBuf::from("C:\\Program Files (x86)\\Microsoft VS Code\\Code.exe")),
+        Some(PathBuf::from(
+            "C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd",
+        )),
+        Some(PathBuf::from(
+            "C:\\Program Files\\Microsoft VS Code\\Code.exe",
+        )),
+        Some(PathBuf::from(
+            "C:\\Program Files (x86)\\Microsoft VS Code\\bin\\code.cmd",
+        )),
+        Some(PathBuf::from(
+            "C:\\Program Files (x86)\\Microsoft VS Code\\Code.exe",
+        )),
     ];
 
-    for path_option in common_paths {
-        if let Some(path) = path_option {
-            if path.exists() {
-                return Some(path_to_string(&path));
-            }
+    for path in common_paths.into_iter().flatten() {
+        if path.exists() {
+            return Some(path_to_string(&path));
         }
     }
 
@@ -7273,9 +9421,9 @@ fn apply_native_window_icons<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>
     use windows_sys::core::BOOL;
     use windows_sys::Win32::Foundation::{HWND, LPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetAncestor, GetWindowThreadProcessId, SetClassLongPtrW, HICON,
-        PrivateExtractIconsW, SendMessageW, GA_ROOT, GCLP_HICON, GCLP_HICONSM, ICON_BIG,
-        ICON_SMALL, ICON_SMALL2, WM_SETICON,
+        EnumWindows, GetAncestor, GetWindowThreadProcessId, PrivateExtractIconsW, SendMessageW,
+        SetClassLongPtrW, GA_ROOT, GCLP_HICON, GCLP_HICONSM, HICON, ICON_BIG, ICON_SMALL,
+        ICON_SMALL2, WM_SETICON,
     };
 
     let Ok(raw_hwnd) = window.hwnd() else {
@@ -7316,7 +9464,7 @@ fn apply_native_window_icons<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>
     }
 
     fn add_hwnd(hwnds: &mut Vec<HWND>, hwnd: HWND) {
-        if hwnd.is_null() || hwnds.iter().any(|existing| *existing == hwnd) {
+        if hwnd.is_null() || hwnds.contains(&hwnd) {
             return;
         }
 
@@ -7338,13 +9486,28 @@ fn apply_native_window_icons<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>
     unsafe {
         let apply_icons_to = |target_hwnd: HWND| {
             if let Some(big_icon) = extract_icon(&exe_path_wide, 256) {
-                let _ = SendMessageW(target_hwnd, WM_SETICON, ICON_BIG as usize, big_icon as isize);
+                let _ = SendMessageW(
+                    target_hwnd,
+                    WM_SETICON,
+                    ICON_BIG as usize,
+                    big_icon as isize,
+                );
                 let _ = SetClassLongPtrW(target_hwnd, GCLP_HICON, big_icon as isize);
             }
 
             if let Some(small_icon) = extract_icon(&exe_path_wide, 32) {
-                let _ = SendMessageW(target_hwnd, WM_SETICON, ICON_SMALL as usize, small_icon as isize);
-                let _ = SendMessageW(target_hwnd, WM_SETICON, ICON_SMALL2 as usize, small_icon as isize);
+                let _ = SendMessageW(
+                    target_hwnd,
+                    WM_SETICON,
+                    ICON_SMALL as usize,
+                    small_icon as isize,
+                );
+                let _ = SendMessageW(
+                    target_hwnd,
+                    WM_SETICON,
+                    ICON_SMALL2 as usize,
+                    small_icon as isize,
+                );
                 let _ = SetClassLongPtrW(target_hwnd, GCLP_HICONSM, small_icon as isize);
             }
         };
@@ -7355,7 +9518,10 @@ fn apply_native_window_icons<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>
         add_hwnd(&mut hwnds, hwnd);
         add_hwnd(&mut hwnds, root_hwnd);
 
-        let _ = EnumWindows(Some(enum_process_windows), &mut hwnds as *mut Vec<HWND> as LPARAM);
+        let _ = EnumWindows(
+            Some(enum_process_windows),
+            &mut hwnds as *mut Vec<HWND> as LPARAM,
+        );
 
         for target_hwnd in hwnds {
             apply_icons_to(target_hwnd);
@@ -7364,7 +9530,10 @@ fn apply_native_window_icons<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>
 }
 
 #[cfg(target_os = "windows")]
-fn apply_native_always_on_top<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, always_on_top: bool) {
+fn apply_native_always_on_top<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    always_on_top: bool,
+) {
     use windows_sys::core::BOOL;
     use windows_sys::Win32::Foundation::{HWND, LPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -7377,7 +9546,7 @@ fn apply_native_always_on_top<R: tauri::Runtime>(window: &tauri::WebviewWindow<R
     };
 
     fn add_hwnd(hwnds: &mut Vec<HWND>, hwnd: HWND) {
-        if hwnd.is_null() || hwnds.iter().any(|existing| *existing == hwnd) {
+        if hwnd.is_null() || hwnds.contains(&hwnd) {
             return;
         }
 
@@ -7403,9 +9572,16 @@ fn apply_native_always_on_top<R: tauri::Runtime>(window: &tauri::WebviewWindow<R
         add_hwnd(&mut hwnds, hwnd);
         add_hwnd(&mut hwnds, root_hwnd);
 
-        let _ = EnumWindows(Some(enum_process_windows), &mut hwnds as *mut Vec<HWND> as LPARAM);
+        let _ = EnumWindows(
+            Some(enum_process_windows),
+            &mut hwnds as *mut Vec<HWND> as LPARAM,
+        );
 
-        let insert_after = if always_on_top { HWND_TOPMOST } else { HWND_NOTOPMOST };
+        let insert_after = if always_on_top {
+            HWND_TOPMOST
+        } else {
+            HWND_NOTOPMOST
+        };
         let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
         for target_hwnd in hwnds {
             let _ = SetWindowPos(target_hwnd, insert_after, 0, 0, 0, 0, flags);
@@ -7419,26 +9595,189 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn bridge_cli_inventory_separates_stable_and_legacy_ids() {
-        let inventory = bridge_extension_inventory_from_cli_output(
-            "agentwatcher.agentwatcher-vscode-session-bridge@0.1.10\nagentwatcher.agentwatcher-vscode-session-bridge-safe4@0.1.9\n",
-        );
+    fn bounded_write_runtime_block_is_declared_by_safety_contract() {
+        let command = test_bounded_write_command();
 
-        assert_eq!(inventory.stable_version.as_deref(), Some("0.1.10"));
-        assert_eq!(
-            inventory.legacy_ids,
-            vec!["agentwatcher.agentwatcher-vscode-session-bridge-safe4".to_string()]
+        let error = validate_bounded_write_runtime_policy_with_env(&command, |_| None).unwrap_err();
+
+        assert!(error.contains("disabled by default"));
+        assert!(error.contains(UEWORKFLOW_REAL_CREATE_TASK_ENV));
+    }
+
+    #[test]
+    fn bounded_write_runtime_override_is_high_friction_and_explicit() {
+        let command = test_bounded_write_command();
+
+        assert!(
+            validate_bounded_write_runtime_policy_with_env(&command, |key| {
+                if key == UEWORKFLOW_REAL_CREATE_TASK_ENV {
+                    Some(ueworkflow_real_create_task_token())
+                } else {
+                    None
+                }
+            })
+            .is_ok()
         );
     }
 
     #[test]
-    fn bridge_folder_suffix_does_not_treat_legacy_safe_as_stable() {
-        let legacy_folder = "agentwatcher.agentwatcher-vscode-session-bridge-safe4-0.1.9";
+    fn bounded_write_runtime_policy_allows_commands_without_runtime_block() {
+        let mut command = test_bounded_write_command();
+        command.safety_contract.as_mut().unwrap().runtime_block = None;
 
-        assert_eq!(extension_folder_version_suffix(legacy_folder, BRIDGE_EXTENSION_ID), None);
+        assert!(validate_bounded_write_runtime_policy_with_env(&command, |_| None).is_ok());
+    }
+
+    #[test]
+    fn ueworkflow_external_execute_commands_are_audited() {
+        assert!(should_record_ueworkflow_external_command(
+            "dev.switch.execute"
+        ));
+        assert!(should_record_ueworkflow_external_command(
+            "agents.install.execute"
+        ));
+        assert!(!should_record_ueworkflow_external_command("dev.status"));
+        assert!(!should_record_ueworkflow_external_command(
+            "dev.switch.dryRun"
+        ));
+    }
+
+    #[test]
+    fn ueworkflow_session_marker_requires_explicit_workflow_marker() {
+        assert!(detect_ueworkflow_session_marker(
+            "copilot",
+            &[Some("please fix this Unreal plugin")]
+        )
+        .is_none());
+
+        let marker = detect_ueworkflow_session_marker(
+            "copilot",
+            &[Some(
+                "workflow=unrealworkflow provider=copilot taskId=aw-001 runId=run-abc contractVersion=uwf.provider-agent.v1",
+            )],
+        )
+        .unwrap();
+
+        assert_eq!(marker.workflow, "unrealworkflow");
+        assert_eq!(marker.provider, "copilot");
+        assert_eq!(marker.task_id.as_deref(), Some("aw-001"));
+        assert_eq!(marker.run_id.as_deref(), Some("run-abc"));
         assert_eq!(
-            legacy_bridge_extension_id_from_folder(legacy_folder),
-            Some("agentwatcher.agentwatcher-vscode-session-bridge-safe4")
+            marker.contract_version.as_deref(),
+            Some("uwf.provider-agent.v1")
+        );
+    }
+
+    #[test]
+    fn bounded_write_payload_must_match_declared_safety_contract() {
+        let command = test_bounded_write_command();
+        let payload = json!({
+            "action": "createTask",
+            "confirmed": true,
+            "dryRunAccepted": true,
+            "confirmationBoundary": "UEWorkflow.devflow.createTask.v1",
+            "impactScopeAccepted": [
+                "AgentWatcher task draft",
+                "future git worktree creation"
+            ]
+        });
+
+        validate_bounded_write_payload(&command, Some(&payload)).unwrap();
+    }
+
+    #[test]
+    fn bounded_write_payload_rejects_missing_boundary_and_unsafe_keys() {
+        let command = test_bounded_write_command();
+        let missing_boundary = json!({
+            "action": "createTask",
+            "confirmed": true,
+            "dryRunAccepted": true,
+            "impactScopeAccepted": [
+                "AgentWatcher task draft",
+                "future git worktree creation"
+            ]
+        });
+        let unsafe_payload = json!({
+            "action": "createTask",
+            "confirmed": true,
+            "dryRunAccepted": true,
+            "confirmationBoundary": "UEWorkflow.devflow.createTask.v1",
+            "impactScopeAccepted": [
+                "AgentWatcher task draft",
+                "future git worktree creation"
+            ],
+            "rawUeBuildCommand": "RunUAT BuildCookRun"
+        });
+
+        let boundary_error =
+            validate_bounded_write_payload(&command, Some(&missing_boundary)).unwrap_err();
+        let unsafe_error =
+            validate_bounded_write_payload(&command, Some(&unsafe_payload)).unwrap_err();
+
+        assert!(boundary_error.contains("confirmationBoundary"));
+        assert!(unsafe_error.contains("forbidden key"));
+    }
+
+    fn test_bounded_write_command() -> plugin_manifest::AwCommandDescriptor {
+        plugin_manifest::AwCommandDescriptor {
+            name: "execute".to_string(),
+            display_name: "执行".to_string(),
+            safety: plugin_manifest::AwCommandSafety::BoundedWrite,
+            runner: plugin_manifest::AwCommandRunner::PowerShellFile {
+                script: "aw/Get-AgentWatcherModule.ps1".to_string(),
+                args: vec!["execute".to_string()],
+            },
+            description: None,
+            timeout_ms: 30_000,
+            produces: plugin_manifest::AwCommandOutputKind::AgentWatcherModuleResult,
+            safety_contract: Some(plugin_manifest::AwCommandSafetyContract {
+                requires_dry_run: true,
+                requires_confirmation: true,
+                confirmation_boundary: Some("UEWorkflow.devflow.createTask.v1".to_string()),
+                impact_scope: vec![
+                    "AgentWatcher task draft".to_string(),
+                    "future git worktree creation".to_string(),
+                ],
+                audit_record: true,
+                forbids_arbitrary_shell: true,
+                forbids_raw_ue_build: true,
+                forbids_destructive_delete: true,
+                forbids_external_worktree: true,
+                allowed_actions: vec!["createTask".to_string()],
+                allowed_runners: vec![plugin_manifest::AwCommandRunnerKind::PowerShellFile],
+                runtime_block: Some(plugin_manifest::AwCommandRuntimeBlock {
+                    reason: "UEWorkflow real task creation is disabled by default.".to_string(),
+                    override_env: UEWORKFLOW_REAL_CREATE_TASK_ENV.to_string(),
+                    override_token: ueworkflow_real_create_task_token(),
+                }),
+            }),
+        }
+    }
+
+    #[test]
+    fn bridge_cli_inventory_separates_stable_and_legacy_ids() {
+        let stable_id = bridge_extension_id();
+        let legacy_id = format!("{}-{}{}", stable_id, "safe", 4);
+        let inventory = bridge_extension_inventory_from_cli_output(&format!(
+            "{stable_id}@0.1.10\n{legacy_id}@0.1.9\n"
+        ));
+
+        assert_eq!(inventory.stable_version.as_deref(), Some("0.1.10"));
+        assert_eq!(inventory.legacy_ids, vec![legacy_id]);
+    }
+
+    #[test]
+    fn bridge_folder_suffix_does_not_treat_legacy_safe_as_stable() {
+        let legacy_id = format!("{}-{}{}", bridge_extension_id(), "safe", 4);
+        let legacy_folder = format!("{legacy_id}-0.1.9");
+
+        assert_eq!(
+            extension_folder_version_suffix(&legacy_folder, &bridge_extension_id()),
+            None
+        );
+        assert_eq!(
+            legacy_bridge_extension_id_from_folder(&legacy_folder),
+            Some(legacy_id)
         );
     }
 
@@ -7483,7 +9822,7 @@ mod tests {
             "workspaces": {
                 "path:f:/aiproject/agentwatcher": {
                     "label": "AgentWatcher",
-                    "path": r"F:\AiProject\AgentWatcher",
+                    "path": r"X:\Workspace\AgentWatcher",
                     "tasks": [
                         { "id": "todo-1", "title": "Build task input" }
                     ]
@@ -7497,6 +9836,129 @@ mod tests {
         assert_eq!(saved, state);
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn todo_state_write_compacts_ueworkflow_task_payloads() {
+        let dir = env::temp_dir().join(format!(
+            "agentwatcher-todo-state-compact-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let path = dir.join("todos.v1.json");
+        let dispatches: Vec<Value> = (0..9)
+            .map(|index| {
+                json!({
+                    "id": format!("dispatch-{index}"),
+                    "lastPrompt": "P".repeat(6_000),
+                    "sessionPath": "S".repeat(6_000)
+                })
+            })
+            .collect();
+        let events: Vec<Value> = (0..20)
+            .map(
+                |index| json!({ "id": format!("event-{index}"), "type": "phase", "message": "ok" }),
+            )
+            .collect();
+        let state = json!({
+            "version": 1,
+            "workspaces": {
+                "path:f:/aiproject/agentwatcher": {
+                    "label": "AgentWatcher",
+                    "path": r"X:\Workspace\AgentWatcher",
+                    "tasks": [{
+                        "id": "todo-1",
+                        "title": "Build task input",
+                        "dispatches": dispatches,
+                        "ueWorkflowLifecycle": { "events": events },
+                        "ueWorkflowMaster": {
+                            "kind": "UnrealWorkflowMasterResult",
+                            "status": "success",
+                            "command": "master execute",
+                            "message": "M".repeat(2_000),
+                            "request": { "taskId": "feature-x" },
+                            "moduleResults": [{
+                                "module": { "displayName": "开发流" },
+                                "status": "success",
+                                "message": "module ok",
+                                "outcome": {
+                                    "targetContext": { "workspacePath": r"X:\Host" },
+                                    "artifacts": [{ "path": r"X:\artifact.md" }]
+                                },
+                                "stdout": "heavy"
+                            }]
+                        }
+                    }]
+                }
+            }
+        });
+
+        write_todo_state_to_path(&path, &state).unwrap();
+        let saved = read_todo_state_from_path(&path).unwrap();
+        let task = &saved["workspaces"]["path:f:/aiproject/agentwatcher"]["tasks"][0];
+
+        assert_eq!(
+            task["dispatches"].as_array().unwrap().len(),
+            TODO_DISPATCH_HISTORY_LIMIT
+        );
+        assert_eq!(
+            task["ueWorkflowLifecycle"]["events"]
+                .as_array()
+                .unwrap()
+                .len(),
+            TODO_UEWORKFLOW_EVENT_LIMIT
+        );
+        assert_eq!(task["ueWorkflowMaster"]["summaryOnly"], true);
+        assert!(task["ueWorkflowMaster"]["moduleResults"][0]
+            .get("stdout")
+            .is_none());
+        assert!(
+            task["dispatches"][0]["lastPrompt"].as_str().unwrap().len() <= TODO_LONG_TEXT_LIMIT
+        );
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ueworkflow_master_execute_run_pruning_keeps_recent_bounded_history() {
+        let now_ms = 10_000_000;
+        let mut runs = HashMap::new();
+        for index in 0..80 {
+            runs.insert(
+                format!("terminal-{index:02}"),
+                AwUwfMasterExecuteRunSnapshot {
+                    run_id: format!("terminal-{index:02}"),
+                    status: "success".to_string(),
+                    phase: "package-ready".to_string(),
+                    started_ms: now_ms - 10_000 + index,
+                    updated_ms: now_ms - 10_000 + index,
+                    result: None,
+                    error: None,
+                },
+            );
+        }
+        runs.insert(
+            "running-old".to_string(),
+            AwUwfMasterExecuteRunSnapshot {
+                run_id: "running-old".to_string(),
+                status: "running".to_string(),
+                phase: "package-generating".to_string(),
+                started_ms: now_ms - UEWORKFLOW_MASTER_EXECUTE_RUN_TTL_MS - 100,
+                updated_ms: now_ms - UEWORKFLOW_MASTER_EXECUTE_RUN_TTL_MS - 100,
+                result: None,
+                error: None,
+            },
+        );
+
+        prune_ueworkflow_master_execute_runs_locked(&mut runs, now_ms);
+
+        assert!(runs.len() <= UEWORKFLOW_MASTER_EXECUTE_RUN_LIMIT);
+        assert!(runs.contains_key("running-old"));
+        assert!(!runs.contains_key("terminal-00"));
+        assert!(runs.contains_key("terminal-79"));
     }
 
     #[test]
@@ -7532,7 +9994,10 @@ mod tests {
             "v": [{ "kind": "questionCarousel" }]
         });
 
-        assert_eq!(copilot_response_status_hint(&event), Some(SessionStatusHint::Waiting));
+        assert_eq!(
+            copilot_response_status_hint(&event),
+            Some(SessionStatusHint::Waiting)
+        );
     }
 
     #[test]
@@ -7553,7 +10018,10 @@ mod tests {
             ]
         });
 
-        assert_eq!(copilot_response_status_hint(&event), Some(SessionStatusHint::Running));
+        assert_eq!(
+            copilot_response_status_hint(&event),
+            Some(SessionStatusHint::Running)
+        );
     }
 
     #[test]
@@ -7619,7 +10087,10 @@ mod tests {
         let overlay = copilot_transcript_overlay_from_text(transcript).unwrap();
 
         assert_eq!(overlay.status_hint, Some(SessionStatusHint::Waiting));
-        assert!(overlay.last_user_message.unwrap().contains("Please continue."));
+        assert!(overlay
+            .last_user_message
+            .unwrap()
+            .contains("Please continue."));
         let ai_message = overlay.last_ai_message.unwrap();
         assert!(ai_message.contains("Reminder test"));
         assert!(ai_message.contains("Did the card appear quickly?"));
@@ -7687,7 +10158,10 @@ mod tests {
         let overlay = copilot_transcript_overlay_from_text(transcript).unwrap();
 
         assert_eq!(overlay.status_hint, Some(SessionStatusHint::Running));
-        assert_eq!(overlay.last_user_message.as_deref(), Some("Continue after skipping."));
+        assert_eq!(
+            overlay.last_user_message.as_deref(),
+            Some("Continue after skipping.")
+        );
     }
 
     #[test]
@@ -7700,7 +10174,10 @@ mod tests {
         let overlay = copilot_transcript_overlay_from_text(transcript).unwrap();
 
         assert_eq!(overlay.status_hint, Some(SessionStatusHint::Running));
-        assert_eq!(overlay.last_ai_message.as_deref(), Some("Continuing after that choice."));
+        assert_eq!(
+            overlay.last_ai_message.as_deref(),
+            Some("Continuing after that choice.")
+        );
     }
 
     #[test]
@@ -7732,9 +10209,18 @@ mod tests {
 
     #[test]
     fn latest_activity_uses_file_modified_when_content_timestamp_lags() {
-        assert_eq!(latest_activity_ms(Some(100), 200), (200, ActivitySource::FileModified));
-        assert_eq!(latest_activity_ms(Some(300), 200), (300, ActivitySource::ContentTimestamp));
-        assert_eq!(latest_activity_ms(None, 200), (200, ActivitySource::FileModified));
+        assert_eq!(
+            latest_activity_ms(Some(100), 200),
+            (200, ActivitySource::FileModified)
+        );
+        assert_eq!(
+            latest_activity_ms(Some(300), 200),
+            (300, ActivitySource::ContentTimestamp)
+        );
+        assert_eq!(
+            latest_activity_ms(None, 200),
+            (200, ActivitySource::FileModified)
+        );
     }
 
     #[test]
@@ -7748,7 +10234,10 @@ mod tests {
             None,
         );
 
-        assert_eq!(identity.key, "path:f:/shanghaip4/neon/uga/dev_2/plugins/aesworld");
+        assert_eq!(
+            identity.key,
+            "path:f:/shanghaip4/neon/uga/dev_2/plugins/aesworld"
+        );
         assert_eq!(identity.name, "AesWorld");
         assert_eq!(identity.label, "AesWorld · DEV_2");
         assert_eq!(identity.group, "UGA");
@@ -7849,19 +10338,31 @@ mod tests {
         let old_updated_ms = scan_time_ms - STATUS_RECENT_CONTENT_WINDOW_MS - 1;
 
         assert_eq!(
-            codex_status_from_thread(&json!({
-                "status": { "type": "active", "activeFlags": ["waitingOnUserInput"] }
-            }), old_updated_ms, scan_time_ms),
+            codex_status_from_thread(
+                &json!({
+                    "status": { "type": "active", "activeFlags": ["waitingOnUserInput"] }
+                }),
+                old_updated_ms,
+                scan_time_ms
+            ),
             "waiting"
         );
         assert_eq!(
-            codex_status_from_thread(&json!({
-                "status": { "type": "active", "activeFlags": [] }
-            }), old_updated_ms, scan_time_ms),
+            codex_status_from_thread(
+                &json!({
+                    "status": { "type": "active", "activeFlags": [] }
+                }),
+                old_updated_ms,
+                scan_time_ms
+            ),
             "running"
         );
         assert_eq!(
-            codex_status_from_thread(&json!({ "status": "notLoaded" }), recent_updated_ms, scan_time_ms),
+            codex_status_from_thread(
+                &json!({ "status": "notLoaded" }),
+                recent_updated_ms,
+                scan_time_ms
+            ),
             "running"
         );
         assert_eq!(
@@ -7878,7 +10379,11 @@ mod tests {
             "idle"
         );
         assert_eq!(
-            codex_status_from_thread(&json!({ "status": "notLoaded" }), old_updated_ms, scan_time_ms),
+            codex_status_from_thread(
+                &json!({ "status": "notLoaded" }),
+                old_updated_ms,
+                scan_time_ms
+            ),
             "idle"
         );
     }
@@ -7892,38 +10397,230 @@ mod tests {
     }
 
     #[test]
+    fn codex_jsonl_session_id_reads_rollout_uuid_tail() {
+        let path = Path::new(
+            r"C:\Users\me\.codex\sessions\2026\06\23\rollout-2026-06-23T16-41-04-019ef3a3-cb3d-7632-beb5-f023ed79ab1e.jsonl",
+        );
+
+        assert_eq!(
+            codex_session_id_from_path(path).as_deref(),
+            Some("019ef3a3-cb3d-7632-beb5-f023ed79ab1e")
+        );
+    }
+
+    #[test]
+    fn codex_jsonl_session_fallback_reads_local_file_summary() {
+        let session_id = "019ef3a3-cb3d-7632-beb5-f023ed79ab1e";
+        let temp_dir =
+            env::temp_dir().join(format!("agentwatcher-codex-jsonl-{}", current_time_ms()));
+        fs::create_dir_all(&temp_dir).unwrap();
+        let session_path =
+            temp_dir.join(format!("rollout-2026-06-23T16-41-04-{}.jsonl", session_id));
+        let jsonl = [
+            json!({
+                "timestamp": "2026-06-29T10:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": session_id,
+                    "cwd": r"F:\ShanghaiP4\neon\Plugins\AesWorld"
+                }
+            })
+            .to_string(),
+            json!({
+                "timestamp": "2026-06-29T10:01:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "id": "msg_should_not_be_session_id",
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": "# AGENTS.md instructions\nignore bootstrap context" }
+                    ]
+                }
+            })
+            .to_string(),
+            json!({
+                "timestamp": "2026-06-29T10:02:00Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "user_message",
+                    "message": "继续调查 AesWorld 渲染问题 todo-aw-codex"
+                }
+            })
+            .to_string(),
+            json!({
+                "timestamp": "2026-06-29T10:03:00Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "agent_message",
+                    "message": "已经定位到本地 JSONL 会话。"
+                }
+            })
+            .to_string(),
+        ]
+        .join("\n");
+        fs::write(&session_path, jsonl).unwrap();
+
+        let scan_time_ms = current_time_ms();
+        let options = resolve_scan_options(Some(ScanOptions {
+            max_sessions: Some(80),
+            active_window_days: Some(7),
+            hide_archived: Some(true),
+            include_copilot: Some(false),
+            include_claude: Some(false),
+            include_codex: Some(true),
+            include_open_code: Some(false),
+        }));
+        let session = read_codex_jsonl_session(&session_path, scan_time_ms, &options).unwrap();
+        let expected_session_path = path_to_string(&session_path);
+
+        assert_eq!(session.id, format!("codex:{}", session_id));
+        assert_eq!(session.provider, "codex");
+        assert_eq!(
+            session.workspace_path.as_deref(),
+            Some(r"F:\ShanghaiP4\neon\Plugins\AesWorld")
+        );
+        assert_eq!(
+            session.session_path.as_deref(),
+            Some(expected_session_path.as_str())
+        );
+        assert_eq!(
+            session.session_resource.as_deref(),
+            Some("codex://threads/019ef3a3-cb3d-7632-beb5-f023ed79ab1e")
+        );
+        assert_eq!(
+            session.last_user_message.as_deref(),
+            Some("继续调查 AesWorld 渲染问题 todo-aw-codex")
+        );
+        assert_eq!(
+            session.last_ai_message.as_deref(),
+            Some("已经定位到本地 JSONL 会话。")
+        );
+        assert_eq!(session.todo_ids, vec!["todo-aw-codex".to_string()]);
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn codex_jsonl_subagent_session_is_not_a_top_level_card() {
+        let session_id = "019f1665-712a-7eb1-8c13-3d002c9b8bcc";
+        let temp_dir =
+            env::temp_dir().join(format!("agentwatcher-codex-subagent-{}", current_time_ms()));
+        fs::create_dir_all(&temp_dir).unwrap();
+        let session_path =
+            temp_dir.join(format!("rollout-2026-06-30T10-39-39-{}.jsonl", session_id));
+        let jsonl = [
+            json!({
+                "timestamp": "2026-06-30T02:39:55.532Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": session_id,
+                    "parent_thread_id": "019ef3a3-cb3d-7632-beb5-f023ed79ab1e",
+                    "cwd": r"F:\ShanghaiP4\neon\Plugins\AesWorld",
+                    "source": {
+                        "subagent": {
+                            "thread_spawn": {
+                                "parent_thread_id": "019ef3a3-cb3d-7632-beb5-f023ed79ab1e",
+                                "depth": 1,
+                                "agent_role": "ue-reviewer"
+                            }
+                        }
+                    },
+                    "thread_source": "subagent",
+                    "agent_role": "ue-reviewer"
+                }
+            })
+            .to_string(),
+            json!({
+                "timestamp": "2026-06-30T02:39:56.639Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "user_message",
+                    "message": "只读评审。工作区是 Host：F:\\ShanghaiP4\\neon\\Hosts\\W-neon-dev1\\T-hier-anchor-rebase_Host\\Plugins\\AesWorld。"
+                }
+            })
+            .to_string(),
+        ]
+        .join("\n");
+        fs::write(&session_path, jsonl).unwrap();
+
+        let options = resolve_scan_options(Some(ScanOptions {
+            max_sessions: Some(80),
+            active_window_days: Some(7),
+            hide_archived: Some(true),
+            include_copilot: Some(false),
+            include_claude: Some(false),
+            include_codex: Some(true),
+            include_open_code: Some(false),
+        }));
+
+        assert!(read_codex_jsonl_session(&session_path, current_time_ms(), &options).is_none());
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
     fn opencode_session_resource_percent_encodes_session_id() {
         assert_eq!(
             opencode_session_resource("session/with space"),
             "opencode://sessions/session%2Fwith%20space"
         );
         assert_eq!(
-            opencode_session_id_from_resource("opencode://sessions/session%2Fwith%20space").as_deref(),
+            opencode_session_id_from_resource("opencode://sessions/session%2Fwith%20space")
+                .as_deref(),
             Some("session/with space")
+        );
+    }
+
+    #[test]
+    fn session_bridge_link_scopes_resource_to_workspace() {
+        let session = OpenSessionRequest {
+            id: None,
+            provider: None,
+            workspace_path: Some(r"F:\Projects\AesWorld".to_string()),
+            session_resource: Some("vscode-chat-session://local/session-abc".to_string()),
+        };
+        let ack_path =
+            Path::new(r"C:\Users\pb763\AppData\Local\Temp\AgentWatcher\handoff-acks\abc.json");
+        let link = session_bridge_link(&session, Some(ack_path), Some("token-abc")).unwrap();
+        let bridge_id = format!(
+            "{}.{}",
+            "agentwatcher",
+            ["agentwatcher-vscode", "-session", "-bridge"].concat()
+        );
+        let expected_prefix = format!("vscode://{bridge_id}/open?target=editor&scopedResource=");
+
+        assert!(link.starts_with(&expected_prefix));
+        assert!(link.contains("scopedResource=vscode-chat-session%3A%2F%2Flocal%2Fsession-abc"));
+        assert!(link.contains("workspacePath=F%3A%5CProjects%5CAesWorld"));
+        assert!(link.contains("ackToken=token-abc"));
+        assert!(
+            !link.contains("&resource="),
+            "old resource= parameter lets stale bridge builds open sessions in the wrong workspace"
         );
     }
 
     #[test]
     fn opencode_desktop_deep_links_match_supported_routes() {
         assert_eq!(
-            opencode_open_project_deep_link(r"F:\AiProject\AgentWatcher"),
-            "opencode://open-project?directory=F%3A%5CAiProject%5CAgentWatcher"
+            opencode_open_project_deep_link(r"X:\Workspace\AgentWatcher"),
+            "opencode://open-project?directory=X%3A%5CWorkspace%5CAgentWatcher"
         );
         assert_eq!(
-            opencode_new_session_deep_link(r"F:\AiProject\AgentWatcher", "hello todo-awoc-abc123"),
-            "opencode://new-session?directory=F%3A%5CAiProject%5CAgentWatcher&prompt=hello%20todo-awoc-abc123"
+            opencode_new_session_deep_link(r"X:\Workspace\AgentWatcher", "hello todo-awoc-abc123"),
+            "opencode://new-session?directory=X%3A%5CWorkspace%5CAgentWatcher&prompt=hello%20todo-awoc-abc123"
         );
     }
 
     #[test]
     fn opencode_web_session_url_matches_renderer_route_slug() {
         assert_eq!(
-            opencode_web_directory_slug(r"F:\AiProject\UnrealDevFlow"),
-            "RjpcQWlQcm9qZWN0XFVucmVhbERldkZsb3c"
+            opencode_web_directory_slug(r"X:\Workspace\DevFlow"),
+            "WDpcV29ya3NwYWNlXERldkZsb3c"
         );
         assert_eq!(
-            opencode_web_session_url(49348, r"F:\AiProject\UnrealDevFlow", "ses_test"),
-            "http://127.0.0.1:49348/RjpcQWlQcm9qZWN0XFVucmVhbERldkZsb3c/session/ses_test"
+            opencode_web_session_url(49348, r"X:\Workspace\DevFlow", "ses_test"),
+            "http://127.0.0.1:49348/WDpcV29ya3NwYWNlXERldkZsb3c/session/ses_test"
         );
     }
 
@@ -7951,7 +10648,7 @@ mod tests {
         let row = OpenCodeSessionRow {
             id: "ses_test".to_string(),
             title: "Test handoff".to_string(),
-            directory: r"F:\AiProject\AgentWatcher".to_string(),
+            directory: r"X:\Workspace\AgentWatcher".to_string(),
             path: None,
             time_created: 1000,
             time_updated: 2000,
@@ -7974,7 +10671,8 @@ mod tests {
                 parts: vec![
                     OpenCodeTranscriptPart {
                         label: "tool".to_string(),
-                        text: "[tool: shell status=completed callID=call_1]\nraw output:\npassed".to_string(),
+                        text: "[tool: shell status=completed callID=call_1]\nraw output:\npassed"
+                            .to_string(),
                     },
                     OpenCodeTranscriptPart {
                         label: "text".to_string(),
@@ -8013,7 +10711,7 @@ mod tests {
         let row = OpenCodeSessionRow {
             id: "ses_test".to_string(),
             title: "Implement OpenCode provider".to_string(),
-            directory: r"F:\AiProject\AgentWatcher".to_string(),
+            directory: r"X:\Workspace\AgentWatcher".to_string(),
             path: Some("AiProject/AgentWatcher".to_string()),
             time_created: scan_time_ms - 600_000,
             time_updated: scan_time_ms - 120_000,
@@ -8044,7 +10742,10 @@ mod tests {
         assert_eq!(session.title, "Implement OpenCode provider");
         assert_eq!(session.workspace_name, "AgentWatcher");
         assert_eq!(session.status, "running");
-        assert_eq!(session.session_resource.as_deref(), Some("opencode://sessions/ses_test"));
+        assert_eq!(
+            session.session_resource.as_deref(),
+            Some("opencode://sessions/ses_test")
+        );
         assert_eq!(session.todo_ids, vec!["todo-awoc-abc123".to_string()]);
     }
 
@@ -8110,7 +10811,10 @@ mod tests {
             summary.last_user_message.as_deref(),
             Some("Start OpenCode task todo-awoc-abc123")
         );
-        assert_eq!(summary.last_ai_message.as_deref(), Some("OpenCode reply is visible."));
+        assert_eq!(
+            summary.last_ai_message.as_deref(),
+            Some("OpenCode reply is visible.")
+        );
         assert_eq!(summary.todo_ids, vec!["todo-awoc-abc123".to_string()]);
     }
 
@@ -8146,7 +10850,7 @@ mod tests {
         let row = OpenCodeSessionRow {
             id: session_id.to_string(),
             title: "Budget session".to_string(),
-            directory: r"F:\AiProject\AgentWatcher".to_string(),
+            directory: r"X:\Workspace\AgentWatcher".to_string(),
             path: None,
             time_created: 900,
             time_updated: 1_000,
@@ -8163,7 +10867,10 @@ mod tests {
         let full = cached_or_read_opencode_session_summary(&connection, &row, &mut one_fetch);
         assert_eq!(one_fetch, 0);
         assert_eq!(full.message_count, 1);
-        assert_eq!(full.last_user_message.as_deref(), Some("Budgeted OpenCode detail"));
+        assert_eq!(
+            full.last_user_message.as_deref(),
+            Some("Budgeted OpenCode detail")
+        );
 
         let mut no_budget_after_cache = 0usize;
         let cached =
@@ -8273,7 +10980,7 @@ mod tests {
             "preview": "Wire Codex desktop support",
             "status": "notLoaded",
             "updatedAt": updated_ms,
-            "cwd": r"F:\AiProject\AgentWatcher",
+            "cwd": r"X:\Workspace\AgentWatcher",
             "path": r"C:\Users\me\.codex\sessions\2026\06\05\thread.jsonl",
             "turns": [
                 {
@@ -8321,7 +11028,10 @@ mod tests {
         assert_eq!(session.provider, "codex");
         assert_eq!(session.provider_label, "CX");
         assert_eq!(session.status, "idle");
-        assert_eq!(session.workspace_path.as_deref(), Some(r"F:\AiProject\AgentWatcher"));
+        assert_eq!(
+            session.workspace_path.as_deref(),
+            Some(r"X:\Workspace\AgentWatcher")
+        );
         assert_eq!(
             session.session_resource.as_deref(),
             Some("codex://threads/019e9715-ea58-74f2-af8f-feca74ba9d08")
@@ -8333,6 +11043,57 @@ mod tests {
         );
         assert_eq!(session.last_ai_message.as_deref(), Some("Latest AI reply."));
         assert_eq!(session.todo_ids, vec!["todo-mpz70wv9-afo8hl".to_string()]);
+    }
+
+    #[test]
+    fn codex_app_server_subagent_thread_is_not_a_top_level_card() {
+        let scan_time_ms = 1_780_651_255_000;
+        let updated_ms = scan_time_ms - 60_000;
+        let options = resolve_scan_options(Some(ScanOptions {
+            max_sessions: Some(80),
+            active_window_days: Some(7),
+            hide_archived: Some(true),
+            include_copilot: Some(false),
+            include_claude: Some(false),
+            include_codex: Some(true),
+            include_open_code: Some(false),
+        }));
+        let thread = json!({
+            "id": "019f1665-d477-7443-9248-4068f48b2ffb",
+            "preview": "只读评审。工作区是 Host：F:\\ShanghaiP4\\neon\\Hosts\\W-neon-dev1",
+            "status": "notLoaded",
+            "updatedAt": updated_ms,
+            "cwd": r"F:\ShanghaiP4\neon\Plugins\AesWorld",
+            "parent_thread_id": "019ef3a3-cb3d-7632-beb5-f023ed79ab1e",
+            "thread_source": "subagent",
+            "source": {
+                "subagent": {
+                    "thread_spawn": {
+                        "parent_thread_id": "019ef3a3-cb3d-7632-beb5-f023ed79ab1e",
+                        "depth": 1,
+                        "agent_role": "critic"
+                    }
+                }
+            },
+            "turns": [
+                {
+                    "id": "turn-subagent",
+                    "status": "completed",
+                    "startedAt": updated_ms,
+                    "completedAt": updated_ms + 1,
+                    "items": [
+                        {
+                            "type": "userMessage",
+                            "content": [
+                                { "type": "text", "text": "只读评审。工作区是 Host。" }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        });
+
+        assert!(read_codex_thread(&thread, scan_time_ms, &options).is_none());
     }
 
     #[test]
@@ -8353,12 +11114,16 @@ mod tests {
             "preview": "This is the first prompt, not the latest user message",
             "status": "notLoaded",
             "updatedAt": updated_ms,
-            "cwd": r"F:\AiProject\AgentWatcher"
+            "cwd": r"X:\Workspace\AgentWatcher"
         });
 
-        let session = read_codex_thread_with_summary(&thread, scan_time_ms, &options, None).unwrap();
+        let session =
+            read_codex_thread_with_summary(&thread, scan_time_ms, &options, None).unwrap();
 
-        assert_eq!(session.title, "This is the first prompt, not the latest user message");
+        assert_eq!(
+            session.title,
+            "This is the first prompt, not the latest user message"
+        );
         assert_eq!(session.last_user_message, None);
         assert_eq!(session.last_ai_message, None);
         assert_eq!(session.message_count, 0);
@@ -8382,7 +11147,7 @@ mod tests {
             "preview": "First prompt should stay title-only",
             "status": "notLoaded",
             "updatedAt": updated_ms,
-            "cwd": r"F:\AiProject\AgentWatcher"
+            "cwd": r"X:\Workspace\AgentWatcher"
         });
         let summary = CodexTurnSummary {
             thread_updated_ms: updated_ms,
@@ -8394,11 +11159,18 @@ mod tests {
         };
 
         let session =
-            read_codex_thread_with_summary(&thread, scan_time_ms, &options, Some(&summary)).unwrap();
+            read_codex_thread_with_summary(&thread, scan_time_ms, &options, Some(&summary))
+                .unwrap();
 
         assert_eq!(session.status, "idle");
-        assert_eq!(session.last_user_message.as_deref(), Some("Actually latest user input"));
-        assert_eq!(session.last_ai_message.as_deref(), Some("Actually latest AI reply"));
+        assert_eq!(
+            session.last_user_message.as_deref(),
+            Some("Actually latest user input")
+        );
+        assert_eq!(
+            session.last_ai_message.as_deref(),
+            Some("Actually latest AI reply")
+        );
         assert_eq!(session.message_count, 2);
     }
 
@@ -8438,7 +11210,10 @@ mod tests {
             include_open_code: Some(false),
         }));
 
-        assert_eq!(codex_scan_turn_fetch_budget(&options), CODEX_SCAN_TURN_FETCH_BUDGET);
+        assert_eq!(
+            codex_scan_turn_fetch_budget(&options),
+            CODEX_SCAN_TURN_FETCH_BUDGET
+        );
         assert!(codex_thread_list_limit(&options) <= 120);
     }
 
@@ -8483,16 +11258,25 @@ mod tests {
 
         assert_eq!(session.provider, "codex");
         assert_eq!(session.provider_label, "CX");
-        assert_eq!(session.workspace_path.as_deref(), Some(workspace_path.as_str()));
+        assert_eq!(
+            session.workspace_path.as_deref(),
+            Some(workspace_path.as_str())
+        );
         let expected_resource = codex_thread_resource(&thread_id);
-        assert_eq!(session.session_resource.as_deref(), Some(expected_resource.as_str()));
+        assert_eq!(
+            session.session_resource.as_deref(),
+            Some(expected_resource.as_str())
+        );
         assert!(session
             .last_user_message
             .as_deref()
             .unwrap_or("")
             .contains(&token));
         assert!(session.todo_ids.contains(&todo_id));
-        assert!(matches!(session.status.as_str(), "running" | "waiting" | "idle"));
+        assert!(matches!(
+            session.status.as_str(),
+            "running" | "waiting" | "idle"
+        ));
         shutdown_codex_app_server();
     }
 
@@ -8532,25 +11316,30 @@ mod tests {
                     "archived": false
                 }),
             )?;
-            let Some(thread_json) = response
-                .get("data")
-                .and_then(Value::as_array)
-                .and_then(|threads| {
-                    threads
-                        .iter()
-                        .find(|thread| {
-                            string_at(thread, &["/id", "/sessionId"])
-                                .map(|candidate| candidate == thread_id)
-                                .unwrap_or(false)
-                        })
-                        .cloned()
-                })
+            let Some(thread_json) =
+                response
+                    .get("data")
+                    .and_then(Value::as_array)
+                    .and_then(|threads| {
+                        threads
+                            .iter()
+                            .find(|thread| {
+                                string_at(thread, &["/id", "/sessionId"])
+                                    .map(|candidate| candidate == thread_id)
+                                    .unwrap_or(false)
+                            })
+                            .cloned()
+                    })
             else {
                 return Ok(None);
             };
 
             let enriched_thread = codex_thread_with_turns(client, &thread_json);
-            Ok(read_codex_thread(&enriched_thread, current_time_ms(), options))
+            Ok(read_codex_thread(
+                &enriched_thread,
+                current_time_ms(),
+                options,
+            ))
         })
         .ok()
         .flatten()
@@ -8616,8 +11405,30 @@ pub fn run() {
             prepare_handoff_source_context,
             get_todo_state,
             save_todo_state,
+            scan_module_plugins,
+            get_plugin_link_status,
+            install_plugin_links,
+            repair_plugin_links,
+            get_plugin_runtime_state,
+            set_plugin_enabled,
+            get_orchestration_status,
+            commit_ueworkflow_dry_run,
+            commit_ueworkflow_knowledge_record,
+            get_ueworkflow_doctor,
+            get_ueworkflow_modules,
+            get_ueworkflow_module_status,
+            run_ueworkflow_command,
+            get_ueworkflow_command_policy,
+            run_ueworkflow_master_dry_run,
+            run_ueworkflow_master_execute,
+            start_ueworkflow_master_execute_run,
+            get_ueworkflow_master_execute_run,
+            start_module_command_run,
+            get_module_command_run,
+            cancel_module_command_run,
             get_bridge_status,
             install_bridge,
+            get_debug_runtime_state,
             set_window_always_on_top
         ])
         .setup(|app| {
@@ -8635,7 +11446,7 @@ pub fn run() {
                         apply_native_window_icons(&icon_refresh_window);
                     });
                 }
-                let _ = window.set_always_on_top(true);
+                let _ = window.set_always_on_top(!agentwatcher_silent_debug_enabled());
                 let _ = window.set_decorations(false);
                 let _ = window.set_resizable(true);
             }
