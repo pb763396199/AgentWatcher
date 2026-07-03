@@ -5,12 +5,12 @@ status: done
 date: 2026-06-15
 language: zh-CN
 evidence_refs:
-  - F:/AiProject/AgentWatcher/src-tauri/src/lib.rs
-  - F:/AiProject/AgentWatcher/ui/index.html
-  - F:/AiProject/AgentWatcher/tools/tauri-realtest/cli.mjs
-  - F:/AiProject/AgentWatcher/tools/tauri-dev.mjs
-  - F:/AiProject/AgentWatcher/.tmp/tauri-realtest/20260612-105708/result.json
-  - F:/AiProject/AgentWatcher/.tmp/tauri-realtest/20260612-113344/result.json
+  - src-tauri/src/lib.rs
+  - ui/index.html
+  - tools/tauri-realtest/cli.mjs
+  - tools/tauri-dev.mjs
+  - .tmp/tauri-realtest/20260612-105708/result.json
+  - .tmp/tauri-realtest/20260612-113344/result.json
 ---
 
 # OpenCode Provider 与可携带接续验证复盘

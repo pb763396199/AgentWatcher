@@ -5,9 +5,9 @@ status: done
 date: 2026-06-15
 language: zh-CN
 evidence_refs:
-  - F:/AiProject/AgentWatcher/src-tauri/src/lib.rs
-  - F:/AiProject/AgentWatcher/.tmp/tauri-realtest/20260612-113344/result.json
-  - F:/AiProject/AgentWatcher/.tmp/tauri-realtest/20260613-104048/result.json
+  - src-tauri/src/lib.rs
+  - .tmp/tauri-realtest/20260612-113344/result.json
+  - .tmp/tauri-realtest/20260613-104048/result.json
 ---
 
 # VS Code Bridge 会话重开重试修复复盘

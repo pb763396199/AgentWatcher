@@ -5,11 +5,11 @@ status: done
 date: 2026-06-15
 language: zh-CN
 evidence_refs:
-  - F:/AiProject/AgentWatcher/ui/index.html
-  - F:/AiProject/AgentWatcher/tools/tauri-realtest/cli.mjs
-  - F:/AiProject/AgentWatcher/.tmp/tauri-realtest/20260615-120832/result.json
-  - F:/AiProject/AgentWatcher/.tmp/tauri-realtest/20260615-121413/result.json
-  - F:/AiProject/AgentWatcher/.tmp/tauri-realtest/20260615-121449/result.json
+  - ui/index.html
+  - tools/tauri-realtest/cli.mjs
+  - .tmp/tauri-realtest/20260615-120832/result.json
+  - .tmp/tauri-realtest/20260615-121413/result.json
+  - .tmp/tauri-realtest/20260615-121449/result.json
 ---
 
 # AgentWatcher 多屏子面板可见性修复复盘
