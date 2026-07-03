@@ -2398,4 +2398,74 @@ mod tests {
         assert!(execute.contains("\"gitMutation\":false"));
         assert!(execute.contains("\"rawUnrealBuild\":\"disabled\""));
     }
+
+    /// 回归：用户填主项目 DEV，但匹配到的 DevFlow workspace 绑定 DEV_1 时，
+    /// 绝不能沿用 DEV_1 绑定（历史 bug：Host 项目/主项目被串到 DEV_1）。
+    /// 有主插件路径时必须改为为 DEV 登记独立 workspace；无主插件路径时必须阻断。
+    #[test]
+    fn explicit_main_project_never_falls_back_to_workspace_default_project() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "uwf-devflow-retarget-regression-{}",
+            std::process::id()
+        ));
+        let dev = temp_root.join("UGA").join("DEV");
+        let dev_1 = temp_root.join("UGA").join("DEV_1");
+        let plugin_path = temp_root.join("Plugins").join("AesWorld");
+        for dir in [&dev, &dev_1, &plugin_path] {
+            fs::create_dir_all(dir).expect("create temp dirs");
+        }
+        fs::write(dev.join("DEV.uproject"), "{}").expect("write DEV uproject");
+        fs::write(dev_1.join("DEV_1.uproject"), "{}").expect("write DEV_1 uproject");
+        let config_dir = temp_root.join("config");
+        fs::create_dir_all(&config_dir).expect("create config dir");
+        fs::write(
+            config_dir.join("config.toml"),
+            format!(
+                "hosts_root = '{hosts}'\ndefault_project = '{dev1}'\n\n[workspaces.neon-dev1]\nhosts_root = '{hosts}'\nplugin_path = '{plugin}'\ndefault_project = '{dev1}'\n",
+                hosts = temp_root.join("Hosts").display(),
+                dev1 = dev_1.display(),
+                plugin = plugin_path.display(),
+            ),
+        )
+        .expect("write config");
+        env::set_var(devflow_config_env_name(), &config_dir);
+
+        let request = CommandRequest {
+            workspace: Some(plugin_path.to_string_lossy().to_string()),
+            main_project: Some(dev.to_string_lossy().to_string()),
+            primary_path: Some(plugin_path.to_string_lossy().to_string()),
+            ..CommandRequest::default()
+        };
+
+        // 有主插件路径：必须重定向到新 workspace，主项目必须是 DEV，不能是 DEV_1。
+        let resolved = resolve_udf_workspace_for_request(
+            &request,
+            request.workspace.as_deref().unwrap(),
+            true,
+        )
+        .expect("retarget must succeed when binding can be registered");
+        assert_ne!(resolved.name, "neon-dev1", "不能沿用 DEV_1 的 workspace");
+        let resolved_project = resolved
+            .default_project
+            .as_ref()
+            .expect("retargeted workspace must carry the requested project");
+        assert!(
+            paths_equal(resolved_project, &dev),
+            "主项目必须是用户填写的 DEV，而不是 workspace 默认的 DEV_1：{}",
+            resolved_project.display()
+        );
+
+        // 无主插件路径（不可登记绑定）：必须阻断，不能静默串到 DEV_1。
+        let blocked = resolve_udf_workspace_for_request(
+            &request,
+            request.workspace.as_deref().unwrap(),
+            false,
+        );
+        let error = blocked.expect_err("不可登记绑定时必须阻断而不是串项目");
+        assert_eq!(error.status, "blocked");
+        assert!(error.message.contains("避免串项目"));
+
+        env::remove_var(devflow_config_env_name());
+        let _ = fs::remove_dir_all(&temp_root);
+    }
 }
