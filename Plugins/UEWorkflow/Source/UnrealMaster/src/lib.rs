@@ -78,6 +78,9 @@ fn master_dry_run_json(request: &CommandRequest) -> String {
         uwf_knowledgebase::command_json("dry-run", &kb_request),
     ];
     let context_confirmation = context_confirmation_from_module_result(&module_results[0], request);
+    if request.compact {
+        return master_dry_run_compact_json(request, &module_results, &context_confirmation);
+    }
     format!(
         "{{\"kind\":\"UnrealWorkflowMasterResult\",\"contractVersion\":{},\"status\":\"planned\",\"command\":\"master dry-run\",\"request\":{},\"confirmationBoundary\":{},\"willExecute\":false,\"contextConfirmation\":{},\"stages\":{},\"moduleResults\":{},\"providerPackage\":{},\"blockedActions\":{},\"sideEffects\":[]}}",
         CONTRACT_VERSION,
@@ -119,6 +122,18 @@ fn master_execute_json(request: &CommandRequest) -> String {
     let context_confirmation = context_confirmation_from_module_result(&dev_result, request);
     let dev_status = result_status(&dev_result).unwrap_or_else(|| "failed".to_string());
     if dev_status != "complete" {
+        if request.compact {
+            return format!(
+                "{{\"kind\":\"UnrealWorkflowMasterResult\",\"contractVersion\":{},\"status\":{},\"command\":\"master execute\",\"request\":{},\"message\":{},\"contextConfirmation\":{},\"moduleSummary\":{},\"providerPackage\":null,\"nextCommands\":{},\"sideEffects\":[]}}",
+                CONTRACT_VERSION,
+                json_string(if dev_status == "blocked" { "blocked" } else { "failed" }),
+                request.to_json(),
+                json_string("DevFlow 未能创建隔离任务 Host/worktree；Provider 不会被派发，禁止退化为手工修改主线。"),
+                compact_context_confirmation_json(&context_confirmation, request),
+                compact_module_summary_json(&[dev_result]),
+                next_commands_json(request)
+            );
+        }
         return format!(
             "{{\"kind\":\"UnrealWorkflowMasterResult\",\"contractVersion\":{},\"status\":{},\"command\":\"master execute\",\"request\":{},\"message\":{},\"contextConfirmation\":{},\"stages\":{},\"moduleResults\":{},\"providerPackage\":null,\"diagnosis\":{},\"review\":{},\"knowledgeClosure\":{},\"sideEffects\":[]}}",
             CONTRACT_VERSION,
@@ -171,6 +186,23 @@ fn master_execute_json(request: &CommandRequest) -> String {
     } else {
         "complete"
     };
+    if request.compact {
+        return format!(
+            "{{\"kind\":\"UnrealWorkflowMasterResult\",\"contractVersion\":{},\"status\":{},\"command\":\"master execute\",\"request\":{},\"contextConfirmation\":{},\"moduleSummary\":{},\"createdTask\":{},\"providerPackage\":{},\"nextCommands\":{},\"diagnosis\":{},\"review\":{},\"knowledgeClosure\":{},\"sideEffects\":[{}]}}",
+            CONTRACT_VERSION,
+            json_string(status),
+            request.to_json(),
+            compact_context_confirmation_json(&context_confirmation, request),
+            compact_module_summary_json(&module_results),
+            compact_created_task_json(&module_results[0]),
+            compact_provider_package_json(request),
+            next_commands_json(request),
+            json_string("失败时由诊断 Agent 使用模块结果和执行记录定位原因。"),
+            json_string("真实修改后触发评审；本次安全执行只生成任务环境和 provider 指令。"),
+            json_string("任务结束时再调用 KnowledgeBase record-task 写入 scope。"),
+            json_string("knowledge-light-artifact")
+        );
+    }
     format!(
         "{{\"kind\":\"UnrealWorkflowMasterResult\",\"contractVersion\":{},\"status\":{},\"command\":\"master execute\",\"request\":{},\"contextConfirmation\":{},\"stages\":{},\"moduleResults\":{},\"providerPackage\":{},\"diagnosis\":{},\"review\":{},\"knowledgeClosure\":{},\"sideEffects\":[{}]}}",
         CONTRACT_VERSION,
@@ -285,6 +317,198 @@ fn provider_package_json(request: &CommandRequest, context_confirmation: &str) -
         context_confirmation,
         master_module_calls_json()
     )
+}
+
+fn master_dry_run_compact_json(
+    request: &CommandRequest,
+    module_results: &[String],
+    context_confirmation: &str,
+) -> String {
+    format!(
+        "{{\"kind\":\"UnrealWorkflowMasterResult\",\"contractVersion\":{},\"status\":\"planned\",\"command\":\"master dry-run\",\"request\":{},\"confirmationBoundary\":{},\"willExecute\":false,\"contextConfirmation\":{},\"moduleSummary\":{},\"providerPackage\":{},\"nextCommands\":{},\"blockedActions\":{},\"sideEffects\":[]}}",
+        CONTRACT_VERSION,
+        request.to_json(),
+        json_string("UEWorkflow.UnrealMaster.execute.v1"),
+        compact_context_confirmation_json(context_confirmation, request),
+        compact_module_summary_json(module_results),
+        compact_provider_package_json(request),
+        next_commands_json(request),
+        json_array([
+            "任意 shell",
+            "raw UE build",
+            "破坏性删除",
+            "绕过 UWF/DevFlow 直接改主线"
+        ]
+        .into_iter()
+        .map(json_string))
+    )
+}
+
+fn compact_provider_package_json(request: &CommandRequest) -> String {
+    format!(
+        "{{\"provider\":{},\"entryRole\":{},\"masterCommand\":{},\"rule\":{}}}",
+        json_string(provider_for_request(request)),
+        json_string("虚幻大师"),
+        json_string("uwf master dry-run --compact --json -> nextCommands.masterExecute"),
+        json_string(
+            "Provider 只按 nextCommands 执行，不查 schema，不读 UWF 源码，不绕回裸 unrealdevflow。"
+        )
+    )
+}
+
+fn compact_context_confirmation_json(
+    context_confirmation: &str,
+    request: &CommandRequest,
+) -> String {
+    let value = serde_json::from_str::<Value>(context_confirmation).unwrap_or(Value::Null);
+    let deps = value.get("pluginDependencies");
+    let host = value.get("hostProject");
+    format!(
+        "{{\"devFlowWorkspace\":{},\"workspacePath\":{},\"mainProject\":{},\"hostRoot\":{},\"primaryPlugin\":{},\"primaryPluginPath\":{},\"hostStatus\":{},\"dependencyStatus\":{},\"dependencyCount\":{},\"mustConfirmBeforeProviderExecution\":{}}}",
+        value_or_request_json(value.get("devFlowWorkspace"), request.workspace.as_deref()),
+        value_or_request_json(value.get("workspacePath"), request.workspace.as_deref()),
+        value_or_request_json(value.get("mainProject"), request.main_project.as_deref()),
+        value_or_request_json(value.get("hostRoot"), request.host_root.as_deref()),
+        value_or_request_json(value.get("primaryPlugin"), request.primary.as_deref()),
+        value_or_request_json(value.get("primaryPluginPath"), request.primary_path.as_deref()),
+        json_value_or_null(host.and_then(|item| item.get("status"))),
+        json_value_or_null(deps.and_then(|item| item.get("status"))),
+        json_value_or_null(deps.and_then(|item| item.get("count"))),
+        value
+            .get("mustConfirmBeforeProviderExecution")
+            .or_else(|| value.get("requiredBeforeProviderExecution"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    )
+}
+
+fn compact_module_summary_json(module_results: &[String]) -> String {
+    let modules = ["DevFlow", "AgentHub", "KnowledgeBase"];
+    json_array(module_results.iter().enumerate().map(|(index, result)| {
+        let value = serde_json::from_str::<Value>(result).unwrap_or(Value::Null);
+        format!(
+            "{{\"module\":{},\"status\":{},\"command\":{},\"action\":{},\"message\":{}}}",
+            json_string(modules.get(index).copied().unwrap_or("Unknown")),
+            value_or_empty_string_json(value.get("status")),
+            value_or_empty_string_json(value.get("command")),
+            value_or_empty_string_json(value.get("executedAction").or_else(|| value.get("action"))),
+            json_string(&clip_json_text(
+                value.get("message").and_then(Value::as_str).unwrap_or(""),
+                220
+            ))
+        )
+    }))
+}
+
+fn compact_created_task_json(dev_result: &str) -> String {
+    let value = serde_json::from_str::<Value>(dev_result).unwrap_or(Value::Null);
+    value
+        .get("devFlow")
+        .and_then(|devflow| devflow.get("createdTask"))
+        .map(Value::to_string)
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn next_commands_json(request: &CommandRequest) -> String {
+    format!(
+        "{{\"masterExecute\":{},\"devCreateTask\":{},\"rule\":{}}}",
+        json_string(&master_execute_command(request)),
+        json_string(&dev_create_task_command(request)),
+        json_string(
+            "dry-run 成功后直接执行 masterExecute；不要查询 uwf dev schema，不要读取 UWF 源码。"
+        )
+    )
+}
+
+fn master_execute_command(request: &CommandRequest) -> String {
+    let mut parts = vec![
+        "& $uwf".to_string(),
+        "master".to_string(),
+        "execute".to_string(),
+    ];
+    push_common_command_flags(&mut parts, request);
+    push_shell_flag(
+        &mut parts,
+        "--confirm",
+        Some("UEWorkflow.UnrealMaster.execute.v1"),
+    );
+    parts.push("--compact".to_string());
+    parts.push("--json".to_string());
+    parts.join(" ")
+}
+
+fn dev_create_task_command(request: &CommandRequest) -> String {
+    let mut parts = vec![
+        "& $uwf".to_string(),
+        "dev".to_string(),
+        "execute".to_string(),
+    ];
+    push_shell_flag(&mut parts, "--action", Some("create-task"));
+    push_common_command_flags(&mut parts, request);
+    push_shell_flag(
+        &mut parts,
+        "--confirm",
+        Some("UEWorkflow.DevFlow.create-task.v1"),
+    );
+    parts.push("--compact".to_string());
+    parts.push("--json".to_string());
+    parts.join(" ")
+}
+
+fn push_common_command_flags(parts: &mut Vec<String>, request: &CommandRequest) {
+    push_shell_flag(parts, "--goal", request.goal.as_deref());
+    push_shell_flag(parts, "--workspace", request.workspace.as_deref());
+    push_shell_flag(parts, "--main-project", request.main_project.as_deref());
+    push_shell_flag(parts, "--host-root", request.host_root.as_deref());
+    push_shell_flag(parts, "--primary-path", request.primary_path.as_deref());
+    push_shell_flag(parts, "--primary", request.primary.as_deref());
+    push_shell_flag(
+        parts,
+        "--plugin-deps",
+        request.plugin_dependencies.as_deref(),
+    );
+    push_shell_flag(parts, "--id", request.task_id.as_deref());
+    push_shell_flag(parts, "--provider", Some(provider_for_request(request)));
+    push_shell_flag(parts, "--scope", request.scope.as_deref());
+}
+
+fn push_shell_flag(parts: &mut Vec<String>, flag: &str, value: Option<&str>) {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return;
+    };
+    parts.push(flag.to_string());
+    parts.push(power_shell_quote(value));
+}
+
+fn power_shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn value_or_request_json(value: Option<&Value>, fallback: Option<&str>) -> String {
+    value
+        .map(Value::to_string)
+        .unwrap_or_else(|| json_option(fallback))
+}
+
+fn json_value_or_null(value: Option<&Value>) -> String {
+    value
+        .map(Value::to_string)
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn value_or_empty_string_json(value: Option<&Value>) -> String {
+    value
+        .and_then(Value::as_str)
+        .map(json_string)
+        .unwrap_or_else(|| json_string(""))
+}
+
+fn clip_json_text(value: &str, max_chars: usize) -> String {
+    let mut clipped = value.chars().take(max_chars).collect::<String>();
+    if value.chars().count() > max_chars {
+        clipped.push_str("...");
+    }
+    clipped
 }
 
 fn context_confirmation_json(request: &CommandRequest) -> String {

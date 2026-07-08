@@ -5,8 +5,12 @@ use uwf_core::CommandRequest;
 
 fn main() -> ExitCode {
     let raw_args: Vec<String> = env::args().skip(1).collect();
+    let format = flag_value(&raw_args, "--format");
     let json = raw_args.iter().any(|arg| arg == "--json")
-        || flag_value(&raw_args, "--format").as_deref() == Some("json");
+        || matches!(
+            format.as_deref(),
+            Some("json" | "compact-json" | "provider-json")
+        );
     let request = command_request(&raw_args);
     let args = positional_args(&raw_args);
 
@@ -53,7 +57,7 @@ fn positional_args(args: &[String]) -> Vec<String> {
             skip_next = false;
             continue;
         }
-        if arg == "--json" {
+        if arg == "--json" || arg == "--compact" {
             continue;
         }
         if value_flag(arg) {
@@ -85,6 +89,11 @@ fn command_request(args: &[String]) -> CommandRequest {
         main_project: flag_value(args, "--main-project"),
         primary_path: flag_value(args, "--primary-path"),
         plugin_dependencies: flag_value(args, "--plugin-deps"),
+        compact: args.iter().any(|arg| arg == "--compact")
+            || matches!(
+                flag_value(args, "--format").as_deref(),
+                Some("compact-json" | "provider-json")
+            ),
     }
 }
 

@@ -469,6 +469,38 @@ fn cli_accepts_unrealdevflow_id_alias_for_task_id() {
 }
 
 #[test]
+fn compact_master_dry_run_gives_next_command_without_full_module_results() {
+    let output_text = run_uwf(&[
+        "master",
+        "dry-run",
+        "--goal",
+        "smoke",
+        "--workspace",
+        "neon-dev1",
+        "--id",
+        "token-smoke",
+        "--provider",
+        "copilot",
+        "--compact",
+        "--json",
+    ]);
+    let output: Value = serde_json::from_str(&output_text).expect("compact output should be json");
+
+    assert_eq!(output["status"], "planned");
+    assert!(output.get("moduleResults").is_none());
+    assert!(output["moduleSummary"].is_array());
+    assert!(output["nextCommands"]["masterExecute"]
+        .as_str()
+        .expect("masterExecute command should exist")
+        .contains("--compact --json"));
+    assert!(
+        output_text.len() < 8_000,
+        "compact dry-run should stay small enough for provider prompts: {} bytes",
+        output_text.len()
+    );
+}
+
+#[test]
 fn provider_packages_share_master_contract_between_copilot_and_codex() {
     let copilot = run_uwf_json(&[
         "master",
@@ -1105,6 +1137,58 @@ fn devflow_execute_retargets_path_workspace_when_explicit_main_project_differs()
     assert!(
         args_log.contains("--workspace neon-dev"),
         "create should target the retargeted neon-dev workspace: {args_log}"
+    );
+}
+
+#[test]
+fn compact_master_execute_returns_created_task_without_full_module_results() {
+    let root = TempKnowledgeRoot::new("master-compact");
+    let devflow_adapter = TempDevFlowAdapter::new(
+        "master-compact",
+        "neon-dev1",
+        "master-compact-smoke",
+        "AesWorld",
+    );
+    let envs = [
+        ("UWF_KNOWLEDGE_ROOT", root.path()),
+        ("UWF_DEVFLOW_ADAPTER_EXE", devflow_adapter.exe()),
+        ("UNREALDEVFLOW_CONFIG_DIR", devflow_adapter.config_dir()),
+    ];
+    let output_text = run_uwf_with_env(
+        &[
+            "master",
+            "execute",
+            "--goal",
+            "验证紧凑执行输出",
+            "--workspace",
+            "neon-dev1",
+            "--id",
+            "master-compact-smoke",
+            "--provider",
+            "copilot",
+            "--scope",
+            "project_plugin",
+            "--project",
+            "Neon",
+            "--primary",
+            "AesWorld",
+            "--confirm",
+            "UEWorkflow.UnrealMaster.execute.v1",
+            "--compact",
+            "--json",
+        ],
+        &envs,
+    );
+    let output: Value = serde_json::from_str(&output_text).expect("compact output should be json");
+
+    assert_eq!(output["status"], "complete");
+    assert!(output.get("moduleResults").is_none());
+    assert_eq!(output["createdTask"]["taskId"], "master-compact-smoke");
+    assert!(output["moduleSummary"].is_array());
+    assert!(
+        output_text.len() < 8_000,
+        "compact execute should stay small enough for provider prompts: {} bytes",
+        output_text.len()
     );
 }
 

@@ -436,7 +436,7 @@ fn provider_command_json(provider: &str, request: &CommandRequest) -> String {
         aliases,
         json_string(launch_hint),
         json_option(request.goal.as_deref()),
-        json_string("uwf master plan && uwf master dry-run && uwf master execute"),
+        json_string("uwf master dry-run --compact --json && nextCommands.masterExecute"),
         roles_json(),
         build_policy_json()
     )
@@ -690,10 +690,11 @@ PowerShell preflight:
 If the preflight fails, stop. Do not continue manually.
 Do not run arbitrary shell commands.
 Do not run raw UE builds or Build.bat directly.
-Start by producing or requesting `uwf master dry-run --json` through the resolved CLI.
+Start by producing or requesting `uwf master dry-run --compact --json` through the resolved CLI.
 When the user provides task text, build the dry-run command with explicit flags instead of running an empty dry-run:
-`& $uwf master dry-run --goal "<user goal>" --workspace "<workspace>" --main-project "<uproject dir>" --host-root "<Hosts dir>" --primary-path "<plugin path[,plugin path]>" --id "<task-id>" --provider "<provider>" --json`
+`& $uwf master dry-run --goal "<user goal>" --workspace "<workspace>" --main-project "<uproject dir>" --host-root "<Hosts dir>" --primary-path "<plugin path[,plugin path]>" --id "<task-id>" --provider "<provider>" --compact --json`
 Use `--id` for the DevFlow task id; it is the same business identifier as `--task-id`.
+After dry-run succeeds, run `nextCommands.masterExecute` exactly. Do not run `uwf dev schema`, do not inspect UWF source files, and do not read workflow memory to decide whether to bypass UWF.
 If required fields are missing, ask for those fields before executing. Never fall back to direct `unrealdevflow` CLI when uwf blocks; report the exact uwf JSON error to AgentWatcher.
 Use `uwf dev build-check --json` for build strategy checks.
 For real validation, prefer full `unrealdevflow build <task-ref>` from the DevFlow Host. Do not use `--primary-only` as the first or final validation shortcut unless the user explicitly asks for a quick module-only probe.
@@ -718,10 +719,11 @@ PowerShell preflight:
 If the preflight fails, stop. Do not continue manually.
 Do not run arbitrary shell commands.
 Do not run raw UE builds or Build.bat directly.
-Start by producing or requesting `uwf master dry-run --json` through the resolved CLI.
+Start by producing or requesting `uwf master dry-run --compact --json` through the resolved CLI.
 When the user provides task text, build the dry-run command with explicit flags instead of running an empty dry-run:
-`& $uwf master dry-run --goal "<user goal>" --workspace "<workspace>" --main-project "<uproject dir>" --host-root "<Hosts dir>" --primary-path "<plugin path[,plugin path]>" --id "<task-id>" --provider "<provider>" --json`
+`& $uwf master dry-run --goal "<user goal>" --workspace "<workspace>" --main-project "<uproject dir>" --host-root "<Hosts dir>" --primary-path "<plugin path[,plugin path]>" --id "<task-id>" --provider "<provider>" --compact --json`
 Use `--id` for the DevFlow task id; it is the same business identifier as `--task-id`.
+After dry-run succeeds, run `nextCommands.masterExecute` exactly. Do not run `uwf dev schema`, do not inspect UWF source files, and do not read workflow memory to decide whether to bypass UWF.
 If required fields are missing, ask for those fields before executing. Never fall back to direct `unrealdevflow` CLI when uwf blocks; report the exact uwf JSON error to AgentWatcher.
 Use `uwf dev build-check --json` for build strategy checks.
 For real validation, prefer full `unrealdevflow build <task-ref>` from the DevFlow Host. Do not use `--primary-only` as the first or final validation shortcut unless the user explicitly asks for a quick module-only probe.
@@ -749,10 +751,11 @@ PowerShell preflight:
 If the preflight fails, stop. Do not continue manually.
 Do not run arbitrary shell commands.
 Do not run raw UE builds or Build.bat directly.
-Start by producing or requesting `uwf master dry-run --json` through the resolved CLI.
+Start by producing or requesting `uwf master dry-run --compact --json` through the resolved CLI.
 When the user provides task text, build the dry-run command with explicit flags instead of running an empty dry-run:
-`& $uwf master dry-run --goal "<user goal>" --workspace "<workspace>" --main-project "<uproject dir>" --host-root "<Hosts dir>" --primary-path "<plugin path[,plugin path]>" --id "<task-id>" --provider "<provider>" --json`
+`& $uwf master dry-run --goal "<user goal>" --workspace "<workspace>" --main-project "<uproject dir>" --host-root "<Hosts dir>" --primary-path "<plugin path[,plugin path]>" --id "<task-id>" --provider "<provider>" --compact --json`
 Use `--id` for the DevFlow task id; it is the same business identifier as `--task-id`.
+After dry-run succeeds, run `nextCommands.masterExecute` exactly. Do not run `uwf dev schema`, do not inspect UWF source files, and do not read workflow memory to decide whether to bypass UWF.
 If required fields are missing, ask for those fields before executing. Never fall back to direct `unrealdevflow` CLI when uwf blocks; report the exact uwf JSON error to AgentWatcher.
 Use `uwf dev build-check --json` for build strategy checks.
 For real validation, prefer full `unrealdevflow build <task-ref>` from the DevFlow Host. Do not use `--primary-only` as the first or final validation shortcut unless the user explicitly asks for a quick module-only probe.
@@ -779,10 +782,11 @@ PowerShell preflight:
 If the preflight fails, stop. Do not continue manually.
 Do not run arbitrary shell commands.
 Do not run raw UE builds or Build.bat directly.
-Start by producing or requesting `uwf master dry-run --json` through the resolved CLI.
+Start by producing or requesting `uwf master dry-run --compact --json` through the resolved CLI.
 When the user provides task text, build the dry-run command with explicit flags instead of running an empty dry-run:
-`& $uwf master dry-run --goal "<user goal>" --workspace "<workspace>" --main-project "<uproject dir>" --host-root "<Hosts dir>" --primary-path "<plugin path[,plugin path]>" --id "<task-id>" --provider "<provider>" --json`
+`& $uwf master dry-run --goal "<user goal>" --workspace "<workspace>" --main-project "<uproject dir>" --host-root "<Hosts dir>" --primary-path "<plugin path[,plugin path]>" --id "<task-id>" --provider "<provider>" --compact --json`
 Use `--id` for the DevFlow task id; it is the same business identifier as `--task-id`.
+After dry-run succeeds, run `nextCommands.masterExecute` exactly. Do not run `uwf dev schema`, do not inspect UWF source files, and do not read workflow memory to decide whether to bypass UWF.
 If required fields are missing, ask for those fields before executing. Never fall back to direct `unrealdevflow` CLI when uwf blocks; report the exact uwf JSON error to AgentWatcher.
 Use `uwf dev build-check --json` for build strategy checks.
 For real validation, prefer full `unrealdevflow build <task-ref>` from the DevFlow Host. Do not use `--primary-only` as the first or final validation shortcut unless the user explicitly asks for a quick module-only probe.
@@ -960,7 +964,8 @@ mod tests {
             assert!(content.contains("虚幻大师"));
             assert!(content.contains("UnrealMaster"));
             assert!(content.contains("unreal-master"));
-            assert!(content.contains("uwf master dry-run --json"));
+            assert!(content.contains("uwf master dry-run --compact --json"));
+            assert!(content.contains("nextCommands.masterExecute"));
             assert!(content.contains("UWF_NOT_AVAILABLE"));
             assert!(content.contains("Do not continue manually"));
         }

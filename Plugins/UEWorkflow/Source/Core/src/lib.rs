@@ -295,12 +295,13 @@ pub struct CommandRequest {
     pub main_project: Option<String>,
     pub primary_path: Option<String>,
     pub plugin_dependencies: Option<String>,
+    pub compact: bool,
 }
 
 impl CommandRequest {
     pub fn to_json(&self) -> String {
         format!(
-            "{{\"goal\":{},\"workspace\":{},\"taskId\":{},\"action\":{},\"confirmation\":{},\"provider\":{},\"scope\":{},\"project\":{},\"primary\":{},\"hostRoot\":{},\"mainProject\":{},\"primaryPath\":{},\"pluginDependencies\":{}}}",
+            "{{\"goal\":{},\"workspace\":{},\"taskId\":{},\"action\":{},\"confirmation\":{},\"provider\":{},\"scope\":{},\"project\":{},\"primary\":{},\"hostRoot\":{},\"mainProject\":{},\"primaryPath\":{},\"pluginDependencies\":{},\"compact\":{}}}",
             json_option(self.goal.as_deref()),
             json_option(self.workspace.as_deref()),
             json_option(self.task_id.as_deref()),
@@ -313,7 +314,8 @@ impl CommandRequest {
             json_option(self.host_root.as_deref()),
             json_option(self.main_project.as_deref()),
             json_option(self.primary_path.as_deref()),
-            json_option(self.plugin_dependencies.as_deref())
+            json_option(self.plugin_dependencies.as_deref()),
+            self.compact
         )
     }
 }
@@ -609,6 +611,7 @@ mod tests {
             main_project: Some("F:\\ShanghaiP4\\neon\\UGA\\DEV_1".to_string()),
             primary_path: Some("F:\\ShanghaiP4\\neon\\Plugins\\AesWorld".to_string()),
             plugin_dependencies: Some("GeometryProcessing".to_string()),
+            compact: false,
         };
         let json = request.to_json();
         assert!(json.contains("\"taskId\":\"task-001\""));

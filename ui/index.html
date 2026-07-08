@@ -10740,6 +10740,11 @@
           taskPackagePath: cleanUEWorkflowTaskValue(providerPackage.taskPackagePath || providerPackage.path || '', ''),
           command: cleanUEWorkflowTaskValue(providerPackage.command || '', '')
         },
+        nextCommands: details.nextCommands && typeof details.nextCommands === 'object' ? {
+          masterExecute: String(details.nextCommands.masterExecute || '').slice(0, 4000),
+          devCreateTask: String(details.nextCommands.devCreateTask || '').slice(0, 4000),
+          rule: String(details.nextCommands.rule || '').slice(0, 600)
+        } : null,
         stages: Array.isArray(details.stages) ? details.stages.slice(0, 20) : [],
         blockedActions: Array.isArray(details.blockedActions) ? details.blockedActions.slice(0, 30).map(item => String(item).slice(0, 400)) : [],
         sideEffects: Array.isArray(details.sideEffects) ? details.sideEffects.slice(0, 30).map(item => String(item).slice(0, 400)) : [],
@@ -10876,6 +10881,11 @@
       if (blocked.length) {
         lines.push('', '安全边界');
         blocked.slice(0, 8).forEach(item => lines.push('- ' + item));
+      }
+      if (details.nextCommands?.masterExecute) {
+        lines.push('', 'UWF next command');
+        lines.push(details.nextCommands.masterExecute);
+        lines.push('Run the exact command above after dry-run succeeds. Do not run `uwf dev schema`, do not inspect UWF source files, and do not bypass to raw unrealdevflow.');
       }
       const artifacts = ueWorkflowResultArtifacts(details);
       if (artifacts.length) {
