@@ -494,7 +494,7 @@ fn command_wrapping_json() -> String {
 fn build_policy_json() -> String {
     format!(
         "{{\"rawUnrealBuild\":\"disabled\",\"mustRouteThrough\":{},\"projectBuildWrapper\":\"checked-by-devflow-build-project\",\"taskBuildWrapper\":\"checked-by-devflow-build-task\"}}",
-        json_string("DevFlow build-check")
+        json_string("DevFlow build-task or build-check")
     )
 }
 
@@ -696,9 +696,9 @@ When the user provides task text, build the dry-run command with explicit flags 
 Use `--id` for the DevFlow task id; it is the same business identifier as `--task-id`.
 After dry-run succeeds, run `nextCommands.masterExecute` exactly. Do not run `uwf dev schema`, do not inspect UWF source files, and do not read workflow memory to decide whether to bypass UWF.
 If required fields are missing, ask for those fields before executing. Never fall back to direct `unrealdevflow` CLI when uwf blocks; report the exact uwf JSON error to AgentWatcher.
-Use `uwf dev build-check --json` for build strategy checks.
+Use `uwf dev build-check --json` for build strategy checks. After editing code, run the controlled task build with `& $uwf dev execute --action build-task --workspace "<workspace>" --task-id "<task-id>" --confirm UEWorkflow.DevFlow.build-task.v1 --compact --json`.
 Switch is a real junction-changing action, not a preview. Only after the user explicitly asks for switch and confirms the UE Editor is closed, run `& $uwf dev execute --action switch --workspace "<workspace>" --task-id "<task-id>" --confirm UEWorkflow.DevFlow.switch.v1 --compact --json`; never run raw `unrealdevflow switch`.
-For real validation, prefer full `unrealdevflow build <task-ref>` from the DevFlow Host. Do not use `--primary-only` as the first or final validation shortcut unless the user explicitly asks for a quick module-only probe.
+For real validation, use the controlled UWF build-task command above. Do not run raw `unrealdevflow build`, `Build.bat`, or `RunUBT.bat` from the provider.
 Never replace a missing uwf/DevFlow path with direct source edits, direct Host creation, or raw Unreal build commands.
 Use provider commands as wrappers around uwf, not as broad always-loaded skills.
 Keep AgentWatcher taskId/runId markers in every handoff when provided.
@@ -726,9 +726,9 @@ When the user provides task text, build the dry-run command with explicit flags 
 Use `--id` for the DevFlow task id; it is the same business identifier as `--task-id`.
 After dry-run succeeds, run `nextCommands.masterExecute` exactly. Do not run `uwf dev schema`, do not inspect UWF source files, and do not read workflow memory to decide whether to bypass UWF.
 If required fields are missing, ask for those fields before executing. Never fall back to direct `unrealdevflow` CLI when uwf blocks; report the exact uwf JSON error to AgentWatcher.
-Use `uwf dev build-check --json` for build strategy checks.
+Use `uwf dev build-check --json` for build strategy checks. After editing code, run the controlled task build with `& $uwf dev execute --action build-task --workspace "<workspace>" --task-id "<task-id>" --confirm UEWorkflow.DevFlow.build-task.v1 --compact --json`.
 Switch is a real junction-changing action, not a preview. Only after the user explicitly asks for switch and confirms the UE Editor is closed, run `& $uwf dev execute --action switch --workspace "<workspace>" --task-id "<task-id>" --confirm UEWorkflow.DevFlow.switch.v1 --compact --json`; never run raw `unrealdevflow switch`.
-For real validation, prefer full `unrealdevflow build <task-ref>` from the DevFlow Host. Do not use `--primary-only` as the first or final validation shortcut unless the user explicitly asks for a quick module-only probe.
+For real validation, use the controlled UWF build-task command above. Do not run raw `unrealdevflow build`, `Build.bat`, or `RunUBT.bat` from the provider.
 Never replace a missing uwf/DevFlow path with direct source edits, direct Host creation, or raw Unreal build commands.
 Use provider commands as wrappers around uwf, not as broad always-loaded skills.
 Keep AgentWatcher taskId/runId markers in every handoff when provided.
@@ -759,9 +759,9 @@ When the user provides task text, build the dry-run command with explicit flags 
 Use `--id` for the DevFlow task id; it is the same business identifier as `--task-id`.
 After dry-run succeeds, run `nextCommands.masterExecute` exactly. Do not run `uwf dev schema`, do not inspect UWF source files, and do not read workflow memory to decide whether to bypass UWF.
 If required fields are missing, ask for those fields before executing. Never fall back to direct `unrealdevflow` CLI when uwf blocks; report the exact uwf JSON error to AgentWatcher.
-Use `uwf dev build-check --json` for build strategy checks.
+Use `uwf dev build-check --json` for build strategy checks. After editing code, run the controlled task build with `& $uwf dev execute --action build-task --workspace "<workspace>" --task-id "<task-id>" --confirm UEWorkflow.DevFlow.build-task.v1 --compact --json`.
 Switch is a real junction-changing action, not a preview. Only after the user explicitly asks for switch and confirms the UE Editor is closed, run `& $uwf dev execute --action switch --workspace "<workspace>" --task-id "<task-id>" --confirm UEWorkflow.DevFlow.switch.v1 --compact --json`; never run raw `unrealdevflow switch`.
-For real validation, prefer full `unrealdevflow build <task-ref>` from the DevFlow Host. Do not use `--primary-only` as the first or final validation shortcut unless the user explicitly asks for a quick module-only probe.
+For real validation, use the controlled UWF build-task command above. Do not run raw `unrealdevflow build`, `Build.bat`, or `RunUBT.bat` from the provider.
 Never replace a missing uwf/DevFlow path with direct source edits, direct Host creation, or raw Unreal build commands.
 Use provider commands as wrappers around uwf, not as broad always-loaded skills.
 Keep AgentWatcher taskId/runId markers in every handoff when provided.
@@ -791,9 +791,9 @@ When the user provides task text, build the dry-run command with explicit flags 
 Use `--id` for the DevFlow task id; it is the same business identifier as `--task-id`.
 After dry-run succeeds, run `nextCommands.masterExecute` exactly. Do not run `uwf dev schema`, do not inspect UWF source files, and do not read workflow memory to decide whether to bypass UWF.
 If required fields are missing, ask for those fields before executing. Never fall back to direct `unrealdevflow` CLI when uwf blocks; report the exact uwf JSON error to AgentWatcher.
-Use `uwf dev build-check --json` for build strategy checks.
+Use `uwf dev build-check --json` for build strategy checks. After editing code, run the controlled task build with `& $uwf dev execute --action build-task --workspace "<workspace>" --task-id "<task-id>" --confirm UEWorkflow.DevFlow.build-task.v1 --compact --json`.
 Switch is a real junction-changing action, not a preview. Only after the user explicitly asks for switch and confirms the UE Editor is closed, run `& $uwf dev execute --action switch --workspace "<workspace>" --task-id "<task-id>" --confirm UEWorkflow.DevFlow.switch.v1 --compact --json`; never run raw `unrealdevflow switch`.
-For real validation, prefer full `unrealdevflow build <task-ref>` from the DevFlow Host. Do not use `--primary-only` as the first or final validation shortcut unless the user explicitly asks for a quick module-only probe.
+For real validation, use the controlled UWF build-task command above. Do not run raw `unrealdevflow build`, `Build.bat`, or `RunUBT.bat` from the provider.
 Never replace a missing uwf/DevFlow path with direct source edits, direct Host creation, or raw Unreal build commands.
 Use provider commands as wrappers around uwf, not as broad always-loaded skills.
 Keep AgentWatcher taskId/runId markers in every handoff when provided.
@@ -970,6 +970,8 @@ mod tests {
             assert!(content.contains("unreal-master"));
             assert!(content.contains("uwf master dry-run --compact --json"));
             assert!(content.contains("nextCommands.masterExecute"));
+            assert!(content.contains("UEWorkflow.DevFlow.build-task.v1"));
+            assert!(content.contains("controlled UWF build-task"));
             assert!(content.contains("UWF_NOT_AVAILABLE"));
             assert!(content.contains("Do not continue manually"));
         }

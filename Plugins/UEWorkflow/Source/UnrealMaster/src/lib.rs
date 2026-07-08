@@ -411,9 +411,10 @@ fn compact_created_task_json(dev_result: &str) -> String {
 
 fn next_commands_json(request: &CommandRequest) -> String {
     format!(
-        "{{\"masterExecute\":{},\"devCreateTask\":{},\"rule\":{}}}",
+        "{{\"masterExecute\":{},\"devCreateTask\":{},\"devBuildTask\":{},\"rule\":{}}}",
         json_string(&master_execute_command(request)),
         json_string(&dev_create_task_command(request)),
+        json_string(&dev_build_task_command(request)),
         json_string(
             "dry-run 成功后直接执行 masterExecute；不要查询 uwf dev schema，不要读取 UWF 源码。"
         )
@@ -449,6 +450,24 @@ fn dev_create_task_command(request: &CommandRequest) -> String {
         &mut parts,
         "--confirm",
         Some("UEWorkflow.DevFlow.create-task.v1"),
+    );
+    parts.push("--compact".to_string());
+    parts.push("--json".to_string());
+    parts.join(" ")
+}
+
+fn dev_build_task_command(request: &CommandRequest) -> String {
+    let mut parts = vec![
+        "& $uwf".to_string(),
+        "dev".to_string(),
+        "execute".to_string(),
+    ];
+    push_shell_flag(&mut parts, "--action", Some("build-task"));
+    push_common_command_flags(&mut parts, request);
+    push_shell_flag(
+        &mut parts,
+        "--confirm",
+        Some("UEWorkflow.DevFlow.build-task.v1"),
     );
     parts.push("--compact".to_string());
     parts.push("--json".to_string());

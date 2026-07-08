@@ -228,6 +228,11 @@ impl TempDevFlowAdapter {
              echo switched %2\r\n\
              exit /b 0\r\n\
              )\r\n\
+             if \"%1\"==\"build\" (\r\n\
+             echo %*>>\"%~dp0..\\args.log\"\r\n\
+             echo built %2\r\n\
+             exit /b 0\r\n\
+             )\r\n\
              if \"%1\"==\"list\" (\r\n\
              type \"%~dp0..\\list.json\"\r\n\
              exit /b 0\r\n\
@@ -498,6 +503,10 @@ fn compact_master_dry_run_gives_next_command_without_full_module_results() {
         .as_str()
         .expect("masterExecute command should exist")
         .contains("--compact --json"));
+    assert!(output["nextCommands"]["devBuildTask"]
+        .as_str()
+        .expect("devBuildTask command should exist")
+        .contains("--action 'build-task'"));
     assert!(
         output_text.len() < 8_000,
         "compact dry-run should stay small enough for provider prompts: {} bytes",
@@ -688,7 +697,7 @@ fn safety_contract_blocks_unconfirmed_and_dangerous_actions() {
                 "UEWorkflow.DevFlow.build-task.v1",
                 "--json",
             ],
-            "raw UE build",
+            "missing workspace",
         ),
         (
             vec![
@@ -949,6 +958,47 @@ fn devflow_switch_execute_delegates_to_adapter_after_confirmation() {
     assert!(
         !output.to_string().contains("not-performed"),
         "switch execute must not report fake completion: {output}"
+    );
+}
+
+#[test]
+fn devflow_build_task_execute_delegates_to_adapter_after_confirmation() {
+    let devflow_adapter =
+        TempDevFlowAdapter::new("build-task", "neon-dev1", "build-smoke", "AesWorld");
+    let envs = [
+        ("UWF_DEVFLOW_ADAPTER_EXE", devflow_adapter.exe()),
+        ("UNREALDEVFLOW_CONFIG_DIR", devflow_adapter.config_dir()),
+    ];
+    let output = run_uwf_json_with_env(
+        &[
+            "dev",
+            "execute",
+            "--action",
+            "build-task",
+            "--workspace",
+            "neon-dev1",
+            "--task-id",
+            "build-smoke",
+            "--confirm",
+            "UEWorkflow.DevFlow.build-task.v1",
+            "--json",
+        ],
+        &envs,
+    );
+
+    assert_eq!(output["status"], "complete");
+    assert_eq!(output["executedAction"], "build-task");
+    assert_eq!(
+        output["buildResult"]["ueBuild"],
+        "performed-through-devflow"
+    );
+    assert_eq!(output["buildResult"]["rawUnrealBuild"], "disabled");
+    assert_eq!(output["buildResult"]["taskRef"], "neon-dev1/build-smoke");
+    assert_json_array_contains(&output["sideEffects"], "devflow-build-task");
+    let args_log = devflow_adapter.read_args_log();
+    assert!(
+        args_log.contains("build neon-dev1/build-smoke"),
+        "UWF must delegate task build to the DevFlow adapter: {args_log}"
     );
 }
 

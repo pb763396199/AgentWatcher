@@ -217,6 +217,10 @@ fn execute_json(command: &str, request: &CommandRequest) -> String {
         return execute_switch_json(command, request);
     }
 
+    if action == "build-task" {
+        return execute_build_task_json(command, request);
+    }
+
     if !is_safe_execute_action(action) {
         return contract().result_json(
             command,
@@ -270,6 +274,42 @@ fn execute_json(command: &str, request: &CommandRequest) -> String {
         "安全开发流动作已完成；未启动 UE 编译，未创建或删除任何 worktree。",
         &extra,
     )
+}
+
+fn execute_build_task_json(command: &str, request: &CommandRequest) -> String {
+    match build_task_via_adapter(request) {
+        Ok(built) => {
+            let extra = format!(
+                "\"request\":{},\"sideEffects\":[{}],\"executedAction\":{},\"buildResult\":{}",
+                request.to_json(),
+                json_string("devflow-build-task"),
+                json_string("build-task"),
+                built.to_json()
+            );
+            contract().result_json(
+                command,
+                "complete",
+                "DevFlow has executed the task build through the controlled adapter.",
+                &extra,
+            )
+        }
+        Err(error) => {
+            let side_effects = if error.attempted_adapter {
+                json_array([json_string("attempted-devflow-build-task")])
+            } else {
+                "[]".to_string()
+            };
+            let extra = format!(
+                "\"request\":{},\"sideEffects\":{},\"blocked\":{},\"action\":{},\"errorEvidence\":{}",
+                request.to_json(),
+                side_effects,
+                error.status == "blocked",
+                json_string("build-task"),
+                error.evidence_json()
+            );
+            contract().result_json(command, error.status, &error.message, &extra)
+        }
+    }
 }
 
 fn execute_switch_json(command: &str, request: &CommandRequest) -> String {
@@ -1022,7 +1062,7 @@ fn confirmation_boundary(action: &str) -> String {
 fn is_safe_execute_action(action: &str) -> bool {
     matches!(
         action,
-        "read-status" | "list-tasks" | "build-check" | "switch"
+        "read-status" | "list-tasks" | "build-check" | "build-task" | "switch"
     )
 }
 
@@ -1094,7 +1134,7 @@ fn build_routing_for_action_json(action: &str) -> String {
             json_string("task worktree / Host isolated environment"),
             json_string("task host build route"),
             json_string("disabled"),
-            json_string("blocked")
+            json_string("allowedWithConfirmation")
         ),
         "build-project" => format!(
             "{{\"mode\":{},\"startsFrom\":{},\"buildPolicy\":{},\"rawUnrealBuild\":{},\"defaultExecute\":{}}}",
@@ -1257,6 +1297,36 @@ impl SwitchedTaskContext {
             json_option(request.project.as_deref()),
             json_option(request.primary.as_deref()),
             json_string("performed"),
+            json_string("disabled"),
+            json_option((!self.stdout.is_empty()).then_some(self.stdout.as_str())),
+            json_option((!self.stderr.is_empty()).then_some(self.stderr.as_str())),
+            self.exit_code
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "null".to_string())
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+struct BuiltTaskContext {
+    workspace: String,
+    requested_workspace: String,
+    task_id: String,
+    task_ref: String,
+    stdout: String,
+    stderr: String,
+    exit_code: Option<i32>,
+}
+
+impl BuiltTaskContext {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"workspace\":{},\"requestedWorkspace\":{},\"taskId\":{},\"taskRef\":{},\"ueBuild\":{},\"rawUnrealBuild\":{},\"adapter\":{{\"status\":\"integrated\",\"oldNamesHidden\":true,\"stdout\":{},\"stderr\":{},\"exitCode\":{}}}}}",
+            json_string(&self.workspace),
+            json_string(&self.requested_workspace),
+            json_string(&self.task_id),
+            json_string(&self.task_ref),
+            json_string("performed-through-devflow"),
             json_string("disabled"),
             json_option((!self.stdout.is_empty()).then_some(self.stdout.as_str())),
             json_option((!self.stderr.is_empty()).then_some(self.stderr.as_str())),
@@ -1446,6 +1516,48 @@ fn switch_task_via_adapter(
         ));
     }
     Ok(SwitchedTaskContext {
+        workspace: resolved.name,
+        requested_workspace: workspace_input.to_string(),
+        task_id: task_id.to_string(),
+        task_ref,
+        stdout: short_evidence(&String::from_utf8_lossy(&output.stdout)),
+        stderr: short_evidence(&String::from_utf8_lossy(&output.stderr)),
+        exit_code: output.status.code(),
+    })
+}
+
+fn build_task_via_adapter(request: &CommandRequest) -> Result<BuiltTaskContext, CreateTaskFailure> {
+    let workspace_input =
+        required_request_value_for_action(request.workspace.as_deref(), "workspace", "build-task")?;
+    let task_id =
+        required_request_value_for_action(request.task_id.as_deref(), "taskId", "build-task")?;
+    if !valid_udf_task_id(task_id) {
+        return Err(CreateTaskFailure::blocked(format!(
+            "build-task taskId must be a DevFlow task id made of lowercase letters, digits, and '-': {task_id}"
+        )));
+    }
+    let resolved = resolve_udf_workspace_for_request(request, workspace_input, false)?;
+    let task_ref = format!("{}/{}", resolved.name, task_id);
+    let args = vec!["build".to_string(), task_ref.clone()];
+    let output = run_fixed_adapter_command(&args).map_err(|error| {
+        CreateTaskFailure::failed(
+            format!(
+                "DevFlowAdapter is not available; cannot execute task build: {}",
+                error.kind()
+            ),
+            None,
+        )
+    })?;
+    if !output.status.success() {
+        return Err(CreateTaskFailure::failed(
+            format!(
+                "DevFlowAdapter rejected task build. {}",
+                short_evidence(&joined_output(&output))
+            ),
+            Some(&output),
+        ));
+    }
+    Ok(BuiltTaskContext {
         workspace: resolved.name,
         requested_workspace: workspace_input.to_string(),
         task_id: task_id.to_string(),
