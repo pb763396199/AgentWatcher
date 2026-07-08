@@ -213,6 +213,10 @@ fn execute_json(command: &str, request: &CommandRequest) -> String {
         return execute_create_task_json(command, request);
     }
 
+    if action == "switch" {
+        return execute_switch_json(command, request);
+    }
+
     if !is_safe_execute_action(action) {
         return contract().result_json(
             command,
@@ -257,18 +261,6 @@ fn execute_json(command: &str, request: &CommandRequest) -> String {
             json_string(action),
             build_routing_for_action_json(action)
         ),
-        "switch" => format!(
-            "\"request\":{},\"sideEffects\":[{}],\"executedAction\":{},\"switchContext\":{{\"workspace\":{},\"taskId\":{},\"project\":{},\"primary\":{},\"junctionSwitch\":{},\"gitMutation\":false,\"rawUnrealBuild\":{}}}",
-            request.to_json(),
-            json_string("agentwatcher-context-switch"),
-            json_string(action),
-            json_option(request.workspace.as_deref()),
-            json_option(request.task_id.as_deref()),
-            json_option(request.project.as_deref()),
-            json_option(request.primary.as_deref()),
-            json_string("not-performed"),
-            json_string("disabled")
-        ),
         _ => unreachable!("safe execute action checked above"),
     };
 
@@ -278,6 +270,42 @@ fn execute_json(command: &str, request: &CommandRequest) -> String {
         "安全开发流动作已完成；未启动 UE 编译，未创建或删除任何 worktree。",
         &extra,
     )
+}
+
+fn execute_switch_json(command: &str, request: &CommandRequest) -> String {
+    match switch_task_via_adapter(request) {
+        Ok(switched) => {
+            let extra = format!(
+                "\"request\":{},\"sideEffects\":[{}],\"executedAction\":{},\"switchContext\":{}",
+                request.to_json(),
+                json_string("devflow-switch-junction"),
+                json_string("switch"),
+                switched.to_json(request)
+            );
+            contract().result_json(
+                command,
+                "complete",
+                "DevFlow has executed switch through the controlled adapter; no UE build was started.",
+                &extra,
+            )
+        }
+        Err(error) => {
+            let side_effects = if error.attempted_adapter {
+                json_array([json_string("attempted-devflow-switch")])
+            } else {
+                "[]".to_string()
+            };
+            let extra = format!(
+                "\"request\":{},\"sideEffects\":{},\"blocked\":{},\"action\":{},\"errorEvidence\":{}",
+                request.to_json(),
+                side_effects,
+                error.status == "blocked",
+                json_string("switch"),
+                error.evidence_json()
+            );
+            contract().result_json(command, error.status, &error.message, &extra)
+        }
+    }
 }
 
 fn execute_create_task_json(command: &str, request: &CommandRequest) -> String {
@@ -1208,6 +1236,38 @@ impl CreatedTaskContext {
 }
 
 #[derive(Clone, Debug)]
+struct SwitchedTaskContext {
+    workspace: String,
+    requested_workspace: String,
+    task_id: String,
+    task_ref: String,
+    stdout: String,
+    stderr: String,
+    exit_code: Option<i32>,
+}
+
+impl SwitchedTaskContext {
+    fn to_json(&self, request: &CommandRequest) -> String {
+        format!(
+            "{{\"workspace\":{},\"requestedWorkspace\":{},\"taskId\":{},\"taskRef\":{},\"project\":{},\"primary\":{},\"junctionSwitch\":{},\"gitMutation\":false,\"rawUnrealBuild\":{},\"adapter\":{{\"status\":\"integrated\",\"oldNamesHidden\":true,\"stdout\":{},\"stderr\":{},\"exitCode\":{}}}}}",
+            json_string(&self.workspace),
+            json_string(&self.requested_workspace),
+            json_string(&self.task_id),
+            json_string(&self.task_ref),
+            json_option(request.project.as_deref()),
+            json_option(request.primary.as_deref()),
+            json_string("performed"),
+            json_string("disabled"),
+            json_option((!self.stdout.is_empty()).then_some(self.stdout.as_str())),
+            json_option((!self.stderr.is_empty()).then_some(self.stderr.as_str())),
+            self.exit_code
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "null".to_string())
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
 struct DependencyPluginSummary {
     name: String,
     source: String,
@@ -1350,6 +1410,50 @@ fn create_task_via_adapter(
         workspace_binding_updated,
         reused_existing,
     )
+}
+
+fn switch_task_via_adapter(
+    request: &CommandRequest,
+) -> Result<SwitchedTaskContext, CreateTaskFailure> {
+    let workspace_input =
+        required_request_value_for_action(request.workspace.as_deref(), "workspace", "switch")?;
+    let task_id =
+        required_request_value_for_action(request.task_id.as_deref(), "taskId", "switch")?;
+    if !valid_udf_task_id(task_id) {
+        return Err(CreateTaskFailure::blocked(format!(
+            "switch taskId must be a DevFlow task id made of lowercase letters, digits, and '-': {task_id}"
+        )));
+    }
+    let resolved = resolve_udf_workspace_for_request(request, workspace_input, false)?;
+    let task_ref = format!("{}/{}", resolved.name, task_id);
+    let args = vec!["switch".to_string(), task_ref.clone()];
+    let output = run_fixed_adapter_command(&args).map_err(|error| {
+        CreateTaskFailure::failed(
+            format!(
+                "DevFlowAdapter is not available; cannot execute switch: {}",
+                error.kind()
+            ),
+            None,
+        )
+    })?;
+    if !output.status.success() {
+        return Err(CreateTaskFailure::failed(
+            format!(
+                "DevFlowAdapter rejected switch; no Provider fallback will run. {}",
+                short_evidence(&joined_output(&output))
+            ),
+            Some(&output),
+        ));
+    }
+    Ok(SwitchedTaskContext {
+        workspace: resolved.name,
+        requested_workspace: workspace_input.to_string(),
+        task_id: task_id.to_string(),
+        task_ref,
+        stdout: short_evidence(&String::from_utf8_lossy(&output.stdout)),
+        stderr: short_evidence(&String::from_utf8_lossy(&output.stderr)),
+        exit_code: output.status.code(),
+    })
 }
 
 fn create_failure_means_task_exists(body: &str) -> bool {
@@ -1607,6 +1711,19 @@ fn required_request_value<'a>(
     let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
         return Err(CreateTaskFailure::blocked(format!(
             "create-task 缺少 {label}；未执行任何外部动作。"
+        )));
+    };
+    Ok(value)
+}
+
+fn required_request_value_for_action<'a>(
+    value: Option<&'a str>,
+    label: &str,
+    action: &str,
+) -> Result<&'a str, CreateTaskFailure> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Err(CreateTaskFailure::blocked(format!(
+            "{action} missing {label}; no external action was executed."
         )));
     };
     Ok(value)
@@ -2444,7 +2561,7 @@ mod tests {
     }
 
     #[test]
-    fn switch_dry_run_and_execute_are_context_only() {
+    fn switch_dry_run_declares_confirmation_boundary() {
         let dry_run_request = CommandRequest {
             action: Some("switch".to_string()),
             workspace: Some("neon-dev1".to_string()),
@@ -2457,16 +2574,10 @@ mod tests {
         assert!(dry_run.contains("\"confirmationBoundary\":\"UEWorkflow.DevFlow.switch.v1\""));
         assert!(dry_run.contains("预览目标上下文"));
 
-        let execute_request = CommandRequest {
-            confirmation: Some("UEWorkflow.DevFlow.switch.v1".to_string()),
-            ..dry_run_request
-        };
+        let execute_request = CommandRequest { ..dry_run_request };
         let execute = command_json("execute", &execute_request);
-        assert!(execute.contains("\"status\":\"complete\""));
-        assert!(execute.contains("\"executedAction\":\"switch\""));
-        assert!(execute.contains("\"junctionSwitch\":\"not-performed\""));
-        assert!(execute.contains("\"gitMutation\":false"));
-        assert!(execute.contains("\"rawUnrealBuild\":\"disabled\""));
+        assert!(execute.contains("\"status\":\"blocked\""));
+        assert!(execute.contains("\"requiredConfirmation\":\"UEWorkflow.DevFlow.switch.v1\""));
     }
 
     /// 回归：用户填主项目 DEV，但匹配到的 DevFlow workspace 绑定 DEV_1 时，

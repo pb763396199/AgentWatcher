@@ -697,6 +697,7 @@ Use `--id` for the DevFlow task id; it is the same business identifier as `--tas
 After dry-run succeeds, run `nextCommands.masterExecute` exactly. Do not run `uwf dev schema`, do not inspect UWF source files, and do not read workflow memory to decide whether to bypass UWF.
 If required fields are missing, ask for those fields before executing. Never fall back to direct `unrealdevflow` CLI when uwf blocks; report the exact uwf JSON error to AgentWatcher.
 Use `uwf dev build-check --json` for build strategy checks.
+Switch is a real junction-changing action, not a preview. Only after the user explicitly asks for switch and confirms the UE Editor is closed, run `& $uwf dev execute --action switch --workspace "<workspace>" --task-id "<task-id>" --confirm UEWorkflow.DevFlow.switch.v1 --compact --json`; never run raw `unrealdevflow switch`.
 For real validation, prefer full `unrealdevflow build <task-ref>` from the DevFlow Host. Do not use `--primary-only` as the first or final validation shortcut unless the user explicitly asks for a quick module-only probe.
 Never replace a missing uwf/DevFlow path with direct source edits, direct Host creation, or raw Unreal build commands.
 Use provider commands as wrappers around uwf, not as broad always-loaded skills.
@@ -726,6 +727,7 @@ Use `--id` for the DevFlow task id; it is the same business identifier as `--tas
 After dry-run succeeds, run `nextCommands.masterExecute` exactly. Do not run `uwf dev schema`, do not inspect UWF source files, and do not read workflow memory to decide whether to bypass UWF.
 If required fields are missing, ask for those fields before executing. Never fall back to direct `unrealdevflow` CLI when uwf blocks; report the exact uwf JSON error to AgentWatcher.
 Use `uwf dev build-check --json` for build strategy checks.
+Switch is a real junction-changing action, not a preview. Only after the user explicitly asks for switch and confirms the UE Editor is closed, run `& $uwf dev execute --action switch --workspace "<workspace>" --task-id "<task-id>" --confirm UEWorkflow.DevFlow.switch.v1 --compact --json`; never run raw `unrealdevflow switch`.
 For real validation, prefer full `unrealdevflow build <task-ref>` from the DevFlow Host. Do not use `--primary-only` as the first or final validation shortcut unless the user explicitly asks for a quick module-only probe.
 Never replace a missing uwf/DevFlow path with direct source edits, direct Host creation, or raw Unreal build commands.
 Use provider commands as wrappers around uwf, not as broad always-loaded skills.
@@ -758,6 +760,7 @@ Use `--id` for the DevFlow task id; it is the same business identifier as `--tas
 After dry-run succeeds, run `nextCommands.masterExecute` exactly. Do not run `uwf dev schema`, do not inspect UWF source files, and do not read workflow memory to decide whether to bypass UWF.
 If required fields are missing, ask for those fields before executing. Never fall back to direct `unrealdevflow` CLI when uwf blocks; report the exact uwf JSON error to AgentWatcher.
 Use `uwf dev build-check --json` for build strategy checks.
+Switch is a real junction-changing action, not a preview. Only after the user explicitly asks for switch and confirms the UE Editor is closed, run `& $uwf dev execute --action switch --workspace "<workspace>" --task-id "<task-id>" --confirm UEWorkflow.DevFlow.switch.v1 --compact --json`; never run raw `unrealdevflow switch`.
 For real validation, prefer full `unrealdevflow build <task-ref>` from the DevFlow Host. Do not use `--primary-only` as the first or final validation shortcut unless the user explicitly asks for a quick module-only probe.
 Never replace a missing uwf/DevFlow path with direct source edits, direct Host creation, or raw Unreal build commands.
 Use provider commands as wrappers around uwf, not as broad always-loaded skills.
@@ -789,6 +792,7 @@ Use `--id` for the DevFlow task id; it is the same business identifier as `--tas
 After dry-run succeeds, run `nextCommands.masterExecute` exactly. Do not run `uwf dev schema`, do not inspect UWF source files, and do not read workflow memory to decide whether to bypass UWF.
 If required fields are missing, ask for those fields before executing. Never fall back to direct `unrealdevflow` CLI when uwf blocks; report the exact uwf JSON error to AgentWatcher.
 Use `uwf dev build-check --json` for build strategy checks.
+Switch is a real junction-changing action, not a preview. Only after the user explicitly asks for switch and confirms the UE Editor is closed, run `& $uwf dev execute --action switch --workspace "<workspace>" --task-id "<task-id>" --confirm UEWorkflow.DevFlow.switch.v1 --compact --json`; never run raw `unrealdevflow switch`.
 For real validation, prefer full `unrealdevflow build <task-ref>` from the DevFlow Host. Do not use `--primary-only` as the first or final validation shortcut unless the user explicitly asks for a quick module-only probe.
 Never replace a missing uwf/DevFlow path with direct source edits, direct Host creation, or raw Unreal build commands.
 Use provider commands as wrappers around uwf, not as broad always-loaded skills.

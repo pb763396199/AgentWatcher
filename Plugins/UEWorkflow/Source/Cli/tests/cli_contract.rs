@@ -223,6 +223,11 @@ impl TempDevFlowAdapter {
              echo created\r\n\
              exit /b 0\r\n\
              )\r\n\
+             if \"%1\"==\"switch\" (\r\n\
+             echo %*>>\"%~dp0..\\args.log\"\r\n\
+             echo switched %2\r\n\
+             exit /b 0\r\n\
+             )\r\n\
              if \"%1\"==\"list\" (\r\n\
              type \"%~dp0..\\list.json\"\r\n\
              exit /b 0\r\n\
@@ -904,6 +909,47 @@ fn devflow_execute_delegates_exact_primary_path_to_workspace_plugin_path() {
     );
     assert!(args_log.contains("create"));
     assert!(args_log.contains("--workspace neon-dev1"));
+}
+
+#[test]
+fn devflow_switch_execute_delegates_to_adapter_after_confirmation() {
+    let devflow_adapter =
+        TempDevFlowAdapter::new("switch", "neon-dev1", "switch-smoke", "AesWorld");
+    let envs = [
+        ("UWF_DEVFLOW_ADAPTER_EXE", devflow_adapter.exe()),
+        ("UNREALDEVFLOW_CONFIG_DIR", devflow_adapter.config_dir()),
+    ];
+    let output = run_uwf_json_with_env(
+        &[
+            "dev",
+            "execute",
+            "--action",
+            "switch",
+            "--workspace",
+            "neon-dev1",
+            "--task-id",
+            "switch-smoke",
+            "--confirm",
+            "UEWorkflow.DevFlow.switch.v1",
+            "--json",
+        ],
+        &envs,
+    );
+
+    assert_eq!(output["status"], "complete");
+    assert_eq!(output["executedAction"], "switch");
+    assert_eq!(output["switchContext"]["junctionSwitch"], "performed");
+    assert_eq!(output["switchContext"]["taskRef"], "neon-dev1/switch-smoke");
+    assert_json_array_contains(&output["sideEffects"], "devflow-switch-junction");
+    let args_log = devflow_adapter.read_args_log();
+    assert!(
+        args_log.contains("switch neon-dev1/switch-smoke"),
+        "UWF must delegate real switch to the DevFlow adapter: {args_log}"
+    );
+    assert!(
+        !output.to_string().contains("not-performed"),
+        "switch execute must not report fake completion: {output}"
+    );
 }
 
 #[test]
