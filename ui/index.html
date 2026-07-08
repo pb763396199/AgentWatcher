@@ -1506,10 +1506,12 @@
     .session-preview {
       position: fixed;
       z-index: 20;
-      width: 420px;
-      height: 360px;
-      min-width: 280px;
-      min-height: 220px;
+      width: min(420px, calc(100vw - 16px));
+      height: min(360px, calc(100vh - 16px));
+      min-width: min(280px, calc(100vw - 16px));
+      min-height: min(220px, calc(100vh - 16px));
+      max-width: calc(100vw - 16px);
+      max-height: calc(100vh - 16px);
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -2018,8 +2020,9 @@
       bottom: 10px;
       z-index: 2147483600;
       width: min(460px, calc(100vw - 20px));
-      min-width: 340px;
-      min-height: 320px;
+      min-width: min(340px, calc(100vw - 20px));
+      min-height: min(320px, calc(100vh - 20px));
+      max-width: calc(100vw - 20px);
       height: min(620px, calc(100vh - 20px));
       max-height: calc(100vh - 20px);
       display: flex;
@@ -2695,7 +2698,8 @@
       left: 50%;
       top: 50%;
       width: min(720px, calc(100% - 40px));
-      min-width: 520px;
+      min-width: min(520px, calc(100% - 20px));
+      max-width: calc(100% - 16px);
       min-height: 330px;
       max-height: calc(100% - 40px);
       overflow: hidden;
@@ -6306,7 +6310,7 @@
     let settings = loadSettings();
     const i18n = {
       en: {
-        allSessions: 'All agent sessions', watched: '83 workspaces watched', filterActive: 'Workspace filter active', waitingChip: '8 waiting', workspace: 'Workspace', allWorkspaces: 'All workspaces', perRow: 'Per row', visibleNow: 'visible now', inQueue: 'in scroll queue', sessions: 'sessions', updated: 'Updated 2s ago', workspacePrefix: 'Workspace: ', overflow: 'Scroll continues by priority: waiting, running, idle', priority: 'priority', live: 'live', quiet: 'quiet', waiting: 'Waiting', running: 'Running', idle: 'Idle', all: 'All', wait: 'Wait', run: 'Run', col: 'col', cols: 'cols', perRowButton: '/ row', iconsPerRow: 'icons per row', windowSize: 'Window size', openWorkspace: 'Open VS Code workspace: ', openingAgents: 'Opening session...', openedAgents: 'Session opened', themeLight: 'Light theme', themeDark: 'Dark theme', settings: 'Settings', appearance: 'Appearance', language: 'Language', theme: 'Theme', layout: 'Layout', horizontal: 'Horizontal', vertical: 'Vertical', agentTaskFlipSpeed: 'Flip speed (ms)', lastUser: 'Last user', lastAi: 'Last AI', noUserMessage: 'No user message captured', noAiMessage: 'No AI message captured', tailOnly: 'tail', errorExcerpt: 'error', windowBehavior: 'Window', alwaysOnTop: 'Always on top', dataSources: 'Data', includeCopilot: 'Copilot sessions', includeClaude: 'Claude sessions', hideArchived: 'Hide archived', scanLimits: 'Scan limits', activeWindowDays: 'Active window (days)', maxSessions: 'Max sessions', refreshInterval: 'Refresh interval (sec)', settingsSaved: 'Settings updated', maxCardsPerRow: 'Max cards per row', waitingAlertSize: 'Waiting alert size', waitingAlertDuration: 'Waiting alert duration (sec)', small: 'Small', medium: 'Medium', large: 'Large', waitingAlertAria: 'New waiting session', handoffCreate: 'Create handoff session...', handoffCopyPrompt: 'Copy handoff prompt', handoffOpenSource: 'Open source session', handoffTitle: 'Create handoff session', handoffNewSessionIn: 'New session in', handoffWithProvider: 'with', handoffLatestSnapshot: 'Latest snapshot', handoffSourceLocator: 'Source locator', handoffPreview: 'Preview', handoffCopy: 'Copy', handoffLaunch: 'Launch', handoffSaveTodo: 'Save Todo', handoffPromptPreview: 'Prompt preview', handoffTaskPlaceholder: 'What would you like session B to do?', handoffWorkspacePlaceholder: 'Search or paste workspace path', handoffUsePastedPath: 'Use pasted path', handoffNoWorkspace: 'No matching workspace', handoffSelected: 'selected', handoffCopied: 'Copied handoff prompt', handoffClipboardFallback: 'Clipboard write failed; prompt is selected', handoffLaunching: 'Launching handoff...', handoffLaunched: 'Handoff launch requested', handoffNoSession: 'No source session selected', handoffSelectWorkspace: 'Select workspace', handoffAgentsLabel: 'Copilot Editor', handoffCodeChatLabel: 'Copilot CLI Editor', handoffClaudeLabel: 'Claude Code Editor', handoffAgentsDescription: 'Open Copilot in a VS Code editor tab and insert the handoff prompt', handoffCodeChatDescription: 'Open a Copilot CLI editor tab and insert the handoff prompt', handoffClaudeDescription: 'Open Claude Code in a VS Code editor tab', bridgeTitle: 'VS Code Bridge', bridgePreviewOnly: 'Preview only', bridgeChecking: 'Checking...', bridgeInstalled: 'Bridge installed', bridgeNeedsUpdate: 'Bridge update available', bridgeNotInstalled: 'Bridge not installed', bridgeInstall: 'Install', bridgeUpdate: 'Update', bridgeRetry: 'Retry', bridgeInstalling: 'Installing...', bridgeInstallFailed: 'Bridge install failed', todoWindowTitle: 'AI Task Input', todoWindowSubtitle: 'Workspace todo queue', todoOpen: 'Open Todo', todoReadyNudge: 'Ready todo in ', todoRefresh: 'Refresh', todoUsePath: 'Use Path', todoCancel: 'Cancel', todoAdd: 'Add', todoSave: 'Save', todoActive: 'Active', todoShowDone: 'Done', todoTitlePlaceholder: 'Task title', todoDescriptionPlaceholder: 'Task notes', todoAcceptancePlaceholder: 'Completion standard', todoPathPlaceholder: 'Paste workspace path', todoNoWorkspace: 'Choose workspace', todoEmpty: 'No active todo for this workspace', todoNoDone: 'No completed todo yet', todoPendingReview: 'Needs confirmation', todoPromptPreview: 'Prompt', todoDispatch: 'Launch', todoComplete: 'Done', todoRetry: 'Rework', todoBlock: 'Block', todoUnblock: 'Unblock', todoDelete: 'Delete', todoEdit: 'Edit', todoSaved: 'Todo saved', todoLaunched: 'Todo launch requested', todoCopied: 'Prompt copied', todoBlocked: 'Blocked', todoDone: 'Completed', todoReady: 'Ready', todoRunning: 'Running', todoReview: 'Review', todoUnbound: 'dispatched, unbound', todoBound: 'bound session', todoCountsText: 'active {active} / done {done}', todoCreateFromHandoff: 'Saved handoff as todo',
+        allSessions: 'All agent sessions', watched: '83 workspaces watched', filterActive: 'Workspace filter active', waitingChip: '8 waiting', workspace: 'Workspace', allWorkspaces: 'All workspaces', perRow: 'Per row', visibleNow: 'visible now', inQueue: 'in scroll queue', sessions: 'sessions', updated: 'Updated 2s ago', workspacePrefix: 'Workspace: ', overflow: 'Scroll continues by priority: waiting, running, idle', priority: 'priority', live: 'live', quiet: 'quiet', waiting: 'Waiting', running: 'Running', idle: 'Idle', all: 'All', wait: 'Wait', run: 'Run', col: 'col', cols: 'cols', perRowButton: '/ row', iconsPerRow: 'icons per row', windowSize: 'Window size', openWorkspace: 'Open VS Code workspace: ', openingAgents: 'Opening session...', openedAgents: 'Session opened', themeLight: 'Light theme', themeDark: 'Dark theme', settings: 'Settings', appearance: 'Appearance', language: 'Language', theme: 'Theme', layout: 'Layout', horizontal: 'Horizontal', vertical: 'Vertical', agentTaskFlipSpeed: 'Flip speed (ms)', lastUser: 'Last user', lastAi: 'Last AI', noUserMessage: 'No user message captured', noAiMessage: 'No AI message captured', tailOnly: 'tail', errorExcerpt: 'error', windowBehavior: 'Window', alwaysOnTop: 'Always on top', dataSources: 'Data', includeCopilot: 'Copilot sessions', includeClaude: 'Claude sessions', hideArchived: 'Hide archived', scanLimits: 'Scan limits', activeWindowDays: 'Active window (days)', maxSessions: 'Max sessions', refreshInterval: 'Refresh interval (sec)', settingsSaved: 'Settings updated', maxCardsPerRow: 'Max cards per row', waitingAlertSize: 'Waiting alert size', waitingAlertDuration: 'Waiting alert duration (sec)', small: 'Small', medium: 'Medium', large: 'Large', waitingAlertAria: 'New waiting session', handoffCreate: 'Create handoff session...', handoffCopyPrompt: 'Copy handoff prompt', handoffOpenSource: 'Open source session', handoffTitle: 'Create handoff session', handoffNewSessionIn: 'New session in', handoffWithProvider: 'with', handoffLatestSnapshot: 'Latest snapshot', handoffSourceLocator: 'Source locator', handoffPreview: 'Preview', handoffCopy: 'Copy', handoffLaunch: 'Launch', handoffSaveTodo: 'Save Todo', handoffPromptPreview: 'Prompt preview', handoffTaskPlaceholder: 'What would you like session B to do?', handoffWorkspacePlaceholder: 'Search or paste workspace path', handoffUsePastedPath: 'Use pasted path', handoffNoWorkspace: 'No matching workspace', handoffSelected: 'selected', handoffCopied: 'Copied handoff prompt', handoffClipboardFallback: 'Clipboard write failed; prompt is selected', handoffLaunching: 'Launching handoff...', handoffLaunched: 'Handoff launch requested', handoffNoSession: 'No source session selected', handoffOpenFailed: 'Handoff panel failed to open', handoffSelectWorkspace: 'Select workspace', handoffAgentsLabel: 'Copilot Editor', handoffCodeChatLabel: 'Copilot CLI Editor', handoffClaudeLabel: 'Claude Code Editor', handoffAgentsDescription: 'Open Copilot in a VS Code editor tab and insert the handoff prompt', handoffCodeChatDescription: 'Open a Copilot CLI editor tab and insert the handoff prompt', handoffClaudeDescription: 'Open Claude Code in a VS Code editor tab', bridgeTitle: 'VS Code Bridge', bridgePreviewOnly: 'Preview only', bridgeChecking: 'Checking...', bridgeInstalled: 'Bridge installed', bridgeNeedsUpdate: 'Bridge update available', bridgeNotInstalled: 'Bridge not installed', bridgeInstall: 'Install', bridgeUpdate: 'Update', bridgeRetry: 'Retry', bridgeInstalling: 'Installing...', bridgeInstallFailed: 'Bridge install failed', todoWindowTitle: 'AI Task Input', todoWindowSubtitle: 'Workspace todo queue', todoOpen: 'Open Todo', todoReadyNudge: 'Ready todo in ', todoRefresh: 'Refresh', todoUsePath: 'Use Path', todoCancel: 'Cancel', todoAdd: 'Add', todoSave: 'Save', todoActive: 'Active', todoShowDone: 'Done', todoTitlePlaceholder: 'Task title', todoDescriptionPlaceholder: 'Task notes', todoAcceptancePlaceholder: 'Completion standard', todoPathPlaceholder: 'Paste workspace path', todoNoWorkspace: 'Choose workspace', todoEmpty: 'No active todo for this workspace', todoNoDone: 'No completed todo yet', todoPendingReview: 'Needs confirmation', todoPromptPreview: 'Prompt', todoDispatch: 'Launch', todoComplete: 'Done', todoRetry: 'Rework', todoBlock: 'Block', todoUnblock: 'Unblock', todoDelete: 'Delete', todoEdit: 'Edit', todoSaved: 'Todo saved', todoLaunched: 'Todo launch requested', todoCopied: 'Prompt copied', todoBlocked: 'Blocked', todoDone: 'Completed', todoReady: 'Ready', todoRunning: 'Running', todoReview: 'Review', todoUnbound: 'dispatched, unbound', todoBound: 'bound session', todoCountsText: 'active {active} / done {done}', todoCreateFromHandoff: 'Saved handoff as todo',
         handoffPromptIdLabel: 'AgentWatcher Handoff ID',
         handoffSourceAccessTitle: '[Source Access]',
         handoffTargetAgentLabel: 'Target agent',
@@ -6351,7 +6355,7 @@
         workspacePickerNoMatch: 'No matching workspace'
       },
       zh: {
-        allSessions: '全部 Agent 会话', watched: '已监控 83 个工作区', filterActive: '已启用工作区过滤', waitingChip: '8 待回复', workspace: '工作区', allWorkspaces: '全部工作区', perRow: '每排数量', visibleNow: '当前可见', inQueue: '在滚动队列', sessions: '个会话', updated: '2 秒前更新', workspacePrefix: '工作区：', overflow: '按优先级继续滚动：待回复、运行中、闲置', priority: '优先', live: '实时', quiet: '静默', waiting: '待回复', running: '运行中', idle: '闲置', all: '全部', wait: '待回', run: '运行', col: '列', cols: '列', perRowButton: '/ 排', iconsPerRow: '个/排', windowSize: '窗口尺寸', openWorkspace: '打开 VS Code 工作区：', openingAgents: '正在打开会话...', openedAgents: '已打开会话', themeLight: '浅色主题', themeDark: '深色主题', settings: '设置', appearance: '外观', language: '语言', theme: '主题', layout: '布局', horizontal: '横版', vertical: '竖版', agentTaskFlipSpeed: '翻转速度（毫秒）', lastUser: '最后用户输入', lastAi: '最后 AI 回复', noUserMessage: '未捕获到用户输入', noAiMessage: '未捕获到 AI 回复', tailOnly: '尾部', errorExcerpt: '错误', windowBehavior: '窗口', alwaysOnTop: '永远置顶', dataSources: '数据', includeCopilot: 'Copilot 会话', includeClaude: 'Claude 会话', hideArchived: '隐藏归档', scanLimits: '扫描限制', activeWindowDays: '活跃窗口（天）', maxSessions: '最大会话数', refreshInterval: '刷新间隔（秒）', settingsSaved: '设置已更新', maxCardsPerRow: '每排最大数量', waitingAlertSize: '待回复提醒尺寸', waitingAlertDuration: '待回复持续时间（秒）', small: '小', medium: '中', large: '大', waitingAlertAria: '新的待回复会话', handoffCreate: '创建接续会话...', handoffCopyPrompt: '复制接续提示词', handoffOpenSource: '打开原会话', handoffTitle: '创建接续会话', handoffNewSessionIn: '在', handoffWithProvider: '使用', handoffLatestSnapshot: '最新快照', handoffSourceLocator: '来源定位', handoffPreview: '预览', handoffCopy: '复制', handoffLaunch: '启动', handoffSaveTodo: '存为 Todo', handoffPromptPreview: '提示词预览', handoffTaskPlaceholder: '希望新会话做什么？', handoffWorkspacePlaceholder: '搜索或粘贴工作区路径', handoffUsePastedPath: '使用粘贴路径', handoffNoWorkspace: '没有匹配的工作区', handoffSelected: '已选', handoffCopied: '已复制接续提示词', handoffClipboardFallback: '无法直接写剪贴板，已选中提示词', handoffLaunching: '正在启动接续会话...', handoffLaunched: '已请求启动接续会话', handoffNoSession: '未选择来源会话', handoffSelectWorkspace: '选择工作区', handoffAgentsLabel: 'Copilot 编辑器', handoffCodeChatLabel: 'Copilot CLI 编辑器', handoffClaudeLabel: 'Claude Code 编辑器', handoffAgentsDescription: '在 VS Code 编辑器标签页中打开 Copilot 并填入接续提示词', handoffCodeChatDescription: '打开 Copilot CLI 编辑器标签页并填入接续提示词', handoffClaudeDescription: '在 VS Code 编辑器标签页中打开 Claude Code', bridgeTitle: 'VS Code Bridge', bridgePreviewOnly: '仅预览', bridgeChecking: '正在检查...', bridgeInstalled: 'Bridge 已安装', bridgeNeedsUpdate: 'Bridge 有可用更新', bridgeNotInstalled: 'Bridge 未安装', bridgeInstall: '安装', bridgeUpdate: '更新', bridgeRetry: '重试', bridgeInstalling: '正在安装...', bridgeInstallFailed: 'Bridge 安装失败', todoWindowTitle: 'AI 任务输入法', todoWindowSubtitle: '工作区 Todo 队列', todoOpen: '打开 Todo', todoReadyNudge: '可推进 Todo：', todoRefresh: '刷新', todoUsePath: '使用路径', todoCancel: '取消', todoAdd: '添加', todoSave: '保存', todoActive: '进行中', todoShowDone: '完成项', todoTitlePlaceholder: '任务标题', todoDescriptionPlaceholder: '任务说明', todoAcceptancePlaceholder: '完成标准', todoPathPlaceholder: '粘贴工作区路径', todoNoWorkspace: '选择工作区', todoEmpty: '这个工作区没有待办任务', todoNoDone: '还没有完成项', todoPendingReview: '待确认完成', todoPromptPreview: '提示词', todoDispatch: '启动', todoComplete: '完成', todoRetry: '返工', todoBlock: '阻塞', todoUnblock: '解除阻塞', todoDelete: '删除', todoEdit: '编辑', todoSaved: 'Todo 已保存', todoLaunched: '已请求启动 Todo', todoCopied: '提示词已复制', todoBlocked: '已阻塞', todoDone: '已完成', todoReady: '就绪', todoRunning: '运行中', todoReview: '待确认', todoUnbound: '已派发，未绑定', todoBound: '已绑定会话', todoCountsText: '待办 {active} / 完成 {done}', todoCreateFromHandoff: '已将接续保存为 Todo',
+        allSessions: '全部 Agent 会话', watched: '已监控 83 个工作区', filterActive: '已启用工作区过滤', waitingChip: '8 待回复', workspace: '工作区', allWorkspaces: '全部工作区', perRow: '每排数量', visibleNow: '当前可见', inQueue: '在滚动队列', sessions: '个会话', updated: '2 秒前更新', workspacePrefix: '工作区：', overflow: '按优先级继续滚动：待回复、运行中、闲置', priority: '优先', live: '实时', quiet: '静默', waiting: '待回复', running: '运行中', idle: '闲置', all: '全部', wait: '待回', run: '运行', col: '列', cols: '列', perRowButton: '/ 排', iconsPerRow: '个/排', windowSize: '窗口尺寸', openWorkspace: '打开 VS Code 工作区：', openingAgents: '正在打开会话...', openedAgents: '已打开会话', themeLight: '浅色主题', themeDark: '深色主题', settings: '设置', appearance: '外观', language: '语言', theme: '主题', layout: '布局', horizontal: '横版', vertical: '竖版', agentTaskFlipSpeed: '翻转速度（毫秒）', lastUser: '最后用户输入', lastAi: '最后 AI 回复', noUserMessage: '未捕获到用户输入', noAiMessage: '未捕获到 AI 回复', tailOnly: '尾部', errorExcerpt: '错误', windowBehavior: '窗口', alwaysOnTop: '永远置顶', dataSources: '数据', includeCopilot: 'Copilot 会话', includeClaude: 'Claude 会话', hideArchived: '隐藏归档', scanLimits: '扫描限制', activeWindowDays: '活跃窗口（天）', maxSessions: '最大会话数', refreshInterval: '刷新间隔（秒）', settingsSaved: '设置已更新', maxCardsPerRow: '每排最大数量', waitingAlertSize: '待回复提醒尺寸', waitingAlertDuration: '待回复持续时间（秒）', small: '小', medium: '中', large: '大', waitingAlertAria: '新的待回复会话', handoffCreate: '创建接续会话...', handoffCopyPrompt: '复制接续提示词', handoffOpenSource: '打开原会话', handoffTitle: '创建接续会话', handoffNewSessionIn: '在', handoffWithProvider: '使用', handoffLatestSnapshot: '最新快照', handoffSourceLocator: '来源定位', handoffPreview: '预览', handoffCopy: '复制', handoffLaunch: '启动', handoffSaveTodo: '存为 Todo', handoffPromptPreview: '提示词预览', handoffTaskPlaceholder: '希望新会话做什么？', handoffWorkspacePlaceholder: '搜索或粘贴工作区路径', handoffUsePastedPath: '使用粘贴路径', handoffNoWorkspace: '没有匹配的工作区', handoffSelected: '已选', handoffCopied: '已复制接续提示词', handoffClipboardFallback: '无法直接写剪贴板，已选中提示词', handoffLaunching: '正在启动接续会话...', handoffLaunched: '已请求启动接续会话', handoffNoSession: '未选择来源会话', handoffOpenFailed: '接续面板打开失败', handoffSelectWorkspace: '选择工作区', handoffAgentsLabel: 'Copilot 编辑器', handoffCodeChatLabel: 'Copilot CLI 编辑器', handoffClaudeLabel: 'Claude Code 编辑器', handoffAgentsDescription: '在 VS Code 编辑器标签页中打开 Copilot 并填入接续提示词', handoffCodeChatDescription: '打开 Copilot CLI 编辑器标签页并填入接续提示词', handoffClaudeDescription: '在 VS Code 编辑器标签页中打开 Claude Code', bridgeTitle: 'VS Code Bridge', bridgePreviewOnly: '仅预览', bridgeChecking: '正在检查...', bridgeInstalled: 'Bridge 已安装', bridgeNeedsUpdate: 'Bridge 有可用更新', bridgeNotInstalled: 'Bridge 未安装', bridgeInstall: '安装', bridgeUpdate: '更新', bridgeRetry: '重试', bridgeInstalling: '正在安装...', bridgeInstallFailed: 'Bridge 安装失败', todoWindowTitle: 'AI 任务输入法', todoWindowSubtitle: '工作区 Todo 队列', todoOpen: '打开 Todo', todoReadyNudge: '可推进 Todo：', todoRefresh: '刷新', todoUsePath: '使用路径', todoCancel: '取消', todoAdd: '添加', todoSave: '保存', todoActive: '进行中', todoShowDone: '完成项', todoTitlePlaceholder: '任务标题', todoDescriptionPlaceholder: '任务说明', todoAcceptancePlaceholder: '完成标准', todoPathPlaceholder: '粘贴工作区路径', todoNoWorkspace: '选择工作区', todoEmpty: '这个工作区没有待办任务', todoNoDone: '还没有完成项', todoPendingReview: '待确认完成', todoPromptPreview: '提示词', todoDispatch: '启动', todoComplete: '完成', todoRetry: '返工', todoBlock: '阻塞', todoUnblock: '解除阻塞', todoDelete: '删除', todoEdit: '编辑', todoSaved: 'Todo 已保存', todoLaunched: '已请求启动 Todo', todoCopied: '提示词已复制', todoBlocked: '已阻塞', todoDone: '已完成', todoReady: '就绪', todoRunning: '运行中', todoReview: '待确认', todoUnbound: '已派发，未绑定', todoBound: '已绑定会话', todoCountsText: '待办 {active} / 完成 {done}', todoCreateFromHandoff: '已将接续保存为 Todo',
         handoffPromptIdLabel: 'AgentWatcher 接续 ID',
         handoffSourceAccessTitle: '【来源访问】',
         handoffTargetAgentLabel: '目标代理',
@@ -10476,7 +10480,7 @@
       const lines = [
         '强制入口',
         '先执行以下 PowerShell 预检；失败就停止并回报 AgentWatcher，不要手工继续：',
-        '$uwf=(Get-Command uwf -ErrorAction SilentlyContinue).Source; if (-not $uwf -and (Test-Path "$env:USERPROFILE\\.unrealworkflow\\bin\\uwf.cmd")) { $uwf="$env:USERPROFILE\\.unrealworkflow\\bin\\uwf.cmd" }; if (-not $uwf) { Write-Error "UWF_NOT_AVAILABLE: stop and report to AgentWatcher"; exit 10 }; & $uwf doctor --json',
+        '$uwfBin=Join-Path $env:USERPROFILE ".unrealworkflow\\bin"; $udfBin=Join-Path $env:USERPROFILE ".unrealdevflow\\bin"; $env:PATH=@($uwfBin,$udfBin,$env:PATH) -join ";"; if (-not $env:UNREALDEVFLOW_CONFIG_DIR -or -not (Test-Path (Join-Path $env:UNREALDEVFLOW_CONFIG_DIR "config.toml"))) { $env:UNREALDEVFLOW_CONFIG_DIR=Join-Path $env:USERPROFILE ".unrealdevflow" }; $uwf=(Get-Command uwf -ErrorAction SilentlyContinue).Source; if (-not $uwf -and (Test-Path (Join-Path $uwfBin "uwf.cmd"))) { $uwf=Join-Path $uwfBin "uwf.cmd" }; if (-not $uwf) { Write-Error "UWF_NOT_AVAILABLE: stop and report to AgentWatcher"; exit 10 }; & $uwf doctor --json',
         '预检通过后，也必须通过 uwf / DevFlow 的受控命令推进；不得直接创建 Host、不得直接改主线、不得直接调用 Build.bat。'
       ];
       if (pendingContext) {
@@ -12622,17 +12626,32 @@
     }
 
     function loadPerformancePanelGeometry() {
+      const minWidth = performancePanelMinWidth();
+      const minHeight = performancePanelMinHeight();
       try {
         const geometry = JSON.parse(localStorage.getItem(PERFORMANCE_PANEL_GEOMETRY_KEY) || '{}');
         return {
           left: Number.isFinite(Number(geometry.left)) ? Number(geometry.left) : null,
           top: Number.isFinite(Number(geometry.top)) ? Number(geometry.top) : null,
-          width: clampNumber(geometry.width, PERFORMANCE_PANEL_MIN_WIDTH, Math.max(PERFORMANCE_PANEL_MIN_WIDTH, window.innerWidth - 20), PERFORMANCE_PANEL_DEFAULT_SIZE.width),
-          height: clampNumber(geometry.height, PERFORMANCE_PANEL_MIN_HEIGHT, Math.max(PERFORMANCE_PANEL_MIN_HEIGHT, window.innerHeight - 20), PERFORMANCE_PANEL_DEFAULT_SIZE.height)
+          width: clampNumber(geometry.width, minWidth, Math.max(minWidth, window.innerWidth - 20), Math.min(PERFORMANCE_PANEL_DEFAULT_SIZE.width, Math.max(minWidth, window.innerWidth - 20))),
+          height: clampNumber(geometry.height, minHeight, Math.max(minHeight, window.innerHeight - 20), Math.min(PERFORMANCE_PANEL_DEFAULT_SIZE.height, Math.max(minHeight, window.innerHeight - 20)))
         };
       } catch (error) {
-        return { left: null, top: null, ...PERFORMANCE_PANEL_DEFAULT_SIZE };
+        return {
+          left: null,
+          top: null,
+          width: Math.min(PERFORMANCE_PANEL_DEFAULT_SIZE.width, Math.max(minWidth, window.innerWidth - 20)),
+          height: Math.min(PERFORMANCE_PANEL_DEFAULT_SIZE.height, Math.max(minHeight, window.innerHeight - 20))
+        };
       }
+    }
+
+    function performancePanelMinWidth() {
+      return Math.min(PERFORMANCE_PANEL_MIN_WIDTH, Math.max(220, window.innerWidth - 20));
+    }
+
+    function performancePanelMinHeight() {
+      return Math.min(PERFORMANCE_PANEL_MIN_HEIGHT, Math.max(180, window.innerHeight - 20));
     }
 
     function savePerformancePanelGeometry() {
@@ -12706,12 +12725,14 @@
     function positionPerformancePanel(reset) {
       if (!perfPanel || perfPanel.hidden) return;
       const margin = 10;
+      const minWidth = performancePanelMinWidth();
+      const minHeight = performancePanelMinHeight();
       const titlebarRect = document.querySelector('.watcher-window > .native-titlebar')?.getBoundingClientRect();
       const reservedTop = isPerformanceWindow ? 0 : Math.max(40, Math.ceil(Number(titlebarRect?.bottom) || 0) + 8);
       const geometry = reset ? { left: null, top: null, ...PERFORMANCE_PANEL_DEFAULT_SIZE } : loadPerformancePanelGeometry();
-      const width = Math.min(Math.max(geometry.width, PERFORMANCE_PANEL_MIN_WIDTH), Math.max(PERFORMANCE_PANEL_MIN_WIDTH, window.innerWidth - margin * 2));
+      const width = Math.min(Math.max(geometry.width, minWidth), Math.max(minWidth, window.innerWidth - margin * 2));
       const maxHeight = Math.max(180, window.innerHeight - reservedTop - margin);
-      const height = Math.min(Math.max(geometry.height, Math.min(PERFORMANCE_PANEL_MIN_HEIGHT, maxHeight)), maxHeight);
+      const height = Math.min(Math.max(geometry.height, Math.min(minHeight, maxHeight)), maxHeight);
       const defaultLeft = Math.max(margin, window.innerWidth - width - margin);
       const defaultTop = Math.max(reservedTop, window.innerHeight - height - margin);
       const left = Math.max(margin, Math.min(geometry.left ?? defaultLeft, window.innerWidth - width - margin));
@@ -12797,6 +12818,8 @@
       const startY = event.clientY;
       const rect = perfPanel.getBoundingClientRect();
       const margin = 8;
+      const minWidth = performancePanelMinWidth();
+      const minHeight = performancePanelMinHeight();
       event.preventDefault();
       event.stopPropagation();
 
@@ -12808,19 +12831,19 @@
         let width = rect.width;
         let height = rect.height;
 
-        if (direction.includes('e')) width = Math.max(PERFORMANCE_PANEL_MIN_WIDTH, rect.width + deltaX);
-        if (direction.includes('s')) height = Math.max(PERFORMANCE_PANEL_MIN_HEIGHT, rect.height + deltaY);
+        if (direction.includes('e')) width = Math.max(minWidth, rect.width + deltaX);
+        if (direction.includes('s')) height = Math.max(minHeight, rect.height + deltaY);
         if (direction.includes('w')) {
-          width = Math.max(PERFORMANCE_PANEL_MIN_WIDTH, rect.width - deltaX);
+          width = Math.max(minWidth, rect.width - deltaX);
           left = rect.right - width;
         }
         if (direction.includes('n')) {
-          height = Math.max(PERFORMANCE_PANEL_MIN_HEIGHT, rect.height - deltaY);
+          height = Math.max(minHeight, rect.height - deltaY);
           top = rect.bottom - height;
         }
 
-        left = Math.max(margin, Math.min(left, window.innerWidth - PERFORMANCE_PANEL_MIN_WIDTH - margin));
-        top = Math.max(margin, Math.min(top, window.innerHeight - PERFORMANCE_PANEL_MIN_HEIGHT - margin));
+        left = Math.max(margin, Math.min(left, window.innerWidth - minWidth - margin));
+        top = Math.max(margin, Math.min(top, window.innerHeight - minHeight - margin));
         width = Math.min(width, window.innerWidth - left - margin);
         height = Math.min(height, window.innerHeight - top - margin);
         perfPanel.style.right = 'auto';
@@ -13783,12 +13806,13 @@
       if (handoffLayer.hidden) return;
       const hostRect = handoffLayer.getBoundingClientRect();
       if (!reset && handoffPanel.dataset.positioned === 'true') return;
-      const width = Math.min(720, Math.max(520, hostRect.width - 40));
+      const minWidth = Math.min(520, Math.max(280, hostRect.width - 20));
+      const width = Math.min(720, Math.max(minWidth, hostRect.width - 40));
       handoffPanel.style.transform = 'none';
       handoffPanel.style.width = Math.round(width) + 'px';
       handoffPanel.style.height = '';
       const height = Math.min(handoffPanel.offsetHeight || 380, hostRect.height - 40);
-      handoffPanel.style.left = Math.round((hostRect.width - width) / 2) + 'px';
+      handoffPanel.style.left = Math.round(Math.max(8, (hostRect.width - width) / 2)) + 'px';
       handoffPanel.style.top = Math.round(Math.max(20, (hostRect.height - height) / 2)) + 'px';
       handoffPanel.dataset.positioned = 'true';
     }
@@ -14306,13 +14330,24 @@
       handoffId = makeHandoffId();
       handoffTask.value = '';
       updateHandoffPrompt();
+      handoffLayer.hidden = true;
+      closeHandoffWorkspacePicker();
+      closeHandoffProviderPicker();
+
+      if (WebviewWindowClass && !isHandoffWindow) {
+        const openedNativePanel = await showNativeHandoffPanel().catch(() => false);
+        if (openedNativePanel) return;
+        handoffWindowDesiredVisible = false;
+        showToast(t('handoffOpenFailed') || 'Handoff panel failed to open');
+        return;
+      }
+
       const showInlinePanel = () => {
         handoffLayer.hidden = false;
         requestAnimationFrame(() => positionHandoffPanel(!handoffPanel.dataset.positioned));
         setTimeout(() => focusElementIfAllowed(handoffTask), 50);
       };
       showInlinePanel();
-      void showNativeHandoffPanel().catch(() => {});
     }
 
     async function closeHandoffPanel() {
@@ -15835,8 +15870,12 @@
     }
 
     function applySessionPreviewSize() {
-      sessionPreview.style.width = sessionPreviewSize.width + 'px';
-      sessionPreview.style.height = sessionPreviewSize.height + 'px';
+      const maxWidth = Math.max(160, window.innerWidth - 16);
+      const maxHeight = Math.max(160, window.innerHeight - 16);
+      const width = Math.min(Math.max(SESSION_PREVIEW_MIN_WIDTH, sessionPreviewSize.width), maxWidth);
+      const height = Math.min(Math.max(SESSION_PREVIEW_MIN_HEIGHT, sessionPreviewSize.height), maxHeight);
+      sessionPreview.style.width = Math.round(width) + 'px';
+      sessionPreview.style.height = Math.round(height) + 'px';
     }
 
     function positionSessionPreview() {
@@ -15844,8 +15883,12 @@
       if (!anchor) return;
 
       const anchorRect = anchor.getBoundingClientRect();
-      sessionPreview.style.left = Math.round(anchorRect.left) + 'px';
-      sessionPreview.style.top = Math.round(anchorRect.bottom + 6) + 'px';
+      const previewRect = sessionPreview.getBoundingClientRect();
+      const margin = 8;
+      const maxLeft = Math.max(margin, window.innerWidth - previewRect.width - margin);
+      const maxTop = Math.max(margin, window.innerHeight - previewRect.height - margin);
+      sessionPreview.style.left = Math.round(Math.max(margin, Math.min(anchorRect.left, maxLeft))) + 'px';
+      sessionPreview.style.top = Math.round(Math.max(margin, Math.min(anchorRect.bottom + 6, maxTop))) + 'px';
     }
 
     async function nativeSessionPreviewPosition() {

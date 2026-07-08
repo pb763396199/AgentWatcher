@@ -1876,26 +1876,72 @@ fn path_option_matches(actual: Option<&PathBuf>, expected: &Path) -> bool {
 }
 
 fn read_udf_config() -> Option<UdfConfig> {
-    let path = udf_config_path();
-    let content = fs::read_to_string(path).ok()?;
-    toml::from_str(&content).ok()
+    read_udf_config_from_candidates(&udf_config_path_candidates())
 }
 
-fn udf_config_path() -> PathBuf {
-    if let Ok(dir) = env::var(devflow_config_env_name()) {
-        return PathBuf::from(dir).join("config.toml");
+fn read_udf_config_from_candidates(candidates: &[PathBuf]) -> Option<UdfConfig> {
+    for path in candidates {
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        if let Ok(config) = toml::from_str(&content) {
+            return Some(config);
+        }
     }
-    if let Ok(profile) = env::var("USERPROFILE") {
-        return PathBuf::from(profile)
-            .join(devflow_home_dir_name())
-            .join("config.toml");
+    None
+}
+
+fn effective_udf_config_dir() -> Option<PathBuf> {
+    effective_udf_config_dir_from_candidates(&udf_config_path_candidates())
+}
+
+fn effective_udf_config_dir_from_candidates(candidates: &[PathBuf]) -> Option<PathBuf> {
+    candidates
+        .iter()
+        .find(|path| path.is_file())
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+}
+
+fn udf_config_path_candidates() -> Vec<PathBuf> {
+    udf_config_path_candidates_from(
+        env::var(devflow_config_env_name()).ok().map(PathBuf::from),
+        env::var("USERPROFILE").ok().map(PathBuf::from),
+        env::var("HOME").ok().map(PathBuf::from),
+    )
+}
+
+fn udf_config_path_candidates_from(
+    configured_dir: Option<PathBuf>,
+    user_profile: Option<PathBuf>,
+    home: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(dir) = configured_dir {
+        push_unique_path(&mut candidates, dir.join("config.toml"));
     }
-    if let Ok(home) = env::var("HOME") {
-        return PathBuf::from(home)
-            .join(devflow_home_dir_name())
-            .join("config.toml");
+    if let Some(profile) = user_profile {
+        push_unique_path(
+            &mut candidates,
+            profile.join(devflow_home_dir_name()).join("config.toml"),
+        );
     }
-    PathBuf::from(devflow_home_dir_name()).join("config.toml")
+    if let Some(home) = home {
+        push_unique_path(
+            &mut candidates,
+            home.join(devflow_home_dir_name()).join("config.toml"),
+        );
+    }
+    push_unique_path(
+        &mut candidates,
+        PathBuf::from(devflow_home_dir_name()).join("config.toml"),
+    );
+    candidates
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|candidate| candidate == &path) {
+        paths.push(path);
+    }
 }
 
 fn devflow_config_env_name() -> String {
@@ -2198,8 +2244,12 @@ where
     S: AsRef<OsStr>,
 {
     let mut last_error = None;
+    let config_dir = effective_udf_config_dir();
     for candidate in adapter_executable_candidates() {
         let mut command = Command::new(&candidate);
+        if let Some(config_dir) = config_dir.as_ref() {
+            command.env(devflow_config_env_name(), config_dir);
+        }
         for arg in args {
             command.arg(arg.as_ref());
         }
@@ -2220,11 +2270,30 @@ fn adapter_executable_candidates() -> Vec<PathBuf> {
     }
     if let Ok(path) = env::var("PATH") {
         for dir in env::split_paths(&path) {
-            candidates.push(dir.join(adapter_executable_name()));
+            push_unique_path(&mut candidates, dir.join(adapter_executable_name()));
         }
     }
+    if let Ok(profile) = env::var("USERPROFILE") {
+        push_unique_path(
+            &mut candidates,
+            PathBuf::from(profile)
+                .join(devflow_home_dir_name())
+                .join("bin")
+                .join(adapter_executable_name()),
+        );
+    }
+    if let Ok(home) = env::var("HOME") {
+        push_unique_path(
+            &mut candidates,
+            PathBuf::from(home)
+                .join(devflow_home_dir_name())
+                .join("bin")
+                .join(adapter_executable_name()),
+        );
+    }
     if let Ok(current_dir) = env::current_dir() {
-        candidates.push(
+        push_unique_path(
+            &mut candidates,
             current_dir
                 .join(".plugin-worktrees")
                 .join("UEWorkflow")
@@ -2234,7 +2303,8 @@ fn adapter_executable_candidates() -> Vec<PathBuf> {
                 .join(adapter_executable_name()),
         );
         if let Some(parent) = current_dir.parent() {
-            candidates.push(
+            push_unique_path(
+                &mut candidates,
                 parent
                     .join(source_project_name())
                     .join("target")
@@ -2402,6 +2472,41 @@ mod tests {
     /// 回归：用户填主项目 DEV，但匹配到的 DevFlow workspace 绑定 DEV_1 时，
     /// 绝不能沿用 DEV_1 绑定（历史 bug：Host 项目/主项目被串到 DEV_1）。
     /// 有主插件路径时必须改为为 DEV 登记独立 workspace；无主插件路径时必须阻断。
+    #[test]
+    fn config_discovery_falls_back_when_env_points_at_unrealworkflow() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "uwf-devflow-config-fallback-{}",
+            std::process::id()
+        ));
+        let bad_unrealworkflow = temp_root.join(".unrealworkflow");
+        let good_unrealdevflow = temp_root.join(".unrealdevflow");
+        fs::create_dir_all(&bad_unrealworkflow).expect("create bad config dir");
+        fs::create_dir_all(&good_unrealdevflow).expect("create good config dir");
+        fs::write(
+            good_unrealdevflow.join("config.toml"),
+            "hosts_root = 'F:\\ShanghaiP4\\neon\\Hosts'\n\
+             default_project = 'F:\\ShanghaiP4\\neon\\UGA\\DEV_1'\n\
+             [workspaces.neon-dev1]\n\
+             plugin_path = 'F:\\ShanghaiP4\\neon\\Plugins\\AesWorld'\n",
+        )
+        .expect("write good config");
+
+        let candidates = udf_config_path_candidates_from(
+            Some(bad_unrealworkflow),
+            Some(temp_root.clone()),
+            None,
+        );
+        let config = read_udf_config_from_candidates(&candidates)
+            .expect("good .unrealdevflow config must win after bad env path is skipped");
+        assert!(config.workspaces.contains_key("neon-dev1"));
+        assert_eq!(
+            effective_udf_config_dir_from_candidates(&candidates),
+            Some(good_unrealdevflow)
+        );
+
+        let _ = fs::remove_dir_all(&temp_root);
+    }
+
     #[test]
     fn explicit_main_project_never_falls_back_to_workspace_default_project() {
         let temp_root = std::env::temp_dir().join(format!(

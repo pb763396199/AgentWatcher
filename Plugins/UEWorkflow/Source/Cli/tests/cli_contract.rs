@@ -449,6 +449,26 @@ fn master_commands_return_json_results() {
 }
 
 #[test]
+fn cli_accepts_unrealdevflow_id_alias_for_task_id() {
+    let output = run_uwf_json(&[
+        "master",
+        "dry-run",
+        "--goal",
+        "smoke",
+        "--workspace",
+        "neon-dev1",
+        "--id",
+        "vegetation-editor",
+        "--branch",
+        "feature/vegetation_editor",
+        "--json",
+    ]);
+
+    assert_eq!(output["command"], "master dry-run");
+    assert_eq!(output["request"]["taskId"], "vegetation-editor");
+}
+
+#[test]
 fn provider_packages_share_master_contract_between_copilot_and_codex() {
     let copilot = run_uwf_json(&[
         "master",
@@ -725,7 +745,7 @@ fn master_execute_only_dispatches_safe_module_actions() {
             "验证受控执行边界",
             "--workspace",
             "neon-dev1",
-            "--task-id",
+            "--id",
             "master-safety-smoke",
             "--provider",
             "codex",

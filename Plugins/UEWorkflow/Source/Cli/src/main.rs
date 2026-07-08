@@ -72,7 +72,9 @@ fn command_request(args: &[String]) -> CommandRequest {
     CommandRequest {
         goal: flag_value(args, "--goal"),
         workspace: flag_value(args, "--workspace"),
-        task_id: flag_value(args, "--task-id").or_else(|| flag_value(args, "--task")),
+        task_id: flag_value(args, "--task-id")
+            .or_else(|| flag_value(args, "--task"))
+            .or_else(|| flag_value(args, "--id")),
         action: flag_value(args, "--action"),
         confirmation: flag_value(args, "--confirm").or_else(|| flag_value(args, "--confirmation")),
         provider: flag_value(args, "--provider"),
@@ -93,6 +95,8 @@ fn value_flag(arg: &str) -> bool {
             | "--workspace"
             | "--task-id"
             | "--task"
+            | "--id"
+            | "--branch"
             | "--action"
             | "--confirm"
             | "--confirmation"
