@@ -882,9 +882,30 @@ async function runHandoffFlow() {
     handoff = await waitForPage(
       page => page.url().includes('?handoff=1'),
       '接续面板窗口',
-      4500,
+      12000,
     ).catch(() => null);
     if (!handoff) {
+      const state = await main.evaluate(() => {
+        const selected = document.querySelector('.lane .session-card[data-session-id]:not([hidden])');
+        const openButton = document.querySelector('#handoffOpen');
+        const layer = document.querySelector('#handoffLayer');
+        return {
+          url: location.href,
+          selectedCard: selected ? {
+            sessionId: selected.dataset.sessionId || '',
+            provider: selected.dataset.provider || '',
+            text: selected.textContent?.slice(0, 180) || '',
+          } : null,
+          menuOpen: document.querySelector('#handoffContextMenu')?.classList.contains('open') || false,
+          openButtonVisible: !!openButton && getComputedStyle(openButton).display !== 'none' && getComputedStyle(openButton).visibility !== 'hidden',
+          openButtonOnClick: typeof openButton?.onclick,
+          layerHidden: layer?.hidden ?? null,
+          inlineVisible: !!layer && !layer.hidden,
+          sourceLabel: document.querySelector('#handoffSourceLabel')?.textContent || '',
+          toast: document.querySelector('#toast')?.textContent || '',
+        };
+      }).catch(e => ({ diagnosticError: String(e) }));
+      throw new Error(`Native handoff panel did not open; inline handoff panel fallback is forbidden in Tauri smoke. State: ${JSON.stringify(state)}`);
       try {
         await main.waitForFunction(() => {
           const layer = document.querySelector('#handoffLayer');
@@ -929,6 +950,13 @@ async function runHandoffFlow() {
   const info = await assertTauriPage(handoff, '接续面板窗口');
   const text = await visibleText(handoff);
   const screenshot = await saveScreenshot(handoff, 'handoff-window.png');
+  const inlineState = await main.evaluate(() => {
+    const layer = document.querySelector('#handoffLayer');
+    return { hidden: layer?.hidden ?? null };
+  }).catch(error => ({ error: String(error) }));
+  if (inlineState.hidden === false) {
+    throw new Error('Native handoff panel opened, but the main-window inline handoff panel is still visible.');
+  }
 
   return {
     ...info,

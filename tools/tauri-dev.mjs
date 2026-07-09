@@ -58,10 +58,28 @@ fs.writeFileSync(runtimePath, JSON.stringify(runtime, null, 2), 'utf8');
 console.log(`[AgentWatcher dev] WebView2 CDP: ${runtime.cdpUrl}`);
 console.log(`[AgentWatcher dev] Runtime: ${runtimePath}`);
 
-const command = process.platform === 'win32' ? (process.env.ComSpec || 'cmd.exe') : 'npx';
+const localTauriBin = path.join(
+  repoRoot,
+  'node_modules',
+  '.bin',
+  process.platform === 'win32' ? 'tauri.cmd' : 'tauri',
+);
+const hasLocalTauriBin = fs.existsSync(localTauriBin);
+const command = process.platform === 'win32'
+  ? (process.env.ComSpec || 'cmd.exe')
+  : hasLocalTauriBin
+    ? localTauriBin
+    : 'npx';
 const args = process.platform === 'win32'
-  ? ['/d', '/s', '/c', 'npx tauri dev']
-  : ['tauri', 'dev'];
+  ? [
+      '/d',
+      '/c',
+      hasLocalTauriBin ? localTauriBin : 'npx',
+      ...(hasLocalTauriBin ? ['dev'] : ['tauri', 'dev']),
+    ]
+  : hasLocalTauriBin
+    ? ['dev']
+    : ['tauri', 'dev'];
 const stdio = silent
   ? [
       'ignore',
