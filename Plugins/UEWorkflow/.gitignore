@@ -1,8 +1,0 @@
-Modules/*
-!Modules/.gitkeep
-target/
-**/target/
-.uwf-local/
-# 测试/错误 cwd 生成的知识库垃圾，不入库
-Source/Cli/Plugins/
-UnrealWorkflowKnowledge/scopes/projects/project/

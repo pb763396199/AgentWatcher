@@ -1,3 +1,0 @@
-DevFlow|uwf dev|status, capabilities, commands, schema, dry-run, execute, history, artifacts
-AgentHub|uwf agents|status, capabilities, commands, schema, dry-run, execute, history, artifacts
-KnowledgeBase|uwf kb|status, capabilities, commands, schema, dry-run, execute, history, artifacts

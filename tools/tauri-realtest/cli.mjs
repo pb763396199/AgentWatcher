@@ -37,6 +37,9 @@ const aliasToFlow = new Map([
   ['agenttask', 'agent-task'],
   ['任务面板', 'agent-task'],
   ['任务', 'agent-task'],
+  ['plugin-lifecycle', 'plugin-lifecycle'],
+  ['plugins', 'plugin-lifecycle'],
+  ['插件生命周期', 'plugin-lifecycle'],
   ['performance', 'performance'],
   ['perf', 'performance'],
   ['性能面板', 'performance'],
@@ -65,6 +68,7 @@ const aliasToFlow = new Map([
 const flowDisplay = {
   smoke: '冒烟流程',
   'agent-task': 'AgentTask 面板流程',
+  'plugin-lifecycle': '插件三态生命周期流程',
   performance: '性能面板流程',
   handoff: '接续面板流程',
   'opencode-session': 'OpenCode 会话卡片流程',
@@ -168,6 +172,8 @@ try {
       await runStep('点击切换到 AgentTask 面板', () => runAgentTaskFlow());
     } else if (flow === 'agent-task') {
       await runStep('点击切换到 AgentTask 面板', () => runAgentTaskFlow());
+    } else if (flow === 'plugin-lifecycle') {
+      await runStep('验证插件未挂载、已挂载未启用、已启用三种状态', () => runPluginLifecycleFlow());
     } else if (flow === 'performance') {
       await runStep('点击打开性能诊断窗口', () => runPerformanceFlow());
     } else if (flow === 'handoff') {
@@ -440,361 +446,188 @@ async function ensureChineseUi() {
   return { 操作: '通过设置面板切换到中文界面', 切换前: before, 切换后: after };
 }
 
-async function runAgentTaskFlowV2() {
+async function runAgentTaskFlow() {
   const page = await getMainPage();
-  for (const candidate of context.pages()) {
-    if (candidate === page) continue;
-    const url = candidate.url();
-    if (url.includes('?handoff=1') || url.includes('?performance=1')) {
-      await candidate.close().catch(() => {});
-    }
-  }
-  await maybeBringToFront(page);
-  await ensureWatcherSurface(page).catch(() => {});
   await assertTauriPage(page, '主窗口');
   const todoBackup = snapshotTodoStateFile();
-  const toggle = page.locator('#todoToggle');
-  await toggle.waitFor({ state: 'visible', timeout: 10000 });
-  const before = await toggle.getAttribute('aria-label');
-  const taskTitle = `Realtest Unreal Workflow dry-run ${runId}`;
-
+  const taskTitle = `Realtest plugin workflow ${runId}`;
   try {
     await openSettingsPanel(page);
-    await page.locator('#ueWorkflowRefresh').click({ force: true, timeout: 5000 }).catch(() => {});
+    await page.locator('#pluginRefresh').click({ force: true });
     await page.waitForFunction(() => {
-      const workflow = document.querySelector('#ueWorkflowPanel');
-      return workflow && ['开发流', '智能体', '知识库'].every(name => workflow.innerText.includes(name));
+      const panel = document.querySelector('#pluginPanel');
+      return panel && panel.innerText.includes('插件管理');
     }, null, { timeout: 15000 });
-    const enableText = await page.locator('#ueWorkflowEnableToggle').innerText().catch(() => '');
-    if (/启用|Enable/i.test(enableText)) {
-      await page.locator('#ueWorkflowEnableToggle').click();
-      await page.waitForFunction(() => /停用|Disable/i.test(document.querySelector('#ueWorkflowEnableToggle')?.innerText || ''), null, { timeout: 10000 });
+    const pluginPanel = await page.evaluate(() => ({
+      标题: document.querySelector('#pluginTitle')?.textContent?.trim() || '',
+      内容: document.querySelector('#pluginPanel')?.innerText || '',
+      使用通用插件控件: !!document.querySelector('#pluginMount, #pluginRefresh, #pluginList'),
+    }));
+    if (pluginPanel.标题 !== '插件管理' || !pluginPanel.使用通用插件控件) {
+      throw new Error(`插件管理仍依赖旧专用界面：${JSON.stringify(pluginPanel)}`);
     }
-    await page.waitForFunction(() => {
-      const panelText = document.querySelector('#ueWorkflowPanel')?.innerText || '';
-      return /doctor：|doctor:/.test(panelText)
-        && !/doctor：检查中|doctor：checking|doctor: checking/.test(panelText);
-    }, null, { timeout: 20000 }).catch(() => {});
-    const ueWorkflowSettings = await page.evaluate(() => {
-      const panelText = document.querySelector('#ueWorkflowPanel')?.innerText || '';
-      return {
-        设置面板标题: document.querySelector('#ueWorkflowTitle')?.textContent?.trim() || '',
-        设置面板包含业务模块: ['开发流', '智能体', '知识库'].every(name => panelText.includes(name)),
-        设置面板包含插件动作: ['安装/修复', '刷新'].every(name => panelText.includes(name)),
-        设置面板不包含项目绑定: !document.querySelector('#ueWorkflowBindingForm')
-          && !['主项目路径', 'Host 根目录', '主插件', '主插件路径', '插件依赖'].some(name => panelText.includes(name)),
-        设置面板包含doctor: /doctor：|doctor:/.test(panelText),
-        设置面板泄露内部工程名: /UnrealDevFlow|UE_Master_Agent|UE5_KnowledgeBaseMaker/.test(panelText),
-      };
+    await page.locator('#settingsToggle').click({ force: true }).catch(() => {});
+    const workspace = await page.evaluate(() => {
+      const card = document.querySelector('.lane .session-card[data-workspace-key]');
+      return card ? {
+        key: card.dataset.workspaceKey || '',
+        path: card.dataset.workspacePath || '',
+        label: card.dataset.workspaceLabel || card.dataset.workspace || 'Realtest Workspace'
+      } : null;
     });
-    if (!ueWorkflowSettings.设置面板包含业务模块 || !ueWorkflowSettings.设置面板包含插件动作 || !ueWorkflowSettings.设置面板不包含项目绑定 || !ueWorkflowSettings.设置面板包含doctor) {
-      throw new Error('虚幻工作流设置面板缺少业务模块、插件动作、doctor 状态，或仍错误展示项目绑定。');
-    }
-    if (ueWorkflowSettings.设置面板泄露内部工程名) {
-      throw new Error('虚幻工作流设置面板泄露内部工程名。');
-    }
-    await page.evaluate(() => {
-      const panel = document.querySelector('#settingsPanel');
-      const workflow = document.querySelector('#ueWorkflowPanel');
-      if (panel && workflow) panel.scrollTop = workflow.offsetTop;
+    if (!workspace?.key) throw new Error('没有可用于创建测试任务的会话工作区。');
+    const state = todoBackup.existed ? safeJsonParse(todoBackup.text, { version: 1, workspaces: {} }) : { version: 1, workspaces: {} };
+    state.version = 1;
+    state.workspaces = state.workspaces && typeof state.workspaces === 'object' ? state.workspaces : {};
+    const workspaceState = state.workspaces[workspace.key] || { key: workspace.key, label: workspace.label, path: workspace.path, tasks: [] };
+    workspaceState.key = workspace.key;
+    workspaceState.label = workspace.label;
+    workspaceState.path = workspace.path;
+    workspaceState.tasks = Array.isArray(workspaceState.tasks) ? workspaceState.tasks : [];
+    workspaceState.tasks.unshift({
+      id: `realtest-plugin-workflow-${runId}`,
+      title: taskTitle,
+      description: '验证外部插件贡献的动态任务表单。',
+      acceptance: '工作流和目标 Agent 分开，字段来自插件 schema。',
+      workflow: 'standard',
+      launchMode: 'agents',
+      status: 'ready',
+      order: 0,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      dispatches: []
     });
-    await page.waitForTimeout(150);
-    const settingsScreenshot = await saveScreenshot(page, 'ueworkflow-settings-panel.png');
-    await page.evaluate(() => {
-      if (typeof setSettingsPanelOpenPreserveMode === 'function') {
-        setSettingsPanelOpenPreserveMode(false);
-        return;
-      }
-      if (typeof setSettingsPanelOpen === 'function') {
-        setSettingsPanelOpen(false);
-        return;
-      }
-      const panel = document.querySelector('#settingsPanel');
-      if (panel) panel.hidden = true;
-      document.body.classList.remove('is-task-settings-open');
-    });
-    await page.waitForFunction(() => document.querySelector('#settingsPanel')?.hidden, null, { timeout: 10000 });
-
-    await page.evaluate(() => document.querySelector('#todoToggle')?.click());
-    await page.waitForFunction(() => document.body.classList.contains('is-agent-task-mode'), null, { timeout: 10000 });
-    const taskPanelShape = await page.evaluate(() => {
-      const taskFace = document.querySelector('#agentTaskFace');
-      const taskText = taskFace?.innerText || '';
-      return {
-        Task面板不显示插件安装状态: !/安装\/修复|doctor：|doctor:/.test(taskText),
-        没有独立工作台DOM: !document.querySelector('#ueWorkflowFace') && !document.querySelector('#ueWorkflowWorkbench'),
-        没有旧跳转条DOM: !document.querySelector('#agentTaskUEWorkflowJump'),
-        没有模块命令按钮: !document.querySelector('[data-ueworkflow-command]'),
-        没有UE工作台模式: !document.body.classList.contains('is-ueworkflow-mode'),
-        Task面板泄露内部工程名: /UnrealDevFlow|UE_Master_Agent|UE5_KnowledgeBaseMaker/.test(taskText),
-      };
-    });
-    if (!taskPanelShape.Task面板不显示插件安装状态 || !taskPanelShape.没有独立工作台DOM || !taskPanelShape.没有旧跳转条DOM || !taskPanelShape.没有模块命令按钮 || !taskPanelShape.没有UE工作台模式) {
-      throw new Error('AgentTask 面板仍被插件安装状态、旧跳转条或独立工作台占用。');
-    }
-    if (taskPanelShape.Task面板泄露内部工程名) {
-      throw new Error('AgentTask 面板泄露内部工程名或路径。');
-    }
-
-    const fixture = await installUEWorkflowTodoFixture(page, taskTitle);
+    workspaceState.tasks.forEach((task, index) => { task.order = index; });
+    state.workspaces[workspace.key] = workspaceState;
+    fs.mkdirSync(path.dirname(todoBackup.path), { recursive: true });
+    fs.writeFileSync(todoBackup.path, JSON.stringify(state, null, 2), 'utf8');
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => document.querySelector('#todoToggle'), null, { timeout: 10000 });
-    await page.evaluate(() => document.querySelector('#todoToggle')?.click());
+    const inTaskMode = await page.locator('body').evaluate(body => body.classList.contains('is-agent-task-mode'));
+    if (!inTaskMode) await page.locator('#todoToggle').click({ force: true });
     await page.waitForFunction(() => document.body.classList.contains('is-agent-task-mode'), null, { timeout: 10000 });
-    await selectAgentTaskWorkspace(page, fixture.workspaceKey);
-    await page.waitForFunction((title) => (document.querySelector('#agentTaskFace')?.innerText || '').includes(title), taskTitle, { timeout: 10000 });
-    await page.locator(`[data-todo-id="${fixture.taskId}"] .agenttask-item-main`).click();
-    await page.waitForFunction((taskId) => {
-      const detailVisible = !document.querySelector('#agentTaskDetailLayer')?.hidden;
-      return detailVisible && document.querySelector('#agentTaskDetailLayer')?.closest('[data-todo-id]')?.dataset.todoId === taskId;
-    }, fixture.taskId, { timeout: 10000 });
-    const splitWorkflowPicker = await page.evaluate(() => {
-      const workflowSelect = document.querySelector('#agentTaskWorkflowSelect');
-      const agentSelect = document.querySelector('#agentTaskModeSelect');
-      if (!workflowSelect || !agentSelect) return { hasWorkflow: !!workflowSelect, hasAgent: !!agentSelect };
-      workflowSelect.value = 'ueworkflow';
-      workflowSelect.dispatchEvent(new Event('input', { bubbles: true }));
-      workflowSelect.dispatchEvent(new Event('change', { bubbles: true }));
-      agentSelect.value = 'agents';
-      agentSelect.dispatchEvent(new Event('input', { bubbles: true }));
-      agentSelect.dispatchEvent(new Event('change', { bubbles: true }));
-      return {
-        hasWorkflow: true,
-        hasAgent: true,
-        workflowValue: workflowSelect.value,
-        agentValue: agentSelect.value,
-        agentOptions: Array.from(agentSelect.options).map(option => option.value),
-        detailText: document.querySelector('#agentTaskDetailLayer')?.innerText || '',
-      };
-    });
-    if (!splitWorkflowPicker.hasWorkflow || !splitWorkflowPicker.hasAgent || splitWorkflowPicker.workflowValue !== 'ueworkflow' || splitWorkflowPicker.agentValue !== 'agents' || splitWorkflowPicker.agentOptions.includes('ueworkflow')) {
-      throw new Error(`虚幻工作流和目标 Agent 没有拆成两个独立选择器：${JSON.stringify(splitWorkflowPicker)}`);
+    await page.locator('#agentTaskWorkspaceButton').click({ force: true });
+    const workspaceOption = page.locator(`#agentTaskWorkspaceOptions .handoff-picker-option[data-workspace-key="${workspace.key}"]`).first();
+    if (!(await workspaceOption.count())) throw new Error(`任务工作区选项不存在：${workspace.key}`);
+    await workspaceOption.click({ force: true });
+    await page.waitForFunction(title => [...document.querySelectorAll('.agenttask-item')].some(card => card.innerText.includes(title)), taskTitle, { timeout: 10000 });
+    const card = page.locator('.agenttask-item').filter({ hasText: taskTitle }).first();
+    await card.locator('.agenttask-item-main').click({ force: true });
+    await page.locator('#agentTaskWorkflowButton').click({ force: true });
+    const workflowOption = page.locator('#agentTaskWorkflowOptions [data-mode^="plugin:"]').first();
+    const workflowCount = await workflowOption.count();
+    if (!workflowCount) {
+      throw new Error('当前没有已启用且通过握手的外部插件工作流，无法验证动态贡献。');
+    }
+    const workflowId = await workflowOption.getAttribute('data-mode');
+    await page.evaluate(id => {
+      const select = document.querySelector('#agentTaskWorkflowSelect');
+      select.value = id;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    }, workflowId);
+    await page.waitForFunction(() => {
+      const form = document.querySelector('#agentTaskPluginWorkflowContext');
+      return form && !form.hidden && form.querySelectorAll('[data-plugin-workflow-key]').length > 0;
+    }, null, { timeout: 10000 });
+    const taskSurface = await page.evaluate(() => ({
+      工作流值: document.querySelector('#agentTaskWorkflowSelect')?.value || '',
+      目标Agent值: document.querySelector('#agentTaskModeSelect')?.value || '',
+      动态字段: [...document.querySelectorAll('[data-plugin-workflow-key]')].map(field => field.dataset.pluginWorkflowKey),
+      只有Schema字段: [...document.querySelectorAll('#agentTaskPluginWorkflowFields input, #agentTaskPluginWorkflowFields textarea, #agentTaskPluginWorkflowFields select')]
+        .every(field => !!field.dataset.pluginWorkflowKey),
+      工作流与Agent分开: !!document.querySelector('#agentTaskWorkflowButton') && !!document.querySelector('#agentTaskModeButton'),
+    }));
+    if (taskSurface.工作流值 !== workflowId || !taskSurface.目标Agent值 || !taskSurface.动态字段.length || !taskSurface.只有Schema字段 || !taskSurface.工作流与Agent分开) {
+      throw new Error(`插件工作流动态表单验收失败：${JSON.stringify(taskSurface)}`);
     }
     await page.waitForFunction(() => {
-      const plan = document.querySelector('#agentTaskUEWorkflowPlan');
-      const prompt = document.querySelector('#agentTaskPromptPreview')?.value || '';
-      return plan && !plan.hidden && prompt.includes('虚幻工作流') && prompt.includes('dry-run');
-    }, null, { timeout: 10000 });
-    await page.waitForFunction(() => {
-      const form = document.querySelector('#agentTaskUEWorkflowContext');
-      return form && !form.hidden;
-    }, null, { timeout: 10000 });
-    const emptyBranchByDefault = await page.evaluate(() => document.querySelector('#agentTaskUEWorkflowBranch')?.value || '');
-    if (emptyBranchByDefault) {
-      throw new Error(`虚幻工作流分支名不应该默认填值：${emptyBranchByDefault}`);
-    }
-    const ueProjectRoot = path.join(outputDir, 'ue-project');
-    const ueHostsRoot = path.join(ueProjectRoot, 'Hosts');
-    const aesWorldPlugin = path.join(ueProjectRoot, 'Plugins', 'AesWorld');
-    const aesWorldAiPlugin = path.join(ueProjectRoot, 'Plugins', 'AesWorld_AI');
-    const pcgPlugin = path.join(ueProjectRoot, 'Plugins', 'PCG');
-    for (const dir of [ueHostsRoot, aesWorldPlugin, aesWorldAiPlugin, pcgPlugin]) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    fs.writeFileSync(path.join(aesWorldPlugin, 'AesWorld.uplugin'), JSON.stringify({
-      FileVersion: 3,
-      Modules: [{ Name: 'AesWorld', Type: 'Runtime' }],
-      Plugins: [
-        { Name: 'PCG', Enabled: true },
-        { Name: 'CesiumForUnreal', Enabled: true },
-      ],
-    }));
-    fs.writeFileSync(path.join(aesWorldAiPlugin, 'AesWorld_AI.uplugin'), JSON.stringify({
-      FileVersion: 3,
-      Modules: [{ Name: 'AesWorld_AI', Type: 'Editor' }],
-      Plugins: [{ Name: 'AesWorld', Enabled: true }],
-    }));
-    fs.writeFileSync(path.join(pcgPlugin, 'PCG.uplugin'), JSON.stringify({
-      FileVersion: 3,
-      Modules: [{ Name: 'PCG', Type: 'Runtime' }],
-    }));
-    await page.evaluate((values) => {
-      const setValue = (selector, value) => {
-        const field = document.querySelector(selector);
-        if (!field) throw new Error(`missing field: ${selector}`);
-        field.value = value;
-        field.dispatchEvent(new Event('input', { bubbles: true }));
-        field.dispatchEvent(new Event('change', { bubbles: true }));
-      };
-      setValue('#agentTaskUEWorkflowBranch', values.branchName);
-      setValue('#agentTaskUEWorkflowMainProject', values.mainProject);
-      setValue('#agentTaskUEWorkflowHostRoot', values.hostRoot);
-      setValue('#agentTaskUEWorkflowPrimary', values.primary);
-      setValue('#agentTaskUEWorkflowDeps', values.deps);
-    }, {
-      branchName: fixture.branchName,
-      mainProject: ueProjectRoot,
-      hostRoot: ueHostsRoot,
-      primary: `${aesWorldPlugin}\n${aesWorldAiPlugin}`,
-      deps: 'CesiumForUnreal=engine',
-    });
-    const detailPrimaryButton = '#agentTaskDetailLayer .agenttask-detail-actions .agenttask-card-action[data-agent-task-action-role="primary"]';
-    const previewButton = page.locator(detailPrimaryButton);
-    await previewButton.waitFor({ state: 'visible', timeout: 10000 });
-    await page.waitForFunction((selector) => /预演/.test(document.querySelector(selector)?.innerText || ''), detailPrimaryButton, { timeout: 10000 });
-    await maybeBringToFront(page);
-    await page.evaluate((selector) => document.querySelector(selector)?.click(), detailPrimaryButton);
-    try {
-      await page.waitForFunction(() => {
-        const plan = document.querySelector('#agentTaskUEWorkflowPlan')?.innerText || '';
-        const prompt = document.querySelector('#agentTaskPromptPreview')?.value || '';
-        return plan.includes('确认边界')
-          && plan.includes('风险边界')
-          && prompt.includes('阶段计划')
-          && prompt.includes('安全边界')
-          && prompt.includes('产物路径');
-      }, null, { timeout: 90000 });
-    } catch (error) {
-      const persistedTask = readTodoTaskSnapshot(fixture.taskId);
-      const dryRunState = await page.evaluate((selector) => ({
-        button: document.querySelector(selector)?.innerText || '',
-        plan: document.querySelector('#agentTaskUEWorkflowPlan')?.innerText || '',
-        prompt: (document.querySelector('#agentTaskPromptPreview')?.value || '').slice(0, 1200),
-        toast: document.querySelector('#toast')?.innerText || '',
-      }), detailPrimaryButton).catch(() => ({}));
-      dryRunState.persistedTask = persistedTask;
-      throw new Error(`虚幻工作流 dry-run 等待失败：${JSON.stringify(dryRunState)}；${errorMessage(error)}`);
-    }
-    const ueWorkflowTask = await page.evaluate((expectedContext) => {
-      const plan = document.querySelector('#agentTaskUEWorkflowPlan')?.innerText || '';
-      const prompt = document.querySelector('#agentTaskPromptPreview')?.value || '';
-      const action = document.querySelector('#agentTaskDetailLayer .agenttask-detail-actions .agenttask-card-action[data-agent-task-action-role="primary"]')?.innerText || '';
-      const fullText = `${plan}\n${prompt}`;
-      return {
-        详情显示阶段计划: ['确认任务和 UE 上下文', '生成开发流预演', '生成智能体任务包', '知识沉淀'].every(text => fullText.includes(text)),
-        详情显示上下文确认: [
-          'UE 上下文确认',
-          `分支名：${expectedContext.branchName}`,
-          `主项目路径：${expectedContext.ueProjectRoot}`,
-          `Host 根目录：${expectedContext.ueHostsRoot}`,
-          '主插件集：AesWorld,AesWorld_AI',
-          '插件依赖',
-          '依赖明细',
-          'PCG(project_plugin)',
-          'CesiumForUnreal(engine_plugin)',
-          '插件扫描',
-          'AesWorld(ready',
-          'AesWorld_AI(ready'
-        ].every(text => fullText.includes(text))
-          && !fullText.includes('DevFlow 工作区')
-          && !fullText.includes('主插件路径'),
-        详情显示风险边界: fullText.includes('任意 shell') && fullText.includes('raw UE build'),
-        详情显示产物路径: prompt.includes('产物路径'),
-        详情显示确认边界: plan.includes('UEWorkflow.UnrealMaster.execute.v1'),
-        下一步按钮是执行包: /生成执行包/.test(action),
-        未暴露内部工程名: !/UnrealDevFlow|UE_Master_Agent|UE5_KnowledgeBaseMaker/.test(fullText),
-      };
-    }, { ueProjectRoot, ueHostsRoot, branchName: fixture.branchName });
-    if (!ueWorkflowTask.详情显示阶段计划 || !ueWorkflowTask.详情显示上下文确认 || !ueWorkflowTask.详情显示风险边界 || !ueWorkflowTask.详情显示产物路径 || !ueWorkflowTask.详情显示确认边界 || !ueWorkflowTask.下一步按钮是执行包) {
-      const dryRunDebug = await page.evaluate(() => ({
-        plan: document.querySelector('#agentTaskUEWorkflowPlan')?.innerText || '',
-        prompt: (document.querySelector('#agentTaskPromptPreview')?.value || '').slice(0, 1800)
-      })).catch(() => ({}));
-      throw new Error(`虚幻工作流任务详情缺少 dry-run 阶段、UE 上下文、风险、产物、确认边界或下一步按钮：${JSON.stringify({ ueWorkflowTask, dryRunDebug })}`);
-    }
-    if (!ueWorkflowTask.未暴露内部工程名) {
-      throw new Error('虚幻工作流任务详情泄露内部工程名或路径。');
-    }
-    const taskScreenshot = await saveScreenshot(page, 'ueworkflow-task-dry-run.png');
-
-    const executeButton = page.locator(detailPrimaryButton);
-    await executeButton.waitFor({ state: 'visible', timeout: 10000 });
-    await page.waitForFunction((selector) => /生成执行包/.test(document.querySelector(selector)?.innerText || ''), detailPrimaryButton, { timeout: 10000 });
-    await maybeBringToFront(page);
-    await page.evaluate((selector) => document.querySelector(selector)?.click(), detailPrimaryButton);
-    const immediateExecuteSnapshot = await waitForTodoTaskSnapshot(fixture.taskId, task => (
-      task.lifecycleEvents > 0
-      && /正在创建|正在生成|正在打开|执行包|失败/.test(task.lifecycleMessage || '')
-    ), 10000);
-    if (!immediateExecuteSnapshot) {
-      throw new Error(`点击确认后 10 秒内没有进入可见执行进度：${JSON.stringify(readTodoTaskSnapshot(fixture.taskId))}`);
-    }
-    const failClosedStatuses = new Set(['blocked', 'failed']);
-    const executeSnapshot = await waitForTodoTaskSnapshot(fixture.taskId, task => (
-      task.executionCommand === 'master execute'
-      && task.detailsCommand === 'master execute'
-      && (
-        (task.detailsStatus === 'success' && task.taskStatus === 'running' && task.dispatches === 1 && !!task.dispatchProviderWorkspacePath)
-        || (failClosedStatuses.has(task.executionStatus) && failClosedStatuses.has(task.detailsStatus) && task.taskStatus === 'ready' && task.dispatches === 0)
-      )
-    ), 90000);
-    if (!executeSnapshot) {
-      throw new Error(`虚幻工作流执行包没有进入成功或明确失败状态：${JSON.stringify(readTodoTaskSnapshot(fixture.taskId))}`);
-    }
-    const executeSucceeded = executeSnapshot.detailsStatus === 'success';
-    const ueWorkflowExecute = {
-      点击后立即可见进度: immediateExecuteSnapshot.lifecycleEvents > 0 && !!immediateExecuteSnapshot.lifecycleMessage,
-      生成执行记录: executeSnapshot.executionCommand === 'master execute',
-      成功时派发Provider: executeSucceeded ? (executeSnapshot.taskStatus === 'running' && executeSnapshot.dispatches === 1 && !!executeSnapshot.dispatchProviderWorkspacePath) : true,
-      失败时不派发Provider: executeSucceeded ? true : (failClosedStatuses.has(executeSnapshot.executionStatus) && failClosedStatuses.has(executeSnapshot.detailsStatus) && executeSnapshot.taskStatus === 'ready' && executeSnapshot.dispatches === 0),
-      Execute使用用户分支名: executeSnapshot.requestTaskId === fixture.branchName && executeSnapshot.requestTaskId !== fixture.taskId,
-      Execute使用主插件路径作为DevFlow工作区: executeSnapshot.requestWorkspace === aesWorldPlugin,
-      未暴露内部工程名: !/UnrealDevFlow|UE_Master_Agent|UE5_KnowledgeBaseMaker/.test(JSON.stringify(executeSnapshot)),
-    };
-    if (!ueWorkflowExecute.点击后立即可见进度 || !ueWorkflowExecute.生成执行记录 || !ueWorkflowExecute.成功时派发Provider || !ueWorkflowExecute.失败时不派发Provider || !ueWorkflowExecute.Execute使用用户分支名 || !ueWorkflowExecute.Execute使用主插件路径作为DevFlow工作区 || !ueWorkflowExecute.未暴露内部工程名) {
-      throw new Error(`虚幻工作流执行包验收失败：${JSON.stringify({ ueWorkflowExecute, immediateExecuteSnapshot, executeSnapshot })}`);
-    }
-    const launchPathContract = assertUEWorkflowLaunchPathContract();
-
-    const compactBoundsBefore = await setNativeWindowBounds(page, { width: 405, height: 590 });
-    await page.setViewportSize({ width: 405, height: 590 });
-    await page.waitForTimeout(250);
-    await page.locator('[data-agent-task-filter="run"]').click({ force: true, timeout: 5000 }).catch(() => {});
-    await page.waitForTimeout(500);
-    const compactBoundsAfter = await nativeWindowBounds(page);
-    const compact = await page.evaluate(() => {
-      const doc = document.documentElement;
-      const panel = document.querySelector('#agentTaskFace');
-      const list = document.querySelector('#agentTaskList');
-      const prompt = document.querySelector('#agentTaskPromptPreview');
-      const promptRect = prompt?.getBoundingClientRect();
-      const promptStyle = prompt ? window.getComputedStyle(prompt) : null;
-      const promptVisible = !!prompt
-        && !!promptRect
-        && promptRect.width > 0
-        && promptRect.height > 0
-        && promptStyle?.display !== 'none'
-        && promptStyle?.visibility !== 'hidden';
-      return {
-        无横向溢出: doc.scrollWidth <= window.innerWidth + 2,
-        任务面板可见: !!panel && panel.getBoundingClientRect().width > 0,
-        列表仍有可用高度: !!list && list.getBoundingClientRect().height > 80,
-        Prompt可见: promptVisible,
-        Prompt未挤成零高: !promptVisible || promptRect.height > 40,
-        无旧跳转条DOM: !document.querySelector('#agentTaskUEWorkflowJump'),
-        未弹回默认大尺寸: window.innerWidth < 700 && window.innerHeight < 700,
-        视口: { width: window.innerWidth, height: window.innerHeight },
-      };
-    });
-    compact.Native窗口 = { before: compactBoundsBefore, after: compactBoundsAfter };
-    compact.Native未弹回默认大尺寸 = !compactBoundsAfter || (compactBoundsAfter.width < 700 && compactBoundsAfter.height < 700);
-    if (!compact.无横向溢出 || !compact.任务面板可见 || !compact.列表仍有可用高度 || !compact.Prompt未挤成零高 || !compact.无旧跳转条DOM || !compact.未弹回默认大尺寸 || !compact.Native未弹回默认大尺寸) {
-      throw new Error(`虚幻工作流小窗口布局或尺寸保持验收失败：${JSON.stringify(compact)}`);
-    }
-    const compactScreenshot = await saveViewportScreenshot(page, 'ueworkflow-task-405x590.png');
-    await setNativeWindowBounds(page, { width: 800, height: 700 }).catch(() => null);
-    await page.setViewportSize({ width: 800, height: 700 });
-    await page.waitForTimeout(100);
-
-    return {
-      点击目标: '#todoToggle',
-      切换前按钮: before,
-      UEWorkflowSettings: ueWorkflowSettings,
-      AgentTaskPanel: taskPanelShape,
-      UEWorkflowTask: ueWorkflowTask,
-      UEWorkflowExecute: ueWorkflowExecute,
-      UEWorkflowLaunchPathContract: launchPathContract,
-      CompactLayout: compact,
-      截图: [settingsScreenshot, taskScreenshot, compactScreenshot],
-    };
+      const face = document.querySelector('#agentTaskFace');
+      const body = document.body;
+      return body.classList.contains('is-agent-task-mode')
+        && !body.classList.contains('is-agent-task-flipping')
+        && face?.getAttribute('aria-hidden') === 'false';
+    }, null, { timeout: 5000 });
+    await page.locator('#agentTaskPluginWorkflowContext').scrollIntoViewIfNeeded();
+    const screenshot = await saveViewportScreenshot(page, 'plugin-workflow-task-schema.png');
+    return { 插件管理: pluginPanel, 任务创建: taskSurface, 截图: [screenshot] };
   } finally {
     restoreTodoStateFile(todoBackup);
     await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
   }
 }
 
-async function runAgentTaskFlow() {
-  return runAgentTaskFlowV2();
+async function runPluginLifecycleFlow() {
+  const pluginRoot = process.env.AGENTWATCHER_LIVE_PLUGIN_ROOT;
+  if (!pluginRoot) throw new Error('AGENTWATCHER_LIVE_PLUGIN_ROOT is required for plugin lifecycle flow.');
+  const descriptorPath = fs.readdirSync(pluginRoot)
+    .map(name => path.join(pluginRoot, name))
+    .find(candidate => candidate.toLowerCase().endsWith('.awplugin'));
+  if (!descriptorPath) throw new Error(`插件目录没有 *.awplugin：${pluginRoot}`);
+  const descriptor = readJson(descriptorPath);
+  const pluginName = descriptor?.Name;
+  if (!pluginName) throw new Error(`插件描述文件缺少 Name：${descriptorPath}`);
+  const appData = process.env.APPDATA;
+  if (!appData) throw new Error('APPDATA is required for plugin lifecycle flow.');
+  const mountFile = path.join(appData, 'AgentWatcher', 'plugin-mounts.v1.json');
+  const stateFile = path.join(appData, 'AgentWatcher', 'plugins.v1.json');
+  const backups = [mountFile, stateFile].map(file => ({ file, existed: fs.existsSync(file), text: fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '' }));
+  const page = await getMainPage();
+  const writeState = (mounted, enabled) => {
+    fs.mkdirSync(path.dirname(mountFile), { recursive: true });
+    fs.writeFileSync(mountFile, JSON.stringify({ version: 1, mounts: mounted ? [pluginRoot] : [] }, null, 2), 'utf8');
+    fs.writeFileSync(stateFile, JSON.stringify({ version: 1, plugins: enabled ? { [pluginName]: { enabled: true, updatedMs: Date.now() } } : {}, audit: [] }, null, 2), 'utf8');
+  };
+  const reloadCatalog = async (expectedText) => {
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await assertTauriPage(page, '主窗口');
+    await openSettingsPanel(page);
+    await page.locator('#pluginRefresh').click({ force: true }).catch(() => {});
+    if (expectedText) {
+      await page.waitForFunction(text => (document.querySelector('#pluginPanel')?.innerText || '').includes(text), expectedText, { timeout: 15000 });
+    }
+  };
+  try {
+    writeState(false, false);
+    await reloadCatalog('零插件模式');
+    const zero = await page.evaluate(() => ({
+      panel: document.querySelector('#pluginPanel')?.innerText || '',
+      workflows: [...document.querySelectorAll('#agentTaskWorkflowSelect option')].map(option => option.value)
+    }));
+    if (!zero.panel.includes('零插件模式') || zero.workflows.some(value => value.startsWith('plugin:'))) {
+      throw new Error(`零插件状态不正确：${JSON.stringify(zero)}`);
+    }
+
+    writeState(true, false);
+    await reloadCatalog(descriptor.FriendlyName || pluginName);
+    const mounted = await page.evaluate(() => ({
+      panel: document.querySelector('#pluginPanel')?.innerText || '',
+      workflows: [...document.querySelectorAll('#agentTaskWorkflowSelect option')].map(option => option.value)
+    }));
+    if (!mounted.panel.includes('已挂载，未启用') || mounted.workflows.some(value => value.startsWith('plugin:'))) {
+      throw new Error(`挂载未启用状态不正确：${JSON.stringify(mounted)}`);
+    }
+
+    writeState(true, true);
+    await reloadCatalog(descriptor.FriendlyName || pluginName);
+    await page.waitForFunction(() => [...document.querySelectorAll('#agentTaskWorkflowSelect option')].some(option => option.value.startsWith('plugin:')), null, { timeout: 15000 });
+    const enabled = await page.evaluate(() => ({
+      panel: document.querySelector('#pluginPanel')?.innerText || '',
+      workflows: [...document.querySelectorAll('#agentTaskWorkflowSelect option')].map(option => option.value)
+    }));
+    if (!enabled.panel.includes('已通过启动检查') || !enabled.workflows.some(value => value.startsWith('plugin:'))) {
+      throw new Error(`启用状态不正确：${JSON.stringify(enabled)}`);
+    }
+    return { 未挂载: zero, 已挂载未启用: mounted, 已启用: enabled };
+  } finally {
+    for (const backup of backups) {
+      if (backup.existed) {
+        fs.mkdirSync(path.dirname(backup.file), { recursive: true });
+        fs.writeFileSync(backup.file, backup.text, 'utf8');
+      } else if (fs.existsSync(backup.file)) {
+        fs.rmSync(backup.file, { force: true });
+      }
+    }
+    await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+  }
 }
 
 async function runPerformanceFlow() {
@@ -1565,81 +1398,6 @@ async function readTodoNudge(page) {
   }));
 }
 
-async function installUEWorkflowTodoFixture(page, taskTitle) {
-  const appData = process.env.APPDATA;
-  if (!appData) throw new Error('APPDATA is required for the UEWorkflow todo fixture.');
-  const workspace = await page.evaluate(() => {
-    const cards = Array.from(document.querySelectorAll('.lane .session-card[data-workspace-key]'));
-    const oldToolName = /UnrealDevFlow|UE_Master_Agent|UE5_KnowledgeBaseMaker/i;
-    const businessCard = cards.find(card => {
-      const text = [
-        card.dataset.workspaceKey,
-        card.dataset.workspaceLabel,
-        card.dataset.workspace,
-        card.dataset.workspacePath,
-      ].filter(Boolean).join(' ');
-      return /AesWorld|neon/i.test(text) && !oldToolName.test(text);
-    });
-    const card = businessCard || cards.find(item => {
-      const text = [
-        item.dataset.workspaceKey,
-        item.dataset.workspaceLabel,
-        item.dataset.workspace,
-        item.dataset.workspacePath,
-      ].filter(Boolean).join(' ');
-      return !oldToolName.test(text);
-    }) || cards[0] || null;
-    const key = card?.dataset.workspaceKey || 'realtest-ueworkflow-workspace';
-    const label = card?.dataset.workspaceLabel || card?.dataset.workspace || 'Realtest UE Workspace';
-    const workspacePath = card?.dataset.workspacePath || '';
-    if (oldToolName.test([key, label, workspacePath].join(' '))) {
-      return { key: 'realtest-ueworkflow-workspace', label: 'Realtest UE Workspace', path: '' };
-    }
-    return { key, label, path: workspacePath };
-  });
-  const todoFile = path.join(appData, 'AgentWatcher', 'todos.v1.json');
-  const state = fs.existsSync(todoFile)
-    ? safeJsonParse(fs.readFileSync(todoFile, 'utf8'), { version: 1, workspaces: {} })
-    : { version: 1, workspaces: {} };
-  state.version = 1;
-  state.workspaces = state.workspaces && typeof state.workspaces === 'object' ? state.workspaces : {};
-  const taskId = `realtest-ueworkflow-${runId}`;
-  for (const workspaceState of Object.values(state.workspaces)) {
-    if (Array.isArray(workspaceState?.tasks)) {
-      workspaceState.tasks = workspaceState.tasks.filter(task => task?.id !== taskId && task?.title !== taskTitle);
-    }
-  }
-  const workspaceState = state.workspaces[workspace.key] || {
-    key: workspace.key,
-    label: workspace.label,
-    path: workspace.path,
-    tasks: [],
-  };
-  const branchName = `aw-realtest-ueworkflow-${runId}`;
-  workspaceState.key = workspace.key;
-  workspaceState.label = workspace.label || workspaceState.label || workspace.key;
-  workspaceState.path = workspace.path || workspaceState.path || '';
-  workspaceState.tasks = Array.isArray(workspaceState.tasks) ? workspaceState.tasks : [];
-  workspaceState.tasks.unshift({
-    id: taskId,
-    title: taskTitle,
-    description: '真实 Tauri 验收临时任务：只验证虚幻工作流 dry-run，不启动 UE 编译。',
-    acceptance: '任务详情显示阶段计划、风险边界、产物路径和确认边界。',
-    workflow: 'ueworkflow',
-    launchMode: 'agents',
-    status: 'ready',
-    order: 0,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    dispatches: [],
-  });
-  workspaceState.tasks.forEach((task, index) => { task.order = index; });
-  state.workspaces[workspace.key] = workspaceState;
-  fs.mkdirSync(path.dirname(todoFile), { recursive: true });
-  fs.writeFileSync(todoFile, JSON.stringify(state, null, 2), 'utf8');
-  return { taskId, branchName, workspaceKey: workspace.key, workspacePath: workspace.path };
-}
-
 async function selectAgentTaskWorkspace(page, workspaceKey) {
   await page.locator('#agentTaskWorkspaceButton').click();
   await page.waitForFunction(() => !document.querySelector('#agentTaskWorkspacePopover')?.hidden, null, { timeout: 5000 });
@@ -1685,7 +1443,7 @@ function readTodoTaskSnapshot(taskId) {
   for (const workspace of Object.values(state.workspaces || {})) {
     const task = (workspace?.tasks || []).find(item => item?.id === taskId);
     if (!task) continue;
-    const details = task.ueWorkflowMaster || task.execution?.result?.details || task.execution?.result || {};
+    const details = task.pluginWorkflowExecution?.result || task.pluginWorkflowPlan?.result || task.execution?.result || {};
     const artifacts = Array.isArray(task.execution?.result?.artifacts) ? task.execution.result.artifacts : [];
     const latestDispatch = Array.isArray(task.dispatches) && task.dispatches.length
       ? task.dispatches[task.dispatches.length - 1]
@@ -1699,9 +1457,9 @@ function readTodoTaskSnapshot(taskId) {
       dispatches: Array.isArray(task.dispatches) ? task.dispatches.length : -1,
       dispatchWorkspacePath: latestDispatch?.workspacePath || '',
       dispatchProviderWorkspacePath: latestDispatch?.providerWorkspacePath || '',
-      lifecyclePhase: task.ueWorkflowLifecycle?.phase || '',
-      lifecycleMessage: task.ueWorkflowLifecycle?.message || '',
-      lifecycleEvents: Array.isArray(task.ueWorkflowLifecycle?.events) ? task.ueWorkflowLifecycle.events.length : -1,
+      lifecyclePhase: task.pluginWorkflowLifecycle?.phase || '',
+      lifecycleMessage: task.pluginWorkflowLifecycle?.message || '',
+      lifecycleEvents: Array.isArray(task.pluginWorkflowLifecycle?.events) ? task.pluginWorkflowLifecycle.events.length : -1,
       executionStatus: task.execution?.status || '',
       executionCommand: task.execution?.commandName || '',
       executionKind: details.kind || '',
@@ -1720,68 +1478,6 @@ function readTodoTaskSnapshot(taskId) {
     };
   }
   return null;
-}
-
-function assertUEWorkflowLaunchPathContract() {
-  const source = fs.readFileSync(path.join(repoRoot, 'ui', 'index.html'), 'utf8');
-  const start = source.indexOf('async function executeUEWorkflowTaskPackage');
-  const end = source.indexOf('function renderAgentTaskUEWorkflowPlan', start);
-  const executeSource = start >= 0 && end > start ? source.slice(start, end) : source;
-  const statusStart = source.indexOf('function ueWorkflowTodoExecutionStatus');
-  const statusEnd = source.indexOf('function ueWorkflowModuleFailureSummary', statusStart);
-  const statusSource = statusStart >= 0 && statusEnd > statusStart ? source.slice(statusStart, statusEnd) : '';
-  const requestStart = source.indexOf('function ueWorkflowTaskRequest');
-  const requestEnd = source.indexOf('function ueWorkflowContextConfirmation', requestStart);
-  const requestSource = requestStart >= 0 && requestEnd > requestStart ? source.slice(requestStart, requestEnd) : '';
-  const launchCatchStart = executeSource.indexOf(".catch(async error =>");
-  const launchCatchSource = launchCatchStart >= 0 ? executeSource.slice(launchCatchStart, launchCatchStart + 900) : '';
-  const checks = {
-    记录DevFlow隔离路径: /providerWorkspacePath\s*=\s*providerWorkspacePath/.test(executeSource)
-      || /providerWorkspacePath:\s*providerWorkspacePath/.test(executeSource),
-    任务Workspace用于Dispatch: executeSource.includes('workspacePath = taskWorkspacePath')
-      || executeSource.includes('workspacePath: taskWorkspacePath'),
-    Provider使用任务Workspace启动: /launchRequest[\s\S]{0,220}workspacePath:\s*taskWorkspacePath/.test(executeSource),
-    没有用DevFlow隔离路径启动Provider: !/launchRequest[\s\S]{0,220}workspacePath:\s*providerWorkspacePath/.test(executeSource),
-    后台启动Provider不阻塞UI: /void\s+tauriInvoke\('launch_handoff'/.test(executeSource)
-      && !/await\s+tauriInvoke\('launch_handoff'/.test(executeSource),
-    Provider打开不等待BridgeAck: /waitForAck:\s*false/.test(executeSource),
-    Provider打开失败不打回待办: launchCatchSource.includes('provider-launch-failed')
-      && /current\.task\.status\s*=\s*'running'/.test(launchCatchSource)
-      && /agentTaskFilter\s*=\s*'run'/.test(launchCatchSource)
-      && !/status:\s*'failed'/.test(launchCatchSource),
-    DevFlow工作区不使用主项目兜底: /const\s+workspaceInput\s*=/.test(requestSource)
-      && !/\|\|\s*binding\.mainProject/.test(requestSource),
-    Session按任务级匹配: source.includes('function bestTodoSessionForTask')
-      && source.includes('function todoSessionMatchesTask'),
-    Session绑定校验Provider和时间窗口: /function todoSessionMatchesTask[\s\S]{0,1200}expectedProvider[\s\S]{0,1200}launchedAt/.test(source),
-    不再使用TodoId全局最新会话: !source.includes('function todoSessionMatchById')
-      && !source.includes('todoSessionMatchById('),
-    Session优先使用UWFMarker: source.includes('function sessionUEWorkflowMarker')
-      && /function todoIdsFromSession[\s\S]{0,900}marker\.taskId/.test(source)
-      && /function todoSessionMatchesTask[\s\S]{0,900}marker\.workflow[\s\S]{0,900}marker\.taskId/.test(source),
-    执行结果写入Todo前会瘦身: source.includes('function summarizeUEWorkflowMasterDetails')
-      && /const details = summarizeUEWorkflowMasterDetails\(response\?\.result \|\| \{\}, response\)/.test(source)
-      && /summaryOnly:\s*true/.test(source),
-    Todo不直接保存原始MasterResult: !/current\.task\.ueWorkflowMaster\s*=\s*normalizeUEWorkflowMasterDetails\(masterResult\)/.test(source),
-    UWF运行态允许人工收口: source.includes('function ueWorkflowTaskCanManualComplete')
-      && /function agentTaskCanComplete[\s\S]{0,360}\['running', 'review'\]\.includes\(task\.status\)[\s\S]{0,120}ueWorkflowTaskCanManualComplete/.test(source)
-      && /status === 'done'[\s\S]{0,260}isUEWorkflowWorkflow[\s\S]{0,260}!agentTaskCanComplete/.test(source),
-    UWF闭环证据自动进入复核: source.includes('function ueWorkflowTaskHasClosureEvidence')
-      && /const nextStatus = isUEWorkflowWorkflow\(task\.workflow\)[\s\S]{0,220}ueWorkflowTaskHasClosureEvidence\(task\)[\s\S]{0,220}'review'/.test(source),
-    会话摘要提取生命周期事件: source.includes('function updateUEWorkflowLifecycleFromSessionSummary')
-      && source.includes('build-started')
-      && source.includes('build-passed')
-      && source.includes('review-started')
-      && source.includes('review-passed')
-      && source.includes('merged')
-      && source.includes('cleanup'),
-    未知执行状态不会默认成功: statusSource.includes("return 'failed';")
-      && !/return\s+['"]success['"];\s*}\s*$/.test(statusSource.trim()),
-  };
-  if (!checks.记录DevFlow隔离路径 || !checks.任务Workspace用于Dispatch || !checks.Provider使用任务Workspace启动 || !checks.没有用DevFlow隔离路径启动Provider || !checks.后台启动Provider不阻塞UI || !checks.Provider打开不等待BridgeAck || !checks.Provider打开失败不打回待办 || !checks.DevFlow工作区不使用主项目兜底 || !checks.Session按任务级匹配 || !checks.Session绑定校验Provider和时间窗口 || !checks.不再使用TodoId全局最新会话 || !checks.Session优先使用UWFMarker || !checks.执行结果写入Todo前会瘦身 || !checks.Todo不直接保存原始MasterResult || !checks.UWF运行态允许人工收口 || !checks.UWF闭环证据自动进入复核 || !checks.会话摘要提取生命周期事件 || !checks.未知执行状态不会默认成功) {
-    throw new Error(`虚幻工作流 Provider 会话路径契约失败：${JSON.stringify(checks)}`);
-  }
-  return checks;
 }
 
 async function waitForTodoTaskSnapshot(taskId, predicate, timeoutMs = 30000) {

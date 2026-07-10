@@ -1,8 +1,8 @@
-# Unreal Workflow 架构标准草案
+# Unreal Workflow 架构标准
 
-日期：2026-06-19
+日期：2026-07-10
 
-本文是 `Unreal Workflow` 的架构标准草案。它用于约束后续代码、目录、命名、知识库存储和 Agent 执行规则。等 `UnrealWorkflow` 独立工程创建后，本文件中的硬规则应拆入工程根目录 `AGENTS.md`、`Docs/Architecture/`、`Docs/Standards/` 和自动化校验脚本。
+`UnrealWorkflow` 独立仓库已经建立在 `F:\AiProject\UnrealWorkflow`。本文件保留产品级标准；插件仓库内的 `AGENTS.md`、`Docs/Architecture/`、`Docs/Standards/` 和自动化测试是实现层硬约束。
 
 ## 1. 结论
 
@@ -45,7 +45,7 @@
 UnrealWorkflow/
   AGENTS.md
   Cargo.toml
-  UnrealWorkflow.uwplugin.json
+  UnrealWorkflow.awplugin
   Source/
     Core/
       Cargo.toml
@@ -105,9 +105,8 @@ UnrealWorkflow/
     DevFlow/
     AgentHub/
     KnowledgeBase/
-  Bundles/
-    AgentWatcher/
-    Providers/
+  Resources/
+  .plugin-worktrees/
   Config/
     default.toml
     schemas/
@@ -127,7 +126,7 @@ UnrealWorkflow/
 - `src/api.rs` / `src/ports/` 相当于 Unreal 模块的公开面。
 - `src/internal/` 加 `pub(crate)` 相当于 Unreal 模块的私有实现。
 - `Adapters/` 只包裹旧工具，不能成为新架构的主逻辑。
-- `Bundles/AgentWatcher` 只负责 AgentWatcher 集成，不反向拥有虚幻工作流逻辑。
+- AgentWatcher 集成只通过 `UnrealWorkflow.awplugin` 和外部进程协议完成，不在插件源码中反向依赖宿主。
 
 ## 4. 依赖方向
 
@@ -140,10 +139,6 @@ Cli
       -> AgentHub
       -> KnowledgeBase
           -> Core
-
-Bundles/AgentWatcher
-  -> UnrealMaster
-  -> Core
 
 Adapters/*
   -> Core
@@ -458,7 +453,7 @@ UnrealWorkflow/Docs/Standards/
 Markdown 不是唯一约束。必须配套机器校验：
 
 - `cargo metadata` 检查依赖方向。
-- schema 检查 `UnrealWorkflow.uwplugin.json`、command manifest、scope manifest 和 frontmatter。
+- schema 检查 `UnrealWorkflow.awplugin`、command manifest、scope manifest 和 frontmatter。
 - CLI 契约测试检查 `uwf ... --json`。
 - 文档写入测试检查 scope、语言、路径、purpose。
 - provider 适配测试检查 AgentHub 输出的角色和命令是否一致。
@@ -473,10 +468,8 @@ Markdown 不是唯一约束。必须配套机器校验：
 
 ## 11. 下一步实施顺序
 
-1. 创建 `UnrealWorkflow` 独立 Rust workspace 骨架，使用 `Source/<ModuleName>`。
-2. 写入 `UnrealWorkflow/AGENTS.md` 和 `Docs/Architecture`。
-3. 定义 `Core` 的最小类型和命令结果 schema。
-4. 为 `DevFlow`、`AgentHub`、`KnowledgeBase` 建立 facade 和契约测试。
-5. 用 `Adapters/` 包住现有三个工具，不直接改旧主线。
-6. 建立 `UnrealWorkflowKnowledge` 的 scope 注册表和本机 `%USERPROFILE%/.unrealworkflow` 绑定。
-7. 再接 AgentWatcher，让它只发任务、看状态、收 artifacts，不吸收业务逻辑。
+1. 独立仓库、Rust workspace、描述文件、三个业务模块和 `uwf` CLI 已建立。
+2. `AgentWatcherPluginStdio/1` 握手、插件发现、挂载、启用和通用命令调用已建立。
+3. 继续把 AgentWatcher 中旧的 UWF 兼容任务数据迁为通用 workflow contribution 数据。
+4. 完成插件发布包、版本锁定、升级和卸载测试。
+5. 把三个 Legacy worktree 中尚未提交的安全契约改动迁入正式模块后再清理 Legacy。

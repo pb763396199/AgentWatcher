@@ -4,6 +4,19 @@ AgentWatcher 是一个 Windows 桌面小工具，用 Tauri 2 写的。它盯着 
 
 这个仓库没有 OpenCode 或 Cursor 的配置文件，AGENTS.md 是唯一的指令文件。改东西请在 `dev` 分支上，动手前先跑 `git status --short --untracked-files=all` 看清楚当前工作区。
 
+## 插件宿主硬规则
+
+- AgentWatcher 必须能在零插件状态下完整启动、构建和测试。
+- AgentWatcher 仓库不得跟踪任何具体插件源码、业务模块、知识库内容或插件构建产物。
+- 插件必须是独立目录或独立仓库，并由与插件名一致的 `*.awplugin` 描述文件发现。
+- 挂载和启用是两个状态：挂载只表示可发现，未启用时不得暴露插件工作流或执行插件命令。
+- 插件业务只能通过 `AgentWatcherPluginStdio/1` 受控进程协议调用；宿主不得硬编码插件可执行文件路径、内部命令行或来源工程名。
+- 宿主只执行描述文件声明的命令 ID，禁止从 UI 接收任意 program、args 或 shell。
+- 插件工作流、设置动作和公开模块来自描述文件贡献；宿主不得把某个具体插件设成默认工作流。
+- 历史工作流 ID 只能由插件描述文件的 `LegacyIds` 迁移，宿主不得内置具体插件迁移表。
+- 开发插件通过用户目录下的挂载配置接入，不能通过 AgentWatcher 源码树内的 Junction、submodule 或 worktree 假装解耦。
+- 通用插件实现位于 `src-tauri/src/plugin_catalog.rs`；具体插件不得向这个模块加入专有分支。
+
 ## 怎么跑起来
 
 所有命令都在仓库根目录、用 PowerShell 跑，必须是 Windows。

@@ -1,8 +1,9 @@
-use crate::plugin_manifest::AW_SCHEMA_VERSION;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+const AW_SCHEMA_VERSION: u32 = 1;
 
 pub const ORCHESTRATION_KIND: &str = "AgentWatcherOrchestrationStatus";
 
@@ -352,43 +353,7 @@ fn orchestration_runtimes(root: Option<&Path>) -> Vec<AwOrchestrationRuntime> {
 }
 
 fn module_bindings() -> Vec<AwOrchestrationModuleBinding> {
-    let commands = [
-        "status",
-        "capabilities",
-        "commands",
-        "schema",
-        "dry-run",
-        "execute",
-        "history",
-        "artifacts",
-    ]
-    .iter()
-    .map(|value| (*value).to_string())
-    .collect::<Vec<_>>();
-
-    vec![
-        AwOrchestrationModuleBinding {
-            module_id: "developmentFlow".to_string(),
-            display_name: "开发流".to_string(),
-            responsibility: "UE 项目任务流".to_string(),
-            plugin_name: "UEWorkflow".to_string(),
-            commands: commands.clone(),
-        },
-        AwOrchestrationModuleBinding {
-            module_id: "agent".to_string(),
-            display_name: "智能体".to_string(),
-            responsibility: "AI 协作流".to_string(),
-            plugin_name: "UEWorkflow".to_string(),
-            commands: commands.clone(),
-        },
-        AwOrchestrationModuleBinding {
-            module_id: "knowledgeBase".to_string(),
-            display_name: "知识库".to_string(),
-            responsibility: "知识沉淀流".to_string(),
-            plugin_name: "UEWorkflow".to_string(),
-            commands,
-        },
-    ]
+    Vec::new()
 }
 
 fn count_status(counts: &BTreeMap<String, usize>, status: &str) -> usize {
@@ -430,7 +395,7 @@ mod tests {
 
         assert_eq!(status.kind, ORCHESTRATION_KIND);
         assert!(status.active_plan.is_none());
-        assert_eq!(status.module_bindings.len(), 3);
+        assert!(status.module_bindings.is_empty());
         assert!(!status.safety.arbitrary_shell_allowed);
         assert!(!status.safety.raw_ue_build_allowed);
         assert!(status
@@ -453,14 +418,14 @@ mod tests {
               "ledgerPath": ".omx/ultragoal/ledger.jsonl",
               "goals": [
                 {
-                  "id": "G001-agentwatcher-ue",
-                  "title": "目标一：总控台插件底座定型",
+                  "id": "G001-plugin-host",
+                  "title": "目标一：通用插件宿主定型",
                   "status": "complete",
                   "evidence": "ok"
                 },
                 {
-                  "id": "G004-unrealdevflow-ue-master-agent-ue5-kn",
-                  "title": "目标四：DevFlow 与 AgentHub 改造",
+                  "id": "G004-plugin-capabilities",
+                  "title": "目标四：插件能力改造",
                   "status": "pending"
                 }
               ]
@@ -482,7 +447,7 @@ mod tests {
         assert_eq!(plan.pending_goals, 1);
         assert_eq!(
             plan.next_goal_title.as_deref(),
-            Some("目标四：DevFlow 与 AgentHub 改造")
+            Some("目标四：插件能力改造")
         );
         assert_eq!(plan.ledger.ledger_entries, 2);
         assert!(!serialized.contains(&legacy_source_name(&["Unreal", "DevFlow"], "")));

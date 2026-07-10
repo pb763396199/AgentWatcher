@@ -16,14 +16,9 @@ use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager};
 
-pub mod module_runner;
 pub mod orchestration;
-pub mod plugin_linker;
-pub mod plugin_manifest;
+pub mod plugin_catalog;
 pub mod plugin_state;
-pub mod ueworkflow_execution;
-pub mod ueworkflow_runtime;
-
 const DEFAULT_MAX_ACTIVE_SESSIONS: usize = 80;
 const DEFAULT_ACTIVE_SESSION_DAYS: u64 = 7;
 const COPILOT_TITLE_SAMPLE_LINES: usize = 240;
@@ -44,12 +39,6 @@ const OPENCODE_SUMMARY_FETCH_BUDGET: usize = 4;
 const OPENCODE_SQLITE_BUSY_TIMEOUT_MS: u64 = 50;
 const OPENCODE_SCAN_CACHE_TTL_MS: u64 = 10_000;
 const OPENCODE_HANDOFF_PART_MAX_CHARS: usize = 64 * 1024;
-#[cfg(test)]
-const UEWORKFLOW_REAL_CREATE_TASK_ENV: &str = "AGENTWATCHER_ALLOW_REAL_UEWORKFLOW_CREATE_TASK";
-#[cfg(test)]
-fn ueworkflow_real_create_task_token() -> String {
-    ["I", "UNDERSTAND", "THIS", "CAN", "CREATE", "WORKTREE"].join("_")
-}
 const STATUS_RUNNING_HINT_WINDOW_MS: u64 = 2 * 60 * 60_000;
 const STATUS_RECENT_CONTENT_WINDOW_MS: u64 = 10 * 60_000;
 const STATUS_RECENT_FILE_WINDOW_MS: u64 = 3 * 60_000;
@@ -63,11 +52,9 @@ const RUNTIME_ICON_RGBA: &[u8] = include_bytes!("../icons/icon-runtime-256.rgba"
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const TODO_DISPATCH_HISTORY_LIMIT: usize = 5;
-const TODO_UEWORKFLOW_EVENT_LIMIT: usize = 12;
+const TODO_PLUGIN_WORKFLOW_EVENT_LIMIT: usize = 12;
 const TODO_LONG_TEXT_LIMIT: usize = 4_000;
 const TODO_SHORT_TEXT_LIMIT: usize = 800;
-const UEWORKFLOW_MASTER_EXECUTE_RUN_LIMIT: usize = 64;
-const UEWORKFLOW_MASTER_EXECUTE_RUN_TTL_MS: u64 = 2 * 60 * 60_000;
 
 fn bridge_extension_name() -> String {
     ["agentwatcher", "vscode", "session", "bridge"].join("-")
@@ -127,12 +114,13 @@ struct AgentSession {
     last_ai_message_excerpt_kind: Option<String>,
     branch: Option<String>,
     todo_ids: Vec<String>,
-    ueworkflow: Option<UeWorkflowSessionMarker>,
+    plugin_workflow: Option<PluginWorkflowSessionMarker>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-struct UeWorkflowSessionMarker {
+struct PluginWorkflowSessionMarker {
+    plugin_name: String,
     workflow: String,
     provider: String,
     task_id: Option<String>,
@@ -140,25 +128,25 @@ struct UeWorkflowSessionMarker {
     contract_version: Option<String>,
 }
 
-fn detect_ueworkflow_session_marker(
+fn detect_plugin_workflow_session_marker(
     fallback_provider: &str,
     texts: &[Option<&str>],
-) -> Option<UeWorkflowSessionMarker> {
+) -> Option<PluginWorkflowSessionMarker> {
     let joined = texts
         .iter()
         .flatten()
         .copied()
         .collect::<Vec<_>>()
         .join("\n");
-    let lower = joined.to_ascii_lowercase();
-    if !(lower.contains("workflow=unrealworkflow")
-        || lower.contains("workflow:unrealworkflow")
-        || lower.contains("workflow: unrealworkflow"))
+    if !joined
+        .to_ascii_lowercase()
+        .contains("[agentwatcher plugin workflow]")
     {
         return None;
     }
-    Some(UeWorkflowSessionMarker {
-        workflow: "unrealworkflow".to_string(),
+    Some(PluginWorkflowSessionMarker {
+        plugin_name: extract_marker_value(&joined, &["plugin"])?,
+        workflow: extract_marker_value(&joined, &["workflow"])?,
         provider: extract_marker_value(&joined, &["provider"]).unwrap_or_else(|| {
             match fallback_provider {
                 "claude" => "claude-code",
@@ -222,17 +210,6 @@ struct HandoffSourceContextRequest {
     session_path: Option<String>,
     session_resource: Option<String>,
     title: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ModuleCommandRunRequest {
-    plugin_name: String,
-    module_name: String,
-    command_name: String,
-    task_id: Option<String>,
-    #[serde(default)]
-    payload: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1315,22 +1292,20 @@ fn open_session(session: OpenSessionRequest) -> Result<(), String> {
         return open_opencode_session(&session);
     }
 
-    if bridge_extension_installed() {
-        if request_session_resource(&session).is_some() {
-            let session_deep_link = session_deep_link(&session).map(|text| text.to_string());
-            match open_session_with_bridge(&session) {
-                Ok(()) => return Ok(()),
-                Err(bridge_error) => {
-                    if session_deep_link.is_none() {
-                        return open_agents_page(session.workspace_path.as_deref()).map_err(
-                            |fallback_error| {
-                                format!(
-                                    "Bridge session launch failed ({}); fallback failed ({})",
-                                    bridge_error, fallback_error
-                                )
-                            },
-                        );
-                    }
+    if bridge_extension_installed() && request_session_resource(&session).is_some() {
+        let session_deep_link = session_deep_link(&session).map(|text| text.to_string());
+        match open_session_with_bridge(&session) {
+            Ok(()) => return Ok(()),
+            Err(bridge_error) => {
+                if session_deep_link.is_none() {
+                    return open_agents_page(session.workspace_path.as_deref()).map_err(
+                        |fallback_error| {
+                            format!(
+                                "Bridge session launch failed ({}); fallback failed ({})",
+                                bridge_error, fallback_error
+                            )
+                        },
+                    );
                 }
             }
         }
@@ -1596,252 +1571,59 @@ fn save_todo_state(state: Value) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn scan_module_plugins() -> Result<Vec<plugin_manifest::AwDiscoveredPlugin>, String> {
-    let plugin_root = agentwatcher_plugin_root()?;
-    plugin_manifest::scan_plugin_root(&plugin_root)
-        .map_err(|error| format!("Failed to scan AgentWatcher plugins: {}", error))
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PluginLinkApplyRequest {
-    plugin_name: String,
-    confirmed: bool,
-    dry_run_accepted: bool,
-    #[serde(default)]
-    expected_modules: Vec<PluginLinkExpectedModule>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PluginLinkExpectedModule {
-    module_name: String,
-    state: String,
-    mount_path: String,
-    expected_target: String,
-    worktree_branch: Option<String>,
-    managed_worktree: bool,
-    link_type: plugin_manifest::AwModuleLinkType,
+fn scan_plugins() -> Result<plugin_catalog::AwPluginCatalogSnapshot, String> {
+    let (mount_store, installed_root) = plugin_catalog_paths()?;
+    let mut snapshot = plugin_catalog::scan_catalog(&mount_store, &installed_root);
+    let state_path = plugin_state_path()?;
+    for plugin in &mut snapshot.plugins {
+        plugin.enabled =
+            plugin_state::get_plugin_runtime_state(&state_path, &plugin.descriptor.name)?.enabled;
+    }
+    Ok(snapshot)
 }
 
 #[tauri::command]
-fn get_plugin_link_status(
-    plugin_name: String,
-) -> Result<plugin_linker::AwPluginLinkStatus, String> {
-    let plugin_root = agentwatcher_plugin_root()?;
-    plugin_linker::get_plugin_link_status(&plugin_root, &plugin_name)
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn install_plugin_links(
-    request: PluginLinkApplyRequest,
-) -> Result<plugin_linker::AwPluginLinkApplyResult, String> {
-    let plugin_root = agentwatcher_plugin_root()?;
-    validate_plugin_link_apply_request(&plugin_root, &request)?;
-    let result = plugin_linker::install_plugin_links(&plugin_root, &request.plugin_name, false)
-        .map_err(|error| error.to_string())?;
-    record_plugin_link_audit(&request.plugin_name, "installPluginLinks", &result)?;
-    Ok(result)
-}
-
-#[tauri::command]
-fn repair_plugin_links(
-    request: PluginLinkApplyRequest,
-) -> Result<plugin_linker::AwPluginLinkApplyResult, String> {
-    let plugin_root = agentwatcher_plugin_root()?;
-    validate_plugin_link_apply_request(&plugin_root, &request)?;
-    let result = plugin_linker::install_plugin_links(&plugin_root, &request.plugin_name, true)
-        .map_err(|error| error.to_string())?;
-    record_plugin_link_audit(&request.plugin_name, "repairPluginLinks", &result)?;
-    Ok(result)
-}
-
-fn validate_plugin_link_apply_request(
-    plugin_root: &Path,
-    request: &PluginLinkApplyRequest,
-) -> Result<(), String> {
-    if !request.confirmed || !request.dry_run_accepted {
-        return Err(
-            "Plugin link writes require confirmed=true and dryRunAccepted=true".to_string(),
-        );
-    }
-    if request.expected_modules.is_empty() {
-        return Err(
-            "Plugin link writes require expected module link states from dry-run".to_string(),
-        );
-    }
-    let status = plugin_linker::get_plugin_link_status(plugin_root, &request.plugin_name)
-        .map_err(|error| error.to_string())?;
-    validate_plugin_link_expected_modules(&status, &request.expected_modules)
-}
-
-fn validate_plugin_link_expected_modules(
-    status: &plugin_linker::AwPluginLinkStatus,
-    expected_modules: &[PluginLinkExpectedModule],
-) -> Result<(), String> {
-    let mut expected_by_module: HashMap<&str, &PluginLinkExpectedModule> = HashMap::new();
-    for expected in expected_modules {
-        if expected_by_module
-            .insert(expected.module_name.as_str(), expected)
-            .is_some()
-        {
-            return Err(format!(
-                "Plugin link dry-run state contains duplicate module {}",
-                expected.module_name
-            ));
-        }
-    }
-    if status.modules.len() != expected_by_module.len() {
-        return Err("Plugin link dry-run state no longer matches module count".to_string());
-    }
-    for current in &status.modules {
-        let expected = expected_by_module
-            .get(current.module_name.as_str())
-            .copied()
-            .ok_or_else(|| {
-                format!(
-                    "Plugin link dry-run state no longer contains current module {}",
-                    current.module_name
-                )
-            })?;
-        let current_state = serde_json::to_value(&current.state)
-            .ok()
-            .and_then(|value| value.as_str().map(str::to_string))
-            .unwrap_or_else(|| format!("{:?}", current.state));
-        if current_state != expected.state
-            || current.mount_path != expected.mount_path
-            || current.expected_target != expected.expected_target
-            || current.worktree_branch != expected.worktree_branch
-            || current.managed_worktree != expected.managed_worktree
-            || current.link_type != expected.link_type
-        {
-            return Err(format!(
-                "Plugin link dry-run state changed for module {}",
-                expected.module_name
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn record_plugin_link_audit(
-    plugin_name: &str,
-    action: &str,
-    result: &plugin_linker::AwPluginLinkApplyResult,
-) -> Result<(), String> {
-    let path = plugin_state_path()?;
-    let actions = result
-        .modules
-        .iter()
-        .map(|module| format!("{}:{:?}", module.module_name, module.action))
-        .collect::<Vec<_>>()
-        .join(",");
+fn mount_plugin(plugin_path: String) -> Result<plugin_catalog::AwDiscoveredPlugin, String> {
+    let path = PathBuf::from(plugin_path.trim());
+    let (mount_store, _) = plugin_catalog_paths()?;
+    let plugin = plugin_catalog::mount_plugin(&mount_store, &path)?;
     plugin_state::record_plugin_audit(
-        &path,
-        plugin_name,
-        action,
-        Some(format!(
-            "confirmed dry-run link apply; changed={}; actions={}",
-            result.changed, actions
-        )),
+        &plugin_state_path()?,
+        &plugin.descriptor.name,
+        "mount",
+        Some(format!("mounted external plugin from {}", plugin.root_path)),
     )?;
-    Ok(())
+    Ok(plugin)
 }
 
-#[cfg(test)]
-mod plugin_link_apply_request_tests {
-    use super::*;
-
-    #[test]
-    fn rejects_duplicate_expected_modules_that_omit_current_module() {
-        let status = link_status(vec![
-            link_module("DevFlow", "missingLink"),
-            link_module("AgentHub", "ready"),
-        ]);
-        let expected_modules = vec![
-            expected_module("DevFlow", "missingLink"),
-            expected_module("DevFlow", "missingLink"),
-        ];
-
-        let error = validate_plugin_link_expected_modules(&status, &expected_modules).unwrap_err();
-
-        assert!(error.contains("duplicate module DevFlow"));
+#[tauri::command]
+fn unmount_plugin(plugin_name: String) -> Result<bool, String> {
+    ensure_plugin_exists(&plugin_name)?;
+    let (mount_store, _) = plugin_catalog_paths()?;
+    let changed = plugin_catalog::unmount_plugin(&mount_store, &plugin_name)?;
+    if changed {
+        plugin_state::record_plugin_audit(
+            &plugin_state_path()?,
+            &plugin_name,
+            "unmount",
+            Some("unmounted external plugin".to_string()),
+        )?;
     }
+    Ok(changed)
+}
 
-    #[test]
-    fn accepts_exact_one_to_one_expected_module_snapshot() {
-        let status = link_status(vec![
-            link_module("DevFlow", "missingLink"),
-            link_module("AgentHub", "ready"),
-        ]);
-        let expected_modules = vec![
-            expected_module("DevFlow", "missingLink"),
-            expected_module("AgentHub", "ready"),
-        ];
-
-        validate_plugin_link_expected_modules(&status, &expected_modules).unwrap();
-    }
-
-    #[test]
-    fn rejects_expected_module_when_worktree_topology_changed() {
-        let status = link_status(vec![link_module("DevFlow", "missingLink")]);
-        let mut expected_modules = vec![expected_module("DevFlow", "missingLink")];
-        expected_modules[0].worktree_branch = Some("agentwatcher/ueworkflow/other".to_string());
-
-        let error = validate_plugin_link_expected_modules(&status, &expected_modules).unwrap_err();
-
-        assert!(error.contains("dry-run state changed for module DevFlow"));
-    }
-
-    fn link_status(
-        modules: Vec<plugin_linker::AwModuleLinkStatus>,
-    ) -> plugin_linker::AwPluginLinkStatus {
-        plugin_linker::AwPluginLinkStatus {
-            plugin_name: "UEWorkflow".to_string(),
-            plugin_root: "plugin-root".to_string(),
-            workspace_root: "workspace-root".to_string(),
-            modules,
-        }
-    }
-
-    fn link_module(module_name: &str, state: &str) -> plugin_linker::AwModuleLinkStatus {
-        plugin_linker::AwModuleLinkStatus {
-            module_name: module_name.to_string(),
-            display_name: module_name.to_string(),
-            mount_path: format!("Modules/{module_name}"),
-            expected_target: format!("X:/Workspace/{module_name}"),
-            source_target: None,
-            worktree_branch: Some(format!(
-                "agentwatcher/ueworkflow/{}",
-                module_name.to_ascii_lowercase()
-            )),
-            managed_worktree: true,
-            actual_target: None,
-            link_type: plugin_manifest::AwModuleLinkType::Junction,
-            state: match state {
-                "ready" => plugin_linker::AwModuleLinkState::Ready,
-                "missingLink" => plugin_linker::AwModuleLinkState::MissingLink,
-                other => panic!("unsupported state {other}"),
-            },
-            message: "test".to_string(),
-        }
-    }
-
-    fn expected_module(module_name: &str, state: &str) -> PluginLinkExpectedModule {
-        PluginLinkExpectedModule {
-            module_name: module_name.to_string(),
-            state: state.to_string(),
-            mount_path: format!("Modules/{module_name}"),
-            expected_target: format!("X:/Workspace/{module_name}"),
-            worktree_branch: Some(format!(
-                "agentwatcher/ueworkflow/{}",
-                module_name.to_ascii_lowercase()
-            )),
-            managed_worktree: true,
-            link_type: plugin_manifest::AwModuleLinkType::Junction,
-        }
-    }
+#[tauri::command]
+async fn invoke_plugin_command(
+    request: plugin_catalog::AwPluginInvokeRequest,
+) -> Result<plugin_catalog::AwPluginInvokeResponse, String> {
+    ensure_plugin_enabled(&request.plugin_name)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let snapshot = scan_plugin_catalog()?;
+        let plugin = plugin_catalog::find_plugin(&snapshot, &request.plugin_name)?;
+        plugin_catalog::invoke_plugin(plugin, &request)
+    })
+    .await
+    .map_err(|error| format!("failed to wait for plugin command: {error}"))?
 }
 
 #[tauri::command]
@@ -1875,46 +1657,6 @@ fn get_orchestration_status() -> Result<orchestration::AwOrchestrationStatus, St
     orchestration::get_orchestration_status(&current_dir)
 }
 
-#[tauri::command]
-fn commit_ueworkflow_dry_run(
-    request: ueworkflow_execution::AwUeWorkflowExecutionRequest,
-) -> Result<ueworkflow_execution::AwUeWorkflowExecutionRecord, String> {
-    let appdata = env::var_os("APPDATA").map(PathBuf::from).ok_or_else(|| {
-        "APPDATA is not available; cannot locate AgentWatcher UEWorkflow execution storage"
-            .to_string()
-    })?;
-    let root = ueworkflow_execution::execution_root_from_appdata(&appdata);
-    ueworkflow_execution::commit_dry_run_execution(&root, request)
-}
-
-#[tauri::command]
-fn commit_ueworkflow_knowledge_record(
-    request: ueworkflow_execution::AwUeWorkflowKnowledgeRequest,
-) -> Result<ueworkflow_execution::AwUeWorkflowKnowledgeRecord, String> {
-    let appdata = env::var_os("APPDATA").map(PathBuf::from).ok_or_else(|| {
-        "APPDATA is not available; cannot locate AgentWatcher UEWorkflow knowledge storage"
-            .to_string()
-    })?;
-    let root = ueworkflow_execution::knowledge_root_from_appdata(&appdata);
-    ueworkflow_execution::commit_knowledge_record(&root, request)
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AwUwfDryRunCommandResponse {
-    command: Vec<String>,
-    result: Value,
-    execution_record: ueworkflow_execution::AwUeWorkflowExecutionRecord,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AwUwfExecuteCommandResponse {
-    command: Vec<String>,
-    result: Value,
-    knowledge_record: ueworkflow_execution::AwUeWorkflowKnowledgeRecord,
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DebugRuntimeState {
@@ -1938,573 +1680,9 @@ fn get_debug_runtime_state() -> DebugRuntimeState {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AwUwfMasterExecuteRunSnapshot {
-    run_id: String,
-    status: String,
-    phase: String,
-    started_ms: u64,
-    updated_ms: u64,
-    result: Option<AwUwfExecuteCommandResponse>,
-    error: Option<String>,
-}
-
-static UEWORKFLOW_MASTER_EXECUTE_RUNS: OnceLock<
-    Mutex<HashMap<String, AwUwfMasterExecuteRunSnapshot>>,
-> = OnceLock::new();
-static UEWORKFLOW_MASTER_EXECUTE_RUN_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-fn ueworkflow_master_execute_runs() -> &'static Mutex<HashMap<String, AwUwfMasterExecuteRunSnapshot>>
-{
-    UEWORKFLOW_MASTER_EXECUTE_RUNS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn make_ueworkflow_master_execute_run_id() -> String {
-    let sequence = UEWORKFLOW_MASTER_EXECUTE_RUN_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let now = current_time_ms();
-    format!("uwf-master-exec-{now}-{sequence}")
-}
-
-fn set_ueworkflow_master_execute_run(snapshot: AwUwfMasterExecuteRunSnapshot) {
-    if let Ok(mut runs) = ueworkflow_master_execute_runs().lock() {
-        runs.insert(snapshot.run_id.clone(), snapshot);
-        prune_ueworkflow_master_execute_runs_locked(&mut runs, current_time_ms());
-    }
-}
-
-fn prune_ueworkflow_master_execute_runs_locked(
-    runs: &mut HashMap<String, AwUwfMasterExecuteRunSnapshot>,
-    now_ms: u64,
-) {
-    runs.retain(|_, snapshot| {
-        snapshot.status == "running"
-            || now_ms.saturating_sub(snapshot.updated_ms) <= UEWORKFLOW_MASTER_EXECUTE_RUN_TTL_MS
-    });
-    if runs.len() <= UEWORKFLOW_MASTER_EXECUTE_RUN_LIMIT {
-        return;
-    }
-    let mut terminal_runs: Vec<(String, u64)> = runs
-        .iter()
-        .filter(|(_, snapshot)| snapshot.status != "running")
-        .map(|(run_id, snapshot)| (run_id.clone(), snapshot.updated_ms))
-        .collect();
-    terminal_runs.sort_by_key(|(_, updated_ms)| *updated_ms);
-    let mut overflow = runs
-        .len()
-        .saturating_sub(UEWORKFLOW_MASTER_EXECUTE_RUN_LIMIT);
-    for (run_id, _) in terminal_runs {
-        if overflow == 0 {
-            break;
-        }
-        if runs.remove(&run_id).is_some() {
-            overflow = overflow.saturating_sub(1);
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AwUwfExternalCommandRunResponse {
-    command: Vec<String>,
-    result: Value,
-    execution_record: Option<ueworkflow_execution::AwUeWorkflowExecutionRecord>,
-}
-
-#[tauri::command]
-fn get_ueworkflow_doctor() -> Result<ueworkflow_runtime::AwUwfCommandResponse, String> {
-    ueworkflow_runtime::run_doctor()
-}
-
-#[tauri::command]
-fn get_ueworkflow_modules() -> Result<ueworkflow_runtime::AwUwfCommandResponse, String> {
-    ueworkflow_runtime::run_modules()
-}
-
-#[tauri::command]
-fn get_ueworkflow_module_status(
-    module_name: String,
-) -> Result<ueworkflow_runtime::AwUwfCommandResponse, String> {
-    ueworkflow_runtime::run_module_status(&module_name)
-}
-
-#[tauri::command]
-fn run_ueworkflow_command(
-    request: ueworkflow_runtime::AwUwfExternalCommandRequest,
-) -> Result<AwUwfExternalCommandRunResponse, String> {
-    ensure_plugin_enabled("UEWorkflow")?;
-    let command_id = request.command_id.clone();
-    let goal = request
-        .goal
-        .clone()
-        .unwrap_or_else(|| format!("UEWorkflow 受控命令：{command_id}"));
-    let response = ueworkflow_runtime::run_external_command(&request)?;
-    let execution_record = if should_record_ueworkflow_external_command(&command_id) {
-        let appdata = env::var_os("APPDATA").map(PathBuf::from).ok_or_else(|| {
-            "APPDATA is not available; cannot locate AgentWatcher UEWorkflow execution storage"
-                .to_string()
-        })?;
-        let root = ueworkflow_execution::execution_root_from_appdata(&appdata);
-        Some(ueworkflow_execution::commit_external_command_execution(
-            &root,
-            &command_id,
-            &goal,
-            response.result.clone(),
-        )?)
-    } else {
-        None
-    };
-    Ok(AwUwfExternalCommandRunResponse {
-        command: response.command,
-        result: response.result,
-        execution_record,
-    })
-}
-
-fn should_record_ueworkflow_external_command(command_id: &str) -> bool {
-    command_id.ends_with(".execute")
-}
-
-#[tauri::command]
-fn get_ueworkflow_command_policy(
-) -> Result<Vec<ueworkflow_runtime::AwUwfExternalCommandPolicyView>, String> {
-    ensure_plugin_enabled("UEWorkflow")?;
-    Ok(ueworkflow_runtime::external_command_policy_views())
-}
-
-#[tauri::command]
-async fn run_ueworkflow_master_dry_run(
-    request: ueworkflow_runtime::AwUwfTaskRequest,
-) -> Result<AwUwfDryRunCommandResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || run_ueworkflow_master_dry_run_blocking(request))
-        .await
-        .map_err(|error| format!("Failed to wait for UEWorkflow dry-run task: {}", error))?
-}
-
-#[tauri::command]
-async fn run_ueworkflow_master_execute(
-    request: ueworkflow_runtime::AwUwfTaskRequest,
-) -> Result<AwUwfExecuteCommandResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || run_ueworkflow_master_execute_blocking(request))
-        .await
-        .map_err(|error| format!("Failed to wait for UEWorkflow execute task: {}", error))?
-}
-
-#[tauri::command]
-fn start_ueworkflow_master_execute_run(
-    request: ueworkflow_runtime::AwUwfTaskRequest,
-) -> Result<AwUwfMasterExecuteRunSnapshot, String> {
-    ensure_plugin_enabled("UEWorkflow")?;
-    let run_id = make_ueworkflow_master_execute_run_id();
-    let now = current_time_ms();
-    let snapshot = AwUwfMasterExecuteRunSnapshot {
-        run_id: run_id.clone(),
-        status: "running".to_string(),
-        phase: "package-generating".to_string(),
-        started_ms: now,
-        updated_ms: now,
-        result: None,
-        error: None,
-    };
-    set_ueworkflow_master_execute_run(snapshot.clone());
-    let started_ms = snapshot.started_ms;
-    std::thread::spawn({
-        let run_id = run_id.clone();
-        move || {
-            let result = run_ueworkflow_master_execute_blocking(request);
-            let updated_ms = current_time_ms();
-            let snapshot = match result {
-                Ok(response) => AwUwfMasterExecuteRunSnapshot {
-                    run_id,
-                    status: "success".to_string(),
-                    phase: "package-ready".to_string(),
-                    started_ms,
-                    updated_ms,
-                    result: Some(response),
-                    error: None,
-                },
-                Err(error) => AwUwfMasterExecuteRunSnapshot {
-                    run_id,
-                    status: "failed".to_string(),
-                    phase: "failed".to_string(),
-                    started_ms,
-                    updated_ms,
-                    result: None,
-                    error: Some(error),
-                },
-            };
-            set_ueworkflow_master_execute_run(snapshot);
-        }
-    });
-    Ok(snapshot)
-}
-
-#[tauri::command]
-fn get_ueworkflow_master_execute_run(
-    run_id: String,
-) -> Result<AwUwfMasterExecuteRunSnapshot, String> {
-    let mut runs = ueworkflow_master_execute_runs()
-        .lock()
-        .map_err(|_| "UEWorkflow execute run state is poisoned".to_string())?;
-    prune_ueworkflow_master_execute_runs_locked(&mut runs, current_time_ms());
-    runs.get(&run_id)
-        .cloned()
-        .ok_or_else(|| format!("UEWorkflow execute run not found: {run_id}"))
-}
-
-fn run_ueworkflow_master_dry_run_blocking(
-    request: ueworkflow_runtime::AwUwfTaskRequest,
-) -> Result<AwUwfDryRunCommandResponse, String> {
-    ensure_plugin_enabled("UEWorkflow")?;
-    let response = ueworkflow_runtime::run_master_dry_run(&request)?;
-    let appdata = env::var_os("APPDATA").map(PathBuf::from).ok_or_else(|| {
-        "APPDATA is not available; cannot locate AgentWatcher UEWorkflow execution storage"
-            .to_string()
-    })?;
-    let root = ueworkflow_execution::execution_root_from_appdata(&appdata);
-    let execution_record = ueworkflow_execution::commit_dry_run_execution(
-        &root,
-        ueworkflow_execution::AwUeWorkflowExecutionRequest {
-            goal: request.goal,
-            dry_run: response.result.clone(),
-        },
-    )?;
-    Ok(AwUwfDryRunCommandResponse {
-        command: response.command,
-        result: response.result,
-        execution_record,
-    })
-}
-
-fn run_ueworkflow_master_execute_blocking(
-    request: ueworkflow_runtime::AwUwfTaskRequest,
-) -> Result<AwUwfExecuteCommandResponse, String> {
-    ensure_plugin_enabled("UEWorkflow")?;
-    let appdata = env::var_os("APPDATA").map(PathBuf::from).ok_or_else(|| {
-        "APPDATA is not available; cannot locate AgentWatcher UEWorkflow knowledge storage"
-            .to_string()
-    })?;
-    let knowledge_root = ueworkflow_execution::knowledge_root_from_appdata(&appdata);
-    let team_knowledge_root = knowledge_root.join("UnrealWorkflowKnowledge");
-    let response = ueworkflow_runtime::run_master_execute(&request, &team_knowledge_root)?;
-    let knowledge_record = ueworkflow_execution::commit_knowledge_record(
-        &knowledge_root,
-        ueworkflow_execution::AwUeWorkflowKnowledgeRequest {
-            goal: request.goal,
-            task_id: request.task_id,
-            status: response
-                .result
-                .get("status")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-            dry_run: Value::Null,
-            execution: response.result.clone(),
-            review: Value::Null,
-        },
-    )?;
-    Ok(AwUwfExecuteCommandResponse {
-        command: response.command,
-        result: response.result,
-        knowledge_record,
-    })
-}
-
-#[tauri::command]
-fn start_module_command_run(
-    request: ModuleCommandRunRequest,
-) -> Result<plugin_manifest::AwTaskExecutionInfo, String> {
-    let (plugin_name, module, command) = find_module_command_target(
-        &request.plugin_name,
-        &request.module_name,
-        &request.command_name,
-    )?;
-    match command.safety {
-        plugin_manifest::AwCommandSafety::ReadOnly | plugin_manifest::AwCommandSafety::DryRun => {}
-        plugin_manifest::AwCommandSafety::BoundedWrite => {
-            validate_bounded_write_payload(&command, request.payload.as_ref())?;
-            validate_bounded_write_runtime_policy(&command)?;
-        }
-    }
-    ensure_plugin_enabled(&plugin_name)?;
-    if matches!(
-        command.safety,
-        plugin_manifest::AwCommandSafety::BoundedWrite
-    ) {
-        record_bounded_write_audit(
-            &plugin_name,
-            &module.descriptor.name,
-            &command.name,
-            request.payload.as_ref(),
-        )?;
-    }
-    module_runner::start_module_command_run(
-        &plugin_name,
-        &module,
-        &command,
-        request.task_id,
-        request.payload,
-    )
-    .map_err(|error| error.to_string())
-}
-
-fn validate_bounded_write_payload(
-    command: &plugin_manifest::AwCommandDescriptor,
-    payload: Option<&Value>,
-) -> Result<(), String> {
-    let contract = command
-        .safety_contract
-        .as_ref()
-        .ok_or_else(|| "Bounded write command is missing a safety contract".to_string())?;
-    let Some(payload) = payload else {
-        return Err("Bounded write commands require a structured confirmation payload".to_string());
-    };
-    let Some(object) = payload.as_object() else {
-        return Err("Bounded write payload must be a JSON object".to_string());
-    };
-    if contract.requires_confirmation
-        && object.get("confirmed").and_then(Value::as_bool) != Some(true)
-    {
-        return Err("Bounded write payload must include confirmed=true".to_string());
-    }
-    if contract.requires_dry_run
-        && object.get("dryRunAccepted").and_then(Value::as_bool) != Some(true)
-    {
-        return Err("Bounded write payload must include dryRunAccepted=true".to_string());
-    }
-    let action = object
-        .get("action")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or("");
-    if action.is_empty() {
-        return Err("Bounded write payload must include an action".to_string());
-    }
-    if !contract.allowed_actions.is_empty()
-        && !contract
-            .allowed_actions
-            .iter()
-            .any(|allowed| allowed.eq_ignore_ascii_case(action))
-    {
-        return Err(format!(
-            "Bounded write action is not declared in safetyContract.allowedActions: {action}"
-        ));
-    }
-    if let Some(boundary) = contract.confirmation_boundary.as_deref() {
-        let accepted_boundary = object
-            .get("confirmationBoundary")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .unwrap_or("");
-        if accepted_boundary != boundary {
-            return Err(format!(
-                "Bounded write payload must include confirmationBoundary={boundary}"
-            ));
-        }
-    }
-    if !contract.impact_scope.is_empty() {
-        let accepted_scope = object
-            .get("impactScopeAccepted")
-            .and_then(Value::as_array)
-            .ok_or_else(|| {
-                "Bounded write payload must include impactScopeAccepted from dry-run".to_string()
-            })?;
-        for required_scope in &contract.impact_scope {
-            if !accepted_scope
-                .iter()
-                .filter_map(Value::as_str)
-                .any(|accepted| accepted == required_scope)
-            {
-                return Err(format!(
-                    "Bounded write payload is missing accepted impact scope: {required_scope}"
-                ));
-            }
-        }
-    }
-    reject_unsafe_payload_keys(payload)?;
-    let text = serde_json::to_string(payload)
-        .map_err(|error| format!("Failed to serialize bounded write payload: {error}"))?;
-    if text.len() > 16 * 1024 {
-        return Err("Bounded write payload is too large".to_string());
-    }
-    Ok(())
-}
-
-fn record_bounded_write_audit(
-    plugin_name: &str,
-    module_name: &str,
-    command_name: &str,
-    payload: Option<&Value>,
-) -> Result<(), String> {
-    let action = payload
-        .and_then(Value::as_object)
-        .and_then(|object| object.get("action"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("unknown");
-    let path = plugin_state_path()?;
-    plugin_state::record_plugin_audit(
-        &path,
-        plugin_name,
-        "boundedWriteCommand",
-        Some(format!(
-            "module={module_name}; command={command_name}; action={action}; confirmed dry-run safety contract accepted"
-        )),
-    )?;
-    Ok(())
-}
-
-fn validate_bounded_write_runtime_policy(
-    command: &plugin_manifest::AwCommandDescriptor,
-) -> Result<(), String> {
-    validate_bounded_write_runtime_policy_with_env(command, |key| env::var(key).ok())
-}
-
-fn validate_bounded_write_runtime_policy_with_env(
-    command: &plugin_manifest::AwCommandDescriptor,
-    env_value: impl Fn(&str) -> Option<String>,
-) -> Result<(), String> {
-    let Some(contract) = command.safety_contract.as_ref() else {
-        return Err("Bounded write command is missing a safety contract".to_string());
-    };
-    let Some(block) = contract.runtime_block.as_ref() else {
-        return Ok(());
-    };
-    if env_value(&block.override_env).as_deref() == Some(block.override_token.as_str()) {
-        return Ok(());
-    }
-
-    Err(format!(
-        "{}; set {}={} only for an explicitly approved live validation.",
-        block.reason, block.override_env, block.override_token
-    ))
-}
-
-fn reject_unsafe_payload_keys(value: &Value) -> Result<(), String> {
-    const BLOCKED_KEYS: &[&str] = &[
-        "shell",
-        "shellCommand",
-        "rawCommand",
-        "commandLine",
-        "powershell",
-        "cmd",
-        "script",
-        "rawUeBuild",
-        "rawUeBuildCommand",
-        "runRawUeBuild",
-        "ueBuildCommand",
-        "deletePath",
-        "removePath",
-        "destructiveDelete",
-        "externalWorktreeCreated",
-    ];
-    match value {
-        Value::Object(map) => {
-            for (key, child) in map {
-                if BLOCKED_KEYS
-                    .iter()
-                    .any(|blocked| key.eq_ignore_ascii_case(blocked))
-                {
-                    return Err(format!(
-                        "Bounded write payload contains forbidden key: {key}"
-                    ));
-                }
-                reject_unsafe_payload_keys(child)?;
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                reject_unsafe_payload_keys(item)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-#[tauri::command]
-fn get_module_command_run(
-    run_id: String,
-) -> Result<module_runner::AwModuleCommandRunSnapshot, String> {
-    module_runner::get_module_command_run(&run_id).map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn cancel_module_command_run(
-    run_id: String,
-) -> Result<module_runner::AwModuleCommandRunSnapshot, String> {
-    module_runner::cancel_module_command_run(&run_id).map_err(|error| error.to_string())
-}
-
-fn find_module_command_target(
-    plugin_name: &str,
-    module_name: &str,
-    command_name: &str,
-) -> Result<
-    (
-        String,
-        plugin_manifest::AwDiscoveredModule,
-        plugin_manifest::AwCommandDescriptor,
-    ),
-    String,
-> {
-    let plugins = scan_module_plugins()?;
-    let plugin = plugins
-        .iter()
-        .find(|plugin| plugin.descriptor.name == plugin_name)
-        .ok_or_else(|| format!("Plugin not found: {plugin_name}"))?;
-    let module = plugin
-        .modules
-        .iter()
-        .find(|module| module.descriptor.name == module_name)
-        .ok_or_else(|| format!("Module not found: {module_name}"))?;
-    let command = module
-        .descriptor
-        .commands
-        .iter()
-        .find(|command| command.name == command_name)
-        .ok_or_else(|| format!("Command not found: {command_name}"))?;
-
-    Ok((
-        plugin.descriptor.name.clone(),
-        module.clone(),
-        command.clone(),
-    ))
-}
-
-fn agentwatcher_plugin_root() -> Result<PathBuf, String> {
-    let mut candidates = Vec::new();
-
-    if let Some(source_root) = Path::new(env!("CARGO_MANIFEST_DIR")).parent() {
-        candidates.push(source_root.join("Plugins"));
-    }
-
-    if let Ok(exe_path) = env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            candidates.push(exe_dir.join("Plugins"));
-            if let Some(parent) = exe_dir.parent() {
-                candidates.push(parent.join("Plugins"));
-            }
-        }
-    }
-
-    for candidate in &candidates {
-        if candidate.exists() {
-            return Ok(candidate.clone());
-        }
-    }
-
-    candidates
-        .into_iter()
-        .last()
-        .ok_or_else(|| "Failed to determine AgentWatcher plugin root".to_string())
-}
-
 fn ensure_plugin_exists(plugin_name: &str) -> Result<(), String> {
-    let plugin_root = agentwatcher_plugin_root()?;
-    plugin_linker::get_plugin_link_status(&plugin_root, plugin_name)
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    let snapshot = scan_plugin_catalog()?;
+    plugin_catalog::find_plugin(&snapshot, plugin_name).map(|_| ())
 }
 
 fn ensure_plugin_enabled(plugin_name: &str) -> Result<(), String> {
@@ -2522,6 +1700,24 @@ fn plugin_state_path() -> Result<PathBuf, String> {
         "APPDATA is not available; cannot locate AgentWatcher plugin state".to_string()
     })?;
     Ok(plugin_state::plugin_state_path_from_appdata(&appdata))
+}
+
+fn plugin_catalog_paths() -> Result<(PathBuf, PathBuf), String> {
+    let appdata = env::var_os("APPDATA").map(PathBuf::from).ok_or_else(|| {
+        "APPDATA is not available; cannot locate AgentWatcher plugin mounts".to_string()
+    })?;
+    let localappdata = env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| appdata.clone());
+    Ok((
+        plugin_catalog::mount_store_path_from_appdata(&appdata),
+        plugin_catalog::installed_plugin_root_from_localappdata(&localappdata),
+    ))
+}
+
+fn scan_plugin_catalog() -> Result<plugin_catalog::AwPluginCatalogSnapshot, String> {
+    let (mount_store, installed_root) = plugin_catalog_paths()?;
+    Ok(plugin_catalog::scan_catalog(&mount_store, &installed_root))
 }
 
 fn todo_state_path() -> Result<PathBuf, String> {
@@ -2589,98 +1785,6 @@ fn sanitize_todo_dispatch(dispatch: &mut Value) {
     }
 }
 
-fn compact_ueworkflow_module_result(result: &Value) -> Value {
-    let mut compact = serde_json::Map::new();
-    if let Some(value) = result.get("module") {
-        compact.insert("module".to_string(), value.clone());
-    }
-    if let Some(value) = result.get("status") {
-        compact.insert("status".to_string(), value.clone());
-    }
-    if let Some(value) = result.get("message").or_else(|| result.get("error")) {
-        let mut value = value.clone();
-        truncate_value_string(&mut value, TODO_SHORT_TEXT_LIMIT);
-        compact.insert("message".to_string(), value);
-    }
-    if let Some(value) = result
-        .get("targetContext")
-        .or_else(|| result.pointer("/outcome/targetContext"))
-    {
-        compact.insert("targetContext".to_string(), value.clone());
-    }
-    if let Some(value) = result
-        .get("artifacts")
-        .or_else(|| result.pointer("/outcome/artifacts"))
-    {
-        let mut value = value.clone();
-        trim_array_to_last(&mut value, 20);
-        compact.insert("artifacts".to_string(), value);
-    }
-    Value::Object(compact)
-}
-
-fn compact_ueworkflow_master_result(details: &mut Value) {
-    if details.pointer("/kind").and_then(Value::as_str) != Some("UnrealWorkflowMasterResult") {
-        return;
-    }
-    if details
-        .get("summaryOnly")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return;
-    }
-    let original = details.clone();
-    let mut compact = serde_json::Map::new();
-    compact.insert(
-        "kind".to_string(),
-        Value::String("UnrealWorkflowMasterResult".to_string()),
-    );
-    compact.insert("summaryOnly".to_string(), Value::Bool(true));
-    for key in [
-        "status",
-        "command",
-        "message",
-        "request",
-        "contextConfirmation",
-        "providerPackage",
-        "knowledgeClosure",
-    ] {
-        if let Some(value) = original.get(key) {
-            let mut value = value.clone();
-            if matches!(key, "message" | "knowledgeClosure") {
-                truncate_value_string(&mut value, TODO_SHORT_TEXT_LIMIT);
-            }
-            compact.insert(key.to_string(), value);
-        }
-    }
-    for (key, limit) in [
-        ("stages", 20_usize),
-        ("blockedActions", 30_usize),
-        ("sideEffects", 30_usize),
-        ("artifacts", 40_usize),
-    ] {
-        if let Some(value) = original.get(key) {
-            let mut value = value.clone();
-            trim_array_to_last(&mut value, limit);
-            compact.insert(key.to_string(), value);
-        }
-    }
-    if let Some(module_results) = original.get("moduleResults").and_then(Value::as_array) {
-        compact.insert(
-            "moduleResults".to_string(),
-            Value::Array(
-                module_results
-                    .iter()
-                    .take(20)
-                    .map(compact_ueworkflow_module_result)
-                    .collect(),
-            ),
-        );
-    }
-    *details = Value::Object(compact);
-}
-
 fn sanitize_todo_task(task: &mut Value) {
     let Some(object) = task.as_object_mut() else {
         return;
@@ -2694,20 +1798,10 @@ fn sanitize_todo_task(task: &mut Value) {
         }
     }
     if let Some(events) = object
-        .get_mut("ueWorkflowLifecycle")
+        .get_mut("pluginWorkflowLifecycle")
         .and_then(|value| value.get_mut("events"))
     {
-        trim_array_to_last(events, TODO_UEWORKFLOW_EVENT_LIMIT);
-    }
-    if let Some(master) = object.get_mut("ueWorkflowMaster") {
-        compact_ueworkflow_master_result(master);
-    }
-    if let Some(details) = object
-        .get_mut("execution")
-        .and_then(|value| value.get_mut("result"))
-        .and_then(|value| value.get_mut("details"))
-    {
-        compact_ueworkflow_master_result(details);
+        trim_array_to_last(events, TODO_PLUGIN_WORKFLOW_EVENT_LIMIT);
     }
     if let Some(stdout) = object
         .get_mut("execution")
@@ -3329,6 +2423,68 @@ fn fetch_codex_turn_summary(
     Some(summary)
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .invoke_handler(tauri::generate_handler![
+            scan_sessions,
+            get_performance_snapshot,
+            open_session,
+            launch_handoff,
+            prepare_handoff_source_context,
+            get_todo_state,
+            save_todo_state,
+            scan_plugins,
+            mount_plugin,
+            unmount_plugin,
+            invoke_plugin_command,
+            get_plugin_runtime_state,
+            set_plugin_enabled,
+            get_orchestration_status,
+            get_bridge_status,
+            install_bridge,
+            get_debug_runtime_state,
+            set_window_always_on_top
+        ])
+        .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                if let Some(icon) = runtime_window_icon() {
+                    let _ = window.set_icon(icon);
+                }
+                #[cfg(target_os = "windows")]
+                apply_native_window_icons(&window);
+                #[cfg(target_os = "windows")]
+                {
+                    let icon_refresh_window = window.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(800));
+                        apply_native_window_icons(&icon_refresh_window);
+                    });
+                }
+                let _ = window.set_always_on_top(!agentwatcher_silent_debug_enabled());
+                let _ = window.set_decorations(false);
+                let _ = window.set_resizable(true);
+            }
+
+            auto_install_bridge_on_startup();
+            start_session_file_watcher(app.handle().clone());
+
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building AgentWatcher");
+
+    app.run(|_app_handle, event| {
+        if matches!(
+            event,
+            tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
+        ) {
+            shutdown_codex_app_server();
+        }
+    });
+}
+
 #[cfg(test)]
 fn codex_thread_with_turns(client: &mut CodexWsClient, thread_json: &Value) -> Value {
     let mut enriched_thread = thread_json.clone();
@@ -3436,7 +2592,7 @@ fn read_codex_thread_with_summary(
         collect_todo_ids_from_text(text, &mut todo_ids);
     }
 
-    let ueworkflow = detect_ueworkflow_session_marker(
+    let plugin_workflow = detect_plugin_workflow_session_marker(
         "codex",
         &[last_user_message.as_deref(), last_ai_message.as_deref()],
     );
@@ -3466,7 +2622,7 @@ fn read_codex_thread_with_summary(
         last_ai_message_excerpt_kind,
         branch: None,
         todo_ids,
-        ueworkflow,
+        plugin_workflow,
     })
 }
 
@@ -3530,7 +2686,7 @@ fn read_codex_jsonl_session(
         Some(&session_path_text),
         Some(&session_resource),
     );
-    let ueworkflow = detect_ueworkflow_session_marker(
+    let plugin_workflow = detect_plugin_workflow_session_marker(
         "codex",
         &[last_user_message.as_deref(), last_ai_message.as_deref()],
     );
@@ -3560,7 +2716,7 @@ fn read_codex_jsonl_session(
         last_ai_message_excerpt_kind,
         branch: None,
         todo_ids,
-        ueworkflow,
+        plugin_workflow,
     })
 }
 
@@ -4291,7 +3447,7 @@ fn read_opencode_session_row(
     let (last_ai_message, last_ai_message_truncated, last_ai_message_excerpt_kind) =
         apply_ai_preview_budget(summary.last_ai_message);
 
-    let ueworkflow = detect_ueworkflow_session_marker(
+    let plugin_workflow = detect_plugin_workflow_session_marker(
         "opencode",
         &[last_user_message.as_deref(), last_ai_message.as_deref()],
     );
@@ -4321,7 +3477,7 @@ fn read_opencode_session_row(
         last_ai_message_excerpt_kind,
         branch: None,
         todo_ids,
-        ueworkflow,
+        plugin_workflow,
     })
 }
 
@@ -5914,7 +5070,7 @@ fn read_copilot_session(
         Some(&session_resource),
     );
 
-    let ueworkflow = detect_ueworkflow_session_marker(
+    let plugin_workflow = detect_plugin_workflow_session_marker(
         "copilot",
         &[last_user_message.as_deref(), last_ai_message.as_deref()],
     );
@@ -5944,7 +5100,7 @@ fn read_copilot_session(
         last_ai_message_excerpt_kind,
         branch: None,
         todo_ids,
-        ueworkflow,
+        plugin_workflow,
     })
 }
 
@@ -6076,7 +5232,7 @@ fn read_claude_jsonl_session(
         Some(&session_resource),
     );
 
-    let ueworkflow = detect_ueworkflow_session_marker(
+    let plugin_workflow = detect_plugin_workflow_session_marker(
         "claude",
         &[last_user_message.as_deref(), last_ai_message.as_deref()],
     );
@@ -6106,7 +5262,7 @@ fn read_claude_jsonl_session(
         last_ai_message_excerpt_kind,
         branch,
         todo_ids,
-        ueworkflow,
+        plugin_workflow,
     })
 }
 
@@ -7630,8 +6786,8 @@ fn read_claude_entry(
         session_path.as_deref(),
         Some(&session_resource),
     );
-    let ueworkflow =
-        detect_ueworkflow_session_marker("claude", &[first_prompt_preview.0.as_deref()]);
+    let plugin_workflow =
+        detect_plugin_workflow_session_marker("claude", &[first_prompt_preview.0.as_deref()]);
 
     Some(AgentSession {
         id: format!("claude:{}", session_id),
@@ -7658,7 +6814,7 @@ fn read_claude_entry(
         last_ai_message_excerpt_kind: None,
         branch,
         todo_ids,
-        ueworkflow,
+        plugin_workflow,
     })
 }
 #[derive(Debug, Clone)]
@@ -9595,163 +8751,30 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn bounded_write_runtime_block_is_declared_by_safety_contract() {
-        let command = test_bounded_write_command();
-
-        let error = validate_bounded_write_runtime_policy_with_env(&command, |_| None).unwrap_err();
-
-        assert!(error.contains("disabled by default"));
-        assert!(error.contains(UEWORKFLOW_REAL_CREATE_TASK_ENV));
-    }
-
-    #[test]
-    fn bounded_write_runtime_override_is_high_friction_and_explicit() {
-        let command = test_bounded_write_command();
-
-        assert!(
-            validate_bounded_write_runtime_policy_with_env(&command, |key| {
-                if key == UEWORKFLOW_REAL_CREATE_TASK_ENV {
-                    Some(ueworkflow_real_create_task_token())
-                } else {
-                    None
-                }
-            })
-            .is_ok()
-        );
-    }
-
-    #[test]
-    fn bounded_write_runtime_policy_allows_commands_without_runtime_block() {
-        let mut command = test_bounded_write_command();
-        command.safety_contract.as_mut().unwrap().runtime_block = None;
-
-        assert!(validate_bounded_write_runtime_policy_with_env(&command, |_| None).is_ok());
-    }
-
-    #[test]
-    fn ueworkflow_external_execute_commands_are_audited() {
-        assert!(should_record_ueworkflow_external_command(
-            "dev.switch.execute"
-        ));
-        assert!(should_record_ueworkflow_external_command(
-            "agents.install.execute"
-        ));
-        assert!(!should_record_ueworkflow_external_command("dev.status"));
-        assert!(!should_record_ueworkflow_external_command(
-            "dev.switch.dryRun"
-        ));
-    }
-
-    #[test]
-    fn ueworkflow_session_marker_requires_explicit_workflow_marker() {
-        assert!(detect_ueworkflow_session_marker(
+    fn plugin_workflow_session_marker_requires_explicit_marker() {
+        assert!(detect_plugin_workflow_session_marker(
             "copilot",
             &[Some("please fix this Unreal plugin")]
         )
         .is_none());
 
-        let marker = detect_ueworkflow_session_marker(
+        let marker = detect_plugin_workflow_session_marker(
             "copilot",
             &[Some(
-                "workflow=unrealworkflow provider=copilot taskId=aw-001 runId=run-abc contractVersion=uwf.provider-agent.v1",
+                "[AgentWatcher Plugin Workflow]\nplugin=SamplePlugin workflow=SampleFlow provider=copilot taskId=aw-001 runId=run-abc contractVersion=plugin-workflow.v1",
             )],
         )
         .unwrap();
 
-        assert_eq!(marker.workflow, "unrealworkflow");
+        assert_eq!(marker.plugin_name, "SamplePlugin");
+        assert_eq!(marker.workflow, "SampleFlow");
         assert_eq!(marker.provider, "copilot");
         assert_eq!(marker.task_id.as_deref(), Some("aw-001"));
         assert_eq!(marker.run_id.as_deref(), Some("run-abc"));
         assert_eq!(
             marker.contract_version.as_deref(),
-            Some("uwf.provider-agent.v1")
+            Some("plugin-workflow.v1")
         );
-    }
-
-    #[test]
-    fn bounded_write_payload_must_match_declared_safety_contract() {
-        let command = test_bounded_write_command();
-        let payload = json!({
-            "action": "createTask",
-            "confirmed": true,
-            "dryRunAccepted": true,
-            "confirmationBoundary": "UEWorkflow.devflow.createTask.v1",
-            "impactScopeAccepted": [
-                "AgentWatcher task draft",
-                "future git worktree creation"
-            ]
-        });
-
-        validate_bounded_write_payload(&command, Some(&payload)).unwrap();
-    }
-
-    #[test]
-    fn bounded_write_payload_rejects_missing_boundary_and_unsafe_keys() {
-        let command = test_bounded_write_command();
-        let missing_boundary = json!({
-            "action": "createTask",
-            "confirmed": true,
-            "dryRunAccepted": true,
-            "impactScopeAccepted": [
-                "AgentWatcher task draft",
-                "future git worktree creation"
-            ]
-        });
-        let unsafe_payload = json!({
-            "action": "createTask",
-            "confirmed": true,
-            "dryRunAccepted": true,
-            "confirmationBoundary": "UEWorkflow.devflow.createTask.v1",
-            "impactScopeAccepted": [
-                "AgentWatcher task draft",
-                "future git worktree creation"
-            ],
-            "rawUeBuildCommand": "RunUAT BuildCookRun"
-        });
-
-        let boundary_error =
-            validate_bounded_write_payload(&command, Some(&missing_boundary)).unwrap_err();
-        let unsafe_error =
-            validate_bounded_write_payload(&command, Some(&unsafe_payload)).unwrap_err();
-
-        assert!(boundary_error.contains("confirmationBoundary"));
-        assert!(unsafe_error.contains("forbidden key"));
-    }
-
-    fn test_bounded_write_command() -> plugin_manifest::AwCommandDescriptor {
-        plugin_manifest::AwCommandDescriptor {
-            name: "execute".to_string(),
-            display_name: "执行".to_string(),
-            safety: plugin_manifest::AwCommandSafety::BoundedWrite,
-            runner: plugin_manifest::AwCommandRunner::PowerShellFile {
-                script: "aw/Get-AgentWatcherModule.ps1".to_string(),
-                args: vec!["execute".to_string()],
-            },
-            description: None,
-            timeout_ms: 30_000,
-            produces: plugin_manifest::AwCommandOutputKind::AgentWatcherModuleResult,
-            safety_contract: Some(plugin_manifest::AwCommandSafetyContract {
-                requires_dry_run: true,
-                requires_confirmation: true,
-                confirmation_boundary: Some("UEWorkflow.devflow.createTask.v1".to_string()),
-                impact_scope: vec![
-                    "AgentWatcher task draft".to_string(),
-                    "future git worktree creation".to_string(),
-                ],
-                audit_record: true,
-                forbids_arbitrary_shell: true,
-                forbids_raw_ue_build: true,
-                forbids_destructive_delete: true,
-                forbids_external_worktree: true,
-                allowed_actions: vec!["createTask".to_string()],
-                allowed_runners: vec![plugin_manifest::AwCommandRunnerKind::PowerShellFile],
-                runtime_block: Some(plugin_manifest::AwCommandRuntimeBlock {
-                    reason: "UEWorkflow real task creation is disabled by default.".to_string(),
-                    override_env: UEWORKFLOW_REAL_CREATE_TASK_ENV.to_string(),
-                    override_token: ueworkflow_real_create_task_token(),
-                }),
-            }),
-        }
     }
 
     #[test]
@@ -9839,7 +8862,7 @@ mod tests {
     }
 
     #[test]
-    fn todo_state_write_compacts_ueworkflow_task_payloads() {
+    fn todo_state_write_bounds_plugin_workflow_task_payloads() {
         let dir = env::temp_dir().join(format!(
             "agentwatcher-todo-state-compact-{}",
             SystemTime::now()
@@ -9872,24 +8895,7 @@ mod tests {
                         "id": "todo-1",
                         "title": "Build task input",
                         "dispatches": dispatches,
-                        "ueWorkflowLifecycle": { "events": events },
-                        "ueWorkflowMaster": {
-                            "kind": "UnrealWorkflowMasterResult",
-                            "status": "success",
-                            "command": "master execute",
-                            "message": "M".repeat(2_000),
-                            "request": { "taskId": "feature-x" },
-                            "moduleResults": [{
-                                "module": { "displayName": "开发流" },
-                                "status": "success",
-                                "message": "module ok",
-                                "outcome": {
-                                    "targetContext": { "workspacePath": r"X:\Host" },
-                                    "artifacts": [{ "path": r"X:\artifact.md" }]
-                                },
-                                "stdout": "heavy"
-                            }]
-                        }
+                        "pluginWorkflowLifecycle": { "events": events }
                     }]
                 }
             }
@@ -9904,61 +8910,18 @@ mod tests {
             TODO_DISPATCH_HISTORY_LIMIT
         );
         assert_eq!(
-            task["ueWorkflowLifecycle"]["events"]
+            task["pluginWorkflowLifecycle"]["events"]
                 .as_array()
                 .unwrap()
                 .len(),
-            TODO_UEWORKFLOW_EVENT_LIMIT
+            TODO_PLUGIN_WORKFLOW_EVENT_LIMIT
         );
-        assert_eq!(task["ueWorkflowMaster"]["summaryOnly"], true);
-        assert!(task["ueWorkflowMaster"]["moduleResults"][0]
-            .get("stdout")
-            .is_none());
         assert!(
             task["dispatches"][0]["lastPrompt"].as_str().unwrap().len() <= TODO_LONG_TEXT_LIMIT
         );
 
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn ueworkflow_master_execute_run_pruning_keeps_recent_bounded_history() {
-        let now_ms = 10_000_000;
-        let mut runs = HashMap::new();
-        for index in 0..80 {
-            runs.insert(
-                format!("terminal-{index:02}"),
-                AwUwfMasterExecuteRunSnapshot {
-                    run_id: format!("terminal-{index:02}"),
-                    status: "success".to_string(),
-                    phase: "package-ready".to_string(),
-                    started_ms: now_ms - 10_000 + index,
-                    updated_ms: now_ms - 10_000 + index,
-                    result: None,
-                    error: None,
-                },
-            );
-        }
-        runs.insert(
-            "running-old".to_string(),
-            AwUwfMasterExecuteRunSnapshot {
-                run_id: "running-old".to_string(),
-                status: "running".to_string(),
-                phase: "package-generating".to_string(),
-                started_ms: now_ms - UEWORKFLOW_MASTER_EXECUTE_RUN_TTL_MS - 100,
-                updated_ms: now_ms - UEWORKFLOW_MASTER_EXECUTE_RUN_TTL_MS - 100,
-                result: None,
-                error: None,
-            },
-        );
-
-        prune_ueworkflow_master_execute_runs_locked(&mut runs, now_ms);
-
-        assert!(runs.len() <= UEWORKFLOW_MASTER_EXECUTE_RUN_LIMIT);
-        assert!(runs.contains_key("running-old"));
-        assert!(!runs.contains_key("terminal-00"));
-        assert!(runs.contains_key("terminal-79"));
     }
 
     #[test]
@@ -11391,80 +10354,4 @@ mod tests {
         assert!(pending_ask_ids.is_empty());
         assert_eq!(status_hint, Some(SessionStatusHint::Running));
     }
-}
-
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    let app = tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![
-            scan_sessions,
-            get_performance_snapshot,
-            open_session,
-            launch_handoff,
-            prepare_handoff_source_context,
-            get_todo_state,
-            save_todo_state,
-            scan_module_plugins,
-            get_plugin_link_status,
-            install_plugin_links,
-            repair_plugin_links,
-            get_plugin_runtime_state,
-            set_plugin_enabled,
-            get_orchestration_status,
-            commit_ueworkflow_dry_run,
-            commit_ueworkflow_knowledge_record,
-            get_ueworkflow_doctor,
-            get_ueworkflow_modules,
-            get_ueworkflow_module_status,
-            run_ueworkflow_command,
-            get_ueworkflow_command_policy,
-            run_ueworkflow_master_dry_run,
-            run_ueworkflow_master_execute,
-            start_ueworkflow_master_execute_run,
-            get_ueworkflow_master_execute_run,
-            start_module_command_run,
-            get_module_command_run,
-            cancel_module_command_run,
-            get_bridge_status,
-            install_bridge,
-            get_debug_runtime_state,
-            set_window_always_on_top
-        ])
-        .setup(|app| {
-            if let Some(window) = app.get_webview_window("main") {
-                if let Some(icon) = runtime_window_icon() {
-                    let _ = window.set_icon(icon);
-                }
-                #[cfg(target_os = "windows")]
-                apply_native_window_icons(&window);
-                #[cfg(target_os = "windows")]
-                {
-                    let icon_refresh_window = window.clone();
-                    std::thread::spawn(move || {
-                        std::thread::sleep(Duration::from_millis(800));
-                        apply_native_window_icons(&icon_refresh_window);
-                    });
-                }
-                let _ = window.set_always_on_top(!agentwatcher_silent_debug_enabled());
-                let _ = window.set_decorations(false);
-                let _ = window.set_resizable(true);
-            }
-
-            auto_install_bridge_on_startup();
-            start_session_file_watcher(app.handle().clone());
-
-            Ok(())
-        })
-        .build(tauri::generate_context!())
-        .expect("error while building AgentWatcher");
-
-    app.run(|_app_handle, event| {
-        if matches!(
-            event,
-            tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
-        ) {
-            shutdown_codex_app_server();
-        }
-    });
 }

@@ -1,4 +1,3 @@
-use crate::plugin_manifest::validate_agentwatcher_name;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -75,7 +74,7 @@ pub fn set_plugin_enabled(
         .plugins
         .get(plugin_name)
         .map(|entry| entry.enabled)
-        .unwrap_or(true);
+        .unwrap_or(false);
     let changed = previous != enabled;
 
     store.plugins.insert(
@@ -119,7 +118,7 @@ pub fn record_plugin_audit(
         .plugins
         .get(plugin_name)
         .map(|entry| entry.enabled)
-        .unwrap_or(true);
+        .unwrap_or(false);
     store.audit.push(AwPluginAuditEntry {
         id: format!("{plugin_name}-{at_ms}-{}", store.audit.len() + 1),
         plugin_name: plugin_name.to_string(),
@@ -151,14 +150,21 @@ fn runtime_state_from_store(store: &AwPluginStateStore, plugin_name: &str) -> Aw
 
     AwPluginRuntimeState {
         plugin_name: plugin_name.to_string(),
-        enabled: entry.map(|item| item.enabled).unwrap_or(true),
+        enabled: entry.map(|item| item.enabled).unwrap_or(false),
         updated_ms: entry.map(|item| item.updated_ms),
         audit,
     }
 }
 
 fn validate_plugin_name(plugin_name: &str) -> Result<(), String> {
-    validate_agentwatcher_name("pluginName", plugin_name).map_err(|error| error.to_string())
+    if plugin_name.is_empty()
+        || !plugin_name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        return Err("pluginName must use ASCII letters, digits, or underscore".to_string());
+    }
+    Ok(())
 }
 
 fn read_store(path: &Path) -> Result<AwPluginStateStore, String> {
@@ -226,12 +232,12 @@ mod tests {
     }
 
     #[test]
-    fn missing_plugin_state_defaults_to_enabled() {
+    fn missing_plugin_state_defaults_to_disabled() {
         let path = temp_state_path("missing");
-        let state = get_plugin_runtime_state(&path, "UEWorkflow").unwrap();
+        let state = get_plugin_runtime_state(&path, "SamplePlugin").unwrap();
 
-        assert_eq!(state.plugin_name, "UEWorkflow");
-        assert!(state.enabled);
+        assert_eq!(state.plugin_name, "SamplePlugin");
+        assert!(!state.enabled);
         assert!(state.updated_ms.is_none());
         assert!(state.audit.is_empty());
     }
@@ -241,12 +247,12 @@ mod tests {
         let path = temp_state_path("persist");
         let disabled = set_plugin_enabled(
             &path,
-            "UEWorkflow",
+            "SamplePlugin",
             false,
             Some("用户在设置中停用".to_string()),
         )
         .unwrap();
-        let loaded = get_plugin_runtime_state(&path, "UEWorkflow").unwrap();
+        let loaded = get_plugin_runtime_state(&path, "SamplePlugin").unwrap();
 
         assert!(!disabled.enabled);
         assert!(!loaded.enabled);
