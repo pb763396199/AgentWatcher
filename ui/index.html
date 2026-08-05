@@ -177,6 +177,12 @@
       color: #087568;
     }
 
+    body[data-theme="light"] .provider.gh-cli {
+      border-color: #0b6f91;
+      background: #eef8fc;
+      color: #075d7a;
+    }
+
     body[data-theme="light"] .provider.cl {
       border-color: #ce7248;
       background: #fff3ed;
@@ -900,6 +906,7 @@
     }
 
     .provider-option-badge.gh { color: #4ec9b0; }
+    .provider-option-badge.gh-cli { color: #4fb3d8; }
     .provider-option-badge.cl { color: #ce9178; }
     .provider-option-badge.cx { color: #75beff; }
     .provider-option-badge.oc { color: #d7ba7d; }
@@ -1415,6 +1422,12 @@
     }
 
     .provider.gh { color: #4ec9b0; border-color: #4ec9b0; }
+    .provider.gh-cli {
+      color: #4fb3d8;
+      border-color: #4fb3d8;
+      font-size: max(8px, calc(var(--tile-provider) * 0.34));
+      white-space: nowrap;
+    }
     .provider.cl { color: #ce9178; border-color: #ce9178; }
     .provider.cx { color: #75beff; border-color: #75beff; }
     .provider.oc { color: #d7ba7d; border-color: #d7ba7d; }
@@ -5347,6 +5360,10 @@
             <input class="setting-check" id="includeCopilot" type="checkbox" checked />
           </div>
           <div class="setting-row">
+            <label for="includeCopilotCli" data-i18n="includeCopilotCli">Copilot CLI sessions</label>
+            <input class="setting-check" id="includeCopilotCli" type="checkbox" checked />
+          </div>
+          <div class="setting-row">
             <label for="includeClaude" data-i18n="includeClaude">Claude sessions</label>
             <input class="setting-check" id="includeClaude" type="checkbox" checked />
           </div>
@@ -5979,6 +5996,7 @@
     const waitingAlertSizeButtons = Array.from(document.querySelectorAll('[data-setting-alert-size]'));
     const alwaysOnTop = document.getElementById('alwaysOnTop');
     const includeCopilot = document.getElementById('includeCopilot');
+    const includeCopilotCli = document.getElementById('includeCopilotCli');
     const includeClaude = document.getElementById('includeClaude');
     const includeCodex = document.getElementById('includeCodex');
     const includeOpenCode = document.getElementById('includeOpenCode');
@@ -6271,6 +6289,7 @@
       layout: document.body.dataset.layout || 'horizontal',
       alwaysOnTop: true,
       includeCopilot: true,
+      includeCopilotCli: true,
       includeClaude: true,
       includeCodex: true,
       includeOpenCode: true,
@@ -6291,7 +6310,7 @@
     let settings = loadSettings();
     const i18n = {
       en: {
-        allSessions: 'All agent sessions', watched: '83 workspaces watched', filterActive: 'Workspace filter active', waitingChip: '8 waiting', workspace: 'Workspace', allWorkspaces: 'All workspaces', perRow: 'Per row', visibleNow: 'visible now', inQueue: 'in scroll queue', sessions: 'sessions', updated: 'Updated 2s ago', workspacePrefix: 'Workspace: ', overflow: 'Scroll continues by priority: waiting, running, idle', priority: 'priority', live: 'live', quiet: 'quiet', waiting: 'Waiting', running: 'Running', idle: 'Idle', all: 'All', wait: 'Wait', run: 'Run', col: 'col', cols: 'cols', perRowButton: '/ row', iconsPerRow: 'icons per row', windowSize: 'Window size', openWorkspace: 'Open VS Code workspace: ', openingAgents: 'Opening session...', openedAgents: 'Session opened', themeLight: 'Light theme', themeDark: 'Dark theme', settings: 'Settings', appearance: 'Appearance', language: 'Language', theme: 'Theme', layout: 'Layout', horizontal: 'Horizontal', vertical: 'Vertical', agentTaskFlipSpeed: 'Flip speed (ms)', lastUser: 'Last user', lastAi: 'Last AI', noUserMessage: 'No user message captured', noAiMessage: 'No AI message captured', tailOnly: 'tail', errorExcerpt: 'error', windowBehavior: 'Window', alwaysOnTop: 'Always on top', dataSources: 'Data', includeCopilot: 'Copilot sessions', includeClaude: 'Claude sessions', hideArchived: 'Hide archived', scanLimits: 'Scan limits', activeWindowDays: 'Active window (days)', maxSessions: 'Max sessions', refreshInterval: 'Refresh interval (sec)', settingsSaved: 'Settings updated', maxCardsPerRow: 'Max cards per row', waitingAlertSize: 'Waiting alert size', waitingAlertDuration: 'Waiting alert duration (sec)', small: 'Small', medium: 'Medium', large: 'Large', waitingAlertAria: 'New waiting session', handoffCreate: 'Create handoff session...', handoffCopyPrompt: 'Copy handoff prompt', handoffOpenSource: 'Open source session', handoffTitle: 'Create handoff session', handoffNewSessionIn: 'New session in', handoffWithProvider: 'with', handoffLatestSnapshot: 'Latest snapshot', handoffSourceLocator: 'Source locator', handoffPreview: 'Preview', handoffCopy: 'Copy', handoffLaunch: 'Launch', handoffSaveTodo: 'Save Todo', handoffPromptPreview: 'Prompt preview', handoffTaskPlaceholder: 'What would you like session B to do?', handoffWorkspacePlaceholder: 'Search or paste workspace path', handoffUsePastedPath: 'Use pasted path', handoffNoWorkspace: 'No matching workspace', handoffSelected: 'selected', handoffCopied: 'Copied handoff prompt', handoffClipboardFallback: 'Clipboard write failed; prompt is selected', handoffLaunching: 'Launching handoff...', handoffLaunched: 'Handoff launch requested', handoffNoSession: 'No source session selected', handoffOpenFailed: 'Handoff panel failed to open', handoffSelectWorkspace: 'Select workspace', handoffAgentsLabel: 'Copilot Editor', handoffCodeChatLabel: 'Copilot CLI Editor', handoffClaudeLabel: 'Claude Code Editor', handoffAgentsDescription: 'Open Copilot in a VS Code editor tab and insert the handoff prompt', handoffCodeChatDescription: 'Open a Copilot CLI editor tab and insert the handoff prompt', handoffClaudeDescription: 'Open Claude Code in a VS Code editor tab', bridgeTitle: 'VS Code Bridge', bridgePreviewOnly: 'Preview only', bridgeChecking: 'Checking...', bridgeInstalled: 'Bridge installed', bridgeNeedsUpdate: 'Bridge update available', bridgeNotInstalled: 'Bridge not installed', bridgeInstall: 'Install', bridgeUpdate: 'Update', bridgeRetry: 'Retry', bridgeInstalling: 'Installing...', bridgeInstallFailed: 'Bridge install failed', todoWindowTitle: 'AI Task Input', todoWindowSubtitle: 'Workspace todo queue', todoOpen: 'Open Todo', todoReadyNudge: 'Ready todo in ', todoRefresh: 'Refresh', todoUsePath: 'Use Path', todoCancel: 'Cancel', todoAdd: 'Add', todoSave: 'Save', todoActive: 'Active', todoShowDone: 'Done', todoTitlePlaceholder: 'Task title', todoDescriptionPlaceholder: 'Task notes', todoAcceptancePlaceholder: 'Completion standard', todoPathPlaceholder: 'Paste workspace path', todoNoWorkspace: 'Choose workspace', todoEmpty: 'No active todo for this workspace', todoNoDone: 'No completed todo yet', todoPendingReview: 'Needs confirmation', todoPromptPreview: 'Prompt', todoDispatch: 'Launch', todoComplete: 'Done', todoRetry: 'Rework', todoBlock: 'Block', todoUnblock: 'Unblock', todoDelete: 'Delete', todoEdit: 'Edit', todoSaved: 'Todo saved', todoLaunched: 'Todo launch requested', todoCopied: 'Prompt copied', todoBlocked: 'Blocked', todoDone: 'Completed', todoReady: 'Ready', todoRunning: 'Running', todoReview: 'Review', todoUnbound: 'dispatched, unbound', todoBound: 'bound session', todoCountsText: 'active {active} / done {done}', todoCreateFromHandoff: 'Saved handoff as todo',
+        allSessions: 'All agent sessions', watched: '83 workspaces watched', filterActive: 'Workspace filter active', waitingChip: '8 waiting', workspace: 'Workspace', allWorkspaces: 'All workspaces', perRow: 'Per row', visibleNow: 'visible now', inQueue: 'in scroll queue', sessions: 'sessions', updated: 'Updated 2s ago', workspacePrefix: 'Workspace: ', overflow: 'Scroll continues by priority: waiting, running, idle', priority: 'priority', live: 'live', quiet: 'quiet', waiting: 'Waiting', running: 'Running', idle: 'Idle', all: 'All', wait: 'Wait', run: 'Run', col: 'col', cols: 'cols', perRowButton: '/ row', iconsPerRow: 'icons per row', windowSize: 'Window size', openWorkspace: 'Open VS Code workspace: ', openingAgents: 'Opening session...', openedAgents: 'Session opened', themeLight: 'Light theme', themeDark: 'Dark theme', settings: 'Settings', appearance: 'Appearance', language: 'Language', theme: 'Theme', layout: 'Layout', horizontal: 'Horizontal', vertical: 'Vertical', agentTaskFlipSpeed: 'Flip speed (ms)', lastUser: 'Last user', lastAi: 'Last AI', noUserMessage: 'No user message captured', noAiMessage: 'No AI message captured', tailOnly: 'tail', errorExcerpt: 'error', windowBehavior: 'Window', alwaysOnTop: 'Always on top', dataSources: 'Data', includeCopilot: 'VS Code Copilot sessions', includeCopilotCli: 'Copilot CLI sessions', includeClaude: 'Claude sessions', hideArchived: 'Hide archived', scanLimits: 'Scan limits', activeWindowDays: 'Active window (days)', maxSessions: 'Max sessions', refreshInterval: 'Refresh interval (sec)', settingsSaved: 'Settings updated', maxCardsPerRow: 'Max cards per row', waitingAlertSize: 'Waiting alert size', waitingAlertDuration: 'Waiting alert duration (sec)', small: 'Small', medium: 'Medium', large: 'Large', waitingAlertAria: 'New waiting session', handoffCreate: 'Create handoff session...', handoffCopyPrompt: 'Copy handoff prompt', handoffOpenSource: 'Open source session', handoffTitle: 'Create handoff session', handoffNewSessionIn: 'New session in', handoffWithProvider: 'with', handoffLatestSnapshot: 'Latest snapshot', handoffSourceLocator: 'Source locator', handoffPreview: 'Preview', handoffCopy: 'Copy', handoffLaunch: 'Launch', handoffSaveTodo: 'Save Todo', handoffPromptPreview: 'Prompt preview', handoffTaskPlaceholder: 'What would you like session B to do?', handoffWorkspacePlaceholder: 'Search or paste workspace path', handoffUsePastedPath: 'Use pasted path', handoffNoWorkspace: 'No matching workspace', handoffSelected: 'selected', handoffCopied: 'Copied handoff prompt', handoffClipboardFallback: 'Clipboard write failed; prompt is selected', handoffLaunching: 'Launching handoff...', handoffLaunched: 'Handoff launch requested', handoffNoSession: 'No source session selected', handoffOpenFailed: 'Handoff panel failed to open', handoffSelectWorkspace: 'Select workspace', handoffAgentsLabel: 'Copilot Editor', handoffCodeChatLabel: 'Copilot CLI Editor', handoffClaudeLabel: 'Claude Code Editor', handoffAgentsDescription: 'Open Copilot in a VS Code editor tab and insert the handoff prompt', handoffCodeChatDescription: 'Open a Copilot CLI editor tab and insert the handoff prompt', handoffClaudeDescription: 'Open Claude Code in a VS Code editor tab', bridgeTitle: 'VS Code Bridge', bridgePreviewOnly: 'Preview only', bridgeChecking: 'Checking...', bridgeInstalled: 'Bridge installed', bridgeNeedsUpdate: 'Bridge update available', bridgeNotInstalled: 'Bridge not installed', bridgeInstall: 'Install', bridgeUpdate: 'Update', bridgeRetry: 'Retry', bridgeInstalling: 'Installing...', bridgeInstallFailed: 'Bridge install failed', todoWindowTitle: 'AI Task Input', todoWindowSubtitle: 'Workspace todo queue', todoOpen: 'Open Todo', todoReadyNudge: 'Ready todo in ', todoRefresh: 'Refresh', todoUsePath: 'Use Path', todoCancel: 'Cancel', todoAdd: 'Add', todoSave: 'Save', todoActive: 'Active', todoShowDone: 'Done', todoTitlePlaceholder: 'Task title', todoDescriptionPlaceholder: 'Task notes', todoAcceptancePlaceholder: 'Completion standard', todoPathPlaceholder: 'Paste workspace path', todoNoWorkspace: 'Choose workspace', todoEmpty: 'No active todo for this workspace', todoNoDone: 'No completed todo yet', todoPendingReview: 'Needs confirmation', todoPromptPreview: 'Prompt', todoDispatch: 'Launch', todoComplete: 'Done', todoRetry: 'Rework', todoBlock: 'Block', todoUnblock: 'Unblock', todoDelete: 'Delete', todoEdit: 'Edit', todoSaved: 'Todo saved', todoLaunched: 'Todo launch requested', todoCopied: 'Prompt copied', todoBlocked: 'Blocked', todoDone: 'Completed', todoReady: 'Ready', todoRunning: 'Running', todoReview: 'Review', todoUnbound: 'dispatched, unbound', todoBound: 'bound session', todoCountsText: 'active {active} / done {done}', todoCreateFromHandoff: 'Saved handoff as todo',
         handoffPromptIdLabel: 'AgentWatcher Handoff ID',
         handoffSourceAccessTitle: '[Source Access]',
         handoffTargetAgentLabel: 'Target agent',
@@ -6393,6 +6412,9 @@
         clearFilters: 'Clear filters',
         includeCodex: 'Codex sessions',
         includeOpenCode: 'OpenCode sessions',
+        includeCopilot: 'VS Code Copilot sessions',
+        includeCopilotCli: 'Copilot CLI sessions',
+        handoffProviderCopilotCli: 'Copilot CLI',
         handoffCodexLabel: 'Codex Desktop',
         handoffCodexDescription: 'Create a Codex desktop thread in the selected workspace and send the handoff prompt',
         handoffOpenCodeLabel: 'OpenCode CLI',
@@ -6562,6 +6584,9 @@
         clearFilters: '清除筛选',
         includeCodex: 'Codex 会话',
         includeOpenCode: 'OpenCode 会话',
+        includeCopilot: 'VS Code Copilot 会话',
+        includeCopilotCli: 'Copilot CLI 会话',
+        handoffProviderCopilotCli: 'Copilot CLI',
         handoffCodexLabel: 'Codex 桌面端',
         handoffCodexDescription: '在选中的工作区创建 Codex 桌面端会话，并发送接续提示词',
         handoffOpenCodeLabel: 'OpenCode CLI',
@@ -10995,6 +11020,7 @@
           layout: ['horizontal', 'vertical'].includes(savedSettings.layout) ? savedSettings.layout : defaultSettings.layout,
           alwaysOnTop: isSilentDebugMode() ? false : savedSettings.alwaysOnTop !== false,
           includeCopilot: savedSettings.includeCopilot !== false,
+          includeCopilotCli: savedSettings.includeCopilotCli !== false,
           includeClaude: savedSettings.includeClaude !== false,
           includeCodex: savedSettings.includeCodex !== false,
           includeOpenCode: savedSettings.includeOpenCode !== false,
@@ -11024,6 +11050,7 @@
     function settingRequiresSessionRefresh(key) {
       return [
         'includeCopilot',
+        'includeCopilotCli',
         'includeClaude',
         'includeCodex',
         'includeOpenCode',
@@ -11342,6 +11369,7 @@
     function scanOptions() {
       return {
         includeCopilot: settings.includeCopilot,
+        includeCopilotCli: settings.includeCopilotCli,
         includeClaude: settings.includeClaude,
         includeCodex: settings.includeCodex,
         includeOpenCode: settings.includeOpenCode,
@@ -11360,6 +11388,7 @@
       waitingAlertSizeButtons.forEach(button => button.classList.toggle('is-active', button.dataset.settingAlertSize === settings.waitingAlertSize));
       alwaysOnTop.checked = settings.alwaysOnTop;
       includeCopilot.checked = settings.includeCopilot;
+      includeCopilotCli.checked = settings.includeCopilotCli;
       includeClaude.checked = settings.includeClaude;
       includeCodex.checked = settings.includeCodex;
       includeOpenCode.checked = settings.includeOpenCode;
@@ -12182,11 +12211,11 @@
     function formatScanMetric(scan, counts) {
       const duration = Number.isFinite(Number(scan.durationMs)) ? scan.durationMs + 'ms' : '--';
       const total = Number.isFinite(Number(scan.totalSessions)) ? scan.totalSessions : 0;
-      return duration + ' / ' + total + ' | GH ' + (counts.copilot || 0) + ' C ' + (counts.claude || 0) + ' CX ' + (counts.codex || 0) + ' OC ' + (counts.opencode || 0);
+      return duration + ' / ' + total + ' | GH ' + (counts.copilot || 0) + ' GH CLI ' + (counts.copilotCli || 0) + ' C ' + (counts.claude || 0) + ' CX ' + (counts.codex || 0) + ' OC ' + (counts.opencode || 0);
     }
 
     function scanExplainText(scan, counts) {
-      const providers = 'GH ' + (counts.copilot || 0) + ' · C ' + (counts.claude || 0) + ' · CX ' + (counts.codex || 0) + ' · OC ' + (counts.opencode || 0);
+      const providers = 'GH ' + (counts.copilot || 0) + ' · GH CLI ' + (counts.copilotCli || 0) + ' · C ' + (counts.claude || 0) + ' · CX ' + (counts.codex || 0) + ' · OC ' + (counts.opencode || 0);
       const codexRpc = Number(scan.codexTurnRequests) || 0;
       const codexTurns = Number(scan.codexTurnsReturned) || 0;
       return t('perfScanExplain') + ' ' + providers + (codexRpc ? ' · Codex ' + codexRpc + ' rpc / ' + codexTurns + ' turns' : '');
@@ -12432,6 +12461,9 @@
       const key = text.toLowerCase();
       if (key === 'copilot' || key === 'gh' || key === 'github copilot') {
         return { provider: 'copilot', label: 'GH', className: 'gh', nameKey: 'handoffProviderCopilot' };
+      }
+      if (key === 'copilot-cli' || key === 'gh›' || key === 'gh cli' || key === 'copilot cli') {
+        return { provider: 'copilot-cli', label: 'GH›', className: 'gh-cli', nameKey: 'handoffProviderCopilotCli' };
       }
       if (key === 'codex' || key === 'cx' || key === 'codex desktop') {
         return { provider: 'codex', label: 'CX', className: 'cx', nameKey: 'handoffProviderCodex' };
@@ -13160,6 +13192,7 @@
         skipTaskbar: true,
         shadow: false,
         focus: nativeWindowShouldFocus(true),
+        parent: tauriWindow || 'main',
         visible: false,
         preventOverflow: false
       });
@@ -13207,6 +13240,7 @@
           skipTaskbar: true,
           shadow: false,
           focus: nativeWindowShouldFocus(true),
+          parent: tauriWindow || 'main',
           visible: false,
           preventOverflow: false
         });
@@ -13384,6 +13418,7 @@
           skipTaskbar: true,
           shadow: false,
           focus: nativeWindowShouldFocus(focus),
+          parent: tauriWindow || 'main',
           visible: false,
           preventOverflow: false
         });
@@ -13686,7 +13721,7 @@
     }
 
     function providerFilterItems() {
-      return ['all', 'copilot', 'claude', 'codex', 'opencode'].map(provider => {
+      return ['all', 'copilot', 'copilot-cli', 'claude', 'codex', 'opencode'].map(provider => {
         if (provider === 'all') {
           return {
             provider,
@@ -14953,7 +14988,9 @@
 
     function scheduleSessionPreviewHide() {
       window.clearTimeout(sessionPreviewHideTimer);
-      sessionPreviewHideTimer = window.setTimeout(hideSessionPreview, WebviewWindowClass && !isPreviewWindow ? 520 : 220);
+      // Expanding the compact rail reflows the card under the pointer. Give the
+      // native preview enough time to appear and receive its own pointerenter.
+      sessionPreviewHideTimer = window.setTimeout(hideSessionPreview, WebviewWindowClass && !isPreviewWindow ? 1800 : 220);
     }
 
     function cancelSessionPreviewHide() {
@@ -15066,6 +15103,7 @@
           skipTaskbar: true,
           shadow: false,
           focus: false,
+          parent: tauriWindow || 'main',
           visible: false,
           preventOverflow: true
         });
@@ -15508,7 +15546,10 @@
       const cardHead = document.createElement('div');
       cardHead.className = 'card-head';
       const provider = providerMeta(normalizedSession.provider || normalizedSession.providerLabel);
-      appendText(cardHead, 'span', 'provider ' + provider.className, normalizedSession.providerLabel || provider.label);
+      const providerBadge = appendText(cardHead, 'span', 'provider ' + provider.className, normalizedSession.providerLabel || provider.label);
+      const providerName = t(provider.nameKey) || provider.label;
+      providerBadge.title = providerName;
+      providerBadge.setAttribute('aria-label', providerName);
       appendText(cardHead, 'span', 'time', normalizedSession.timeLabel || '');
       card.appendChild(cardHead);
 
@@ -16058,6 +16099,7 @@
         updateSetting('alwaysOnTop', alwaysOnTop.checked, { announce: true, refresh: false });
       });
       includeCopilot.addEventListener('change', () => updateSetting('includeCopilot', includeCopilot.checked, { announce: true }));
+      includeCopilotCli.addEventListener('change', () => updateSetting('includeCopilotCli', includeCopilotCli.checked, { announce: true }));
       includeClaude.addEventListener('change', () => updateSetting('includeClaude', includeClaude.checked, { announce: true }));
       includeCodex.addEventListener('change', () => updateSetting('includeCodex', includeCodex.checked, { announce: true }));
       includeOpenCode.addEventListener('change', () => updateSetting('includeOpenCode', includeOpenCode.checked, { announce: true }));

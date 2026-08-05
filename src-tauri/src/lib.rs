@@ -293,6 +293,7 @@ struct ScanOptions {
     active_window_days: Option<u64>,
     hide_archived: Option<bool>,
     include_copilot: Option<bool>,
+    include_copilot_cli: Option<bool>,
     include_claude: Option<bool>,
     include_codex: Option<bool>,
     include_open_code: Option<bool>,
@@ -304,6 +305,7 @@ struct ResolvedScanOptions {
     active_window_ms: u64,
     hide_archived: bool,
     include_copilot: bool,
+    include_copilot_cli: bool,
     include_claude: bool,
     include_codex: bool,
     include_open_code: bool,
@@ -313,6 +315,7 @@ struct ResolvedScanOptions {
 #[serde(rename_all = "camelCase")]
 struct PerformanceProviderCounts {
     copilot: usize,
+    copilot_cli: usize,
     claude: usize,
     codex: usize,
     opencode: usize,
@@ -626,6 +629,14 @@ fn session_watch_roots() -> Vec<PathBuf> {
                     .join("User")
                     .join("workspaceStorage"),
             );
+            let copilot_cli_store = appdata_path
+                .join(product_folder)
+                .join("User")
+                .join("globalStorage")
+                .join("github.copilot-chat")
+                .join("session-store.db");
+            push_existing_path(&mut roots, copilot_cli_store.clone());
+            push_existing_path(&mut roots, copilot_cli_store.with_extension("db-wal"));
         }
     }
     if let Some(user_profile_path) = env::var_os("USERPROFILE") {
@@ -819,6 +830,9 @@ fn scan_sessions_blocking(options: Option<ScanOptions>) -> Vec<AgentSession> {
     if options.include_copilot {
         sessions.extend(scan_copilot_sessions(scan_time_ms, &options));
     }
+    if options.include_copilot_cli {
+        sessions.extend(scan_copilot_cli_sessions(scan_time_ms, &options));
+    }
     if options.include_claude {
         sessions.extend(scan_claude_sessions(scan_time_ms, &options));
     }
@@ -897,6 +911,7 @@ fn update_performance_scan_snapshot(sessions: &[AgentSession], duration: Duratio
     for session in sessions {
         match session.provider.as_str() {
             "copilot" => provider_counts.copilot += 1,
+            "copilot-cli" => provider_counts.copilot_cli += 1,
             "claude" => provider_counts.claude += 1,
             "codex" => provider_counts.codex += 1,
             "opencode" => provider_counts.opencode += 1,
@@ -4989,6 +5004,190 @@ fn scan_copilot_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Ve
         .collect()
 }
 
+fn copilot_cli_session_store_paths() -> Vec<PathBuf> {
+    let Some(appdata_path) = env::var_os("APPDATA") else {
+        return Vec::new();
+    };
+    let appdata_path = PathBuf::from(appdata_path);
+    ["Code", "Code - Insiders"]
+        .iter()
+        .map(|product_folder| {
+            appdata_path
+                .join(product_folder)
+                .join("User")
+                .join("globalStorage")
+                .join("github.copilot-chat")
+                .join("session-store.db")
+        })
+        .filter(|path| path.exists())
+        .collect()
+}
+
+fn scan_copilot_cli_sessions(
+    scan_time_ms: u64,
+    options: &ResolvedScanOptions,
+) -> Vec<AgentSession> {
+    let mut sessions = Vec::new();
+    for db_path in copilot_cli_session_store_paths() {
+        let Ok(connection) = Connection::open_with_flags(
+            &db_path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        ) else {
+            continue;
+        };
+        let _ = connection.busy_timeout(Duration::from_millis(OPENCODE_SQLITE_BUSY_TIMEOUT_MS));
+        let _ = connection.pragma_update(None, "query_only", "ON");
+        sessions.extend(scan_copilot_cli_sessions_from_connection(
+            &connection,
+            &db_path,
+            scan_time_ms,
+            options,
+        ));
+    }
+    sessions
+}
+
+fn scan_copilot_cli_sessions_from_connection(
+    connection: &Connection,
+    db_path: &Path,
+    scan_time_ms: u64,
+    options: &ResolvedScanOptions,
+) -> Vec<AgentSession> {
+    let mut statement = match connection.prepare(
+        "select s.id, s.cwd, s.branch, s.summary, s.created_at, s.updated_at, \
+                count(t.id), max(t.timestamp), \
+                (select user_message from turns where session_id = s.id and trim(coalesce(user_message, '')) <> '' order by turn_index desc limit 1), \
+                (select assistant_response from turns where session_id = s.id and trim(coalesce(assistant_response, '')) <> '' order by turn_index desc limit 1), \
+                (select user_message from turns where session_id = s.id and trim(coalesce(user_message, '')) <> '' order by turn_index asc limit 1) \
+         from sessions s \
+         left join turns t on t.session_id = s.id \
+         where lower(trim(coalesce(s.agent_name, ''))) = 'copilotcli' \
+         group by s.id \
+         order by s.updated_at desc \
+         limit ?1",
+    ) {
+        Ok(statement) => statement,
+        Err(_) => return Vec::new(),
+    };
+    let rows = match statement.query_map([candidate_scan_limit(options) as i64], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, Option<String>>(4)?,
+            row.get::<_, Option<String>>(5)?,
+            row.get::<_, i64>(6)?,
+            row.get::<_, Option<String>>(7)?,
+            row.get::<_, Option<String>>(8)?,
+            row.get::<_, Option<String>>(9)?,
+            row.get::<_, Option<String>>(10)?,
+        ))
+    }) {
+        Ok(rows) => rows,
+        Err(_) => return Vec::new(),
+    };
+
+    rows.filter_map(Result::ok)
+        .filter_map(
+            |(
+                session_id,
+                workspace_path,
+                branch,
+                summary,
+                created_at,
+                updated_at,
+                turn_count,
+                last_turn_at,
+                last_user_message,
+                last_ai_message,
+                first_user_message,
+            )| {
+                let updated_ms = [
+                    updated_at.as_deref(),
+                    last_turn_at.as_deref(),
+                    created_at.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                .filter_map(iso_timestamp_ms)
+                .max()?;
+                if !is_active_session(updated_ms, scan_time_ms, options) {
+                    return None;
+                }
+                let workspace_path = workspace_path.filter(|path| !path.trim().is_empty());
+                let workspace = workspace_path
+                    .as_deref()
+                    .map(Path::new)
+                    .and_then(display_name_from_path)
+                    .unwrap_or_else(|| "Copilot CLI".to_string());
+                let title = summary
+                    .as_deref()
+                    .and_then(title_candidate_from_text)
+                    .or_else(|| {
+                        first_user_message
+                            .as_deref()
+                            .and_then(title_candidate_from_text)
+                    })
+                    .unwrap_or_else(|| {
+                        fallback_session_title("Copilot CLI", &workspace, &session_id)
+                    });
+                let (last_user_message, last_user_message_truncated) =
+                    apply_user_preview_budget(last_user_message.or(summary));
+                let (last_ai_message, last_ai_message_truncated, last_ai_message_excerpt_kind) =
+                    apply_ai_preview_budget(last_ai_message);
+                let session_path = path_to_string(db_path);
+                let session_resource = copilot_session_resource(&session_id);
+                let workspace_identity = build_workspace_identity(
+                    "copilot",
+                    &session_id,
+                    &workspace,
+                    workspace_path.as_deref(),
+                    Some(&session_path),
+                    Some(&session_resource),
+                );
+                let plugin_workflow = detect_plugin_workflow_session_marker(
+                    "copilot",
+                    &[last_user_message.as_deref(), last_ai_message.as_deref()],
+                );
+
+                Some(AgentSession {
+                    id: format!("copilot-cli:{}", session_id),
+                    provider: "copilot-cli".to_string(),
+                    provider_label: "GH›".to_string(),
+                    title,
+                    workspace,
+                    workspace_path,
+                    workspace_key: workspace_identity.key,
+                    workspace_name: workspace_identity.name,
+                    workspace_label: workspace_identity.label,
+                    workspace_group: workspace_identity.group,
+                    workspace_discriminator: workspace_identity.discriminator,
+                    session_path: Some(session_path),
+                    session_resource: Some(session_resource),
+                    status: status_from_activity(
+                        updated_ms,
+                        scan_time_ms,
+                        ActivitySource::ContentTimestamp,
+                        None,
+                    ),
+                    time_label: time_label(updated_ms, scan_time_ms),
+                    updated_ms,
+                    message_count: u32::try_from(turn_count.max(0)).unwrap_or(u32::MAX),
+                    last_user_message,
+                    last_user_message_truncated,
+                    last_ai_message,
+                    last_ai_message_truncated,
+                    last_ai_message_excerpt_kind,
+                    branch,
+                    todo_ids: Vec::new(),
+                    plugin_workflow,
+                })
+            },
+        )
+        .collect()
+}
+
 fn read_copilot_session(
     session_path: &Path,
     workspace_info: &WorkspaceInfo,
@@ -7096,6 +7295,7 @@ fn resolve_scan_options(options: Option<ScanOptions>) -> ResolvedScanOptions {
         active_window_days: None,
         hide_archived: None,
         include_copilot: None,
+        include_copilot_cli: None,
         include_claude: None,
         include_codex: None,
         include_open_code: None,
@@ -7113,6 +7313,7 @@ fn resolve_scan_options(options: Option<ScanOptions>) -> ResolvedScanOptions {
         active_window_ms: active_days.saturating_mul(24 * 60 * 60 * 1000),
         hide_archived: options.hide_archived.unwrap_or(true),
         include_copilot: options.include_copilot.unwrap_or(true),
+        include_copilot_cli: options.include_copilot_cli.unwrap_or(true),
         include_claude: options.include_claude.unwrap_or(true),
         include_codex: options.include_codex.unwrap_or(true),
         include_open_code: options.include_open_code.unwrap_or(true),
@@ -9269,12 +9470,30 @@ mod tests {
             active_window_days: None,
             hide_archived: None,
             include_copilot: None,
+            include_copilot_cli: None,
             include_claude: None,
             include_codex: Some(false),
             include_open_code: None,
         }));
 
         assert!(!options.include_codex);
+    }
+
+    #[test]
+    fn scan_options_control_copilot_chat_and_cli_independently() {
+        let options = resolve_scan_options(Some(ScanOptions {
+            max_sessions: None,
+            active_window_days: None,
+            hide_archived: None,
+            include_copilot: Some(false),
+            include_copilot_cli: Some(true),
+            include_claude: None,
+            include_codex: None,
+            include_open_code: None,
+        }));
+
+        assert!(!options.include_copilot);
+        assert!(options.include_copilot_cli);
     }
 
     #[test]
@@ -9286,6 +9505,7 @@ mod tests {
             active_window_days: None,
             hide_archived: None,
             include_copilot: None,
+            include_copilot_cli: None,
             include_claude: None,
             include_codex: None,
             include_open_code: Some(false),
@@ -9430,6 +9650,7 @@ mod tests {
             active_window_days: Some(7),
             hide_archived: Some(true),
             include_copilot: Some(false),
+            include_copilot_cli: Some(false),
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
@@ -9512,6 +9733,7 @@ mod tests {
             active_window_days: Some(7),
             hide_archived: Some(true),
             include_copilot: Some(false),
+            include_copilot_cli: Some(false),
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
@@ -9693,6 +9915,7 @@ mod tests {
             active_window_days: Some(7),
             hide_archived: Some(true),
             include_copilot: Some(false),
+            include_copilot_cli: Some(false),
             include_claude: Some(false),
             include_codex: Some(false),
             include_open_code: Some(true),
@@ -9854,6 +10077,7 @@ mod tests {
             active_window_days: Some(7),
             hide_archived: Some(true),
             include_copilot: Some(false),
+            include_copilot_cli: Some(false),
             include_claude: Some(false),
             include_codex: Some(false),
             include_open_code: Some(true),
@@ -9934,6 +10158,7 @@ mod tests {
             active_window_days: Some(7),
             hide_archived: Some(true),
             include_copilot: Some(false),
+            include_copilot_cli: Some(false),
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
@@ -10017,6 +10242,7 @@ mod tests {
             active_window_days: Some(7),
             hide_archived: Some(true),
             include_copilot: Some(false),
+            include_copilot_cli: Some(false),
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
@@ -10068,6 +10294,7 @@ mod tests {
             active_window_days: Some(7),
             hide_archived: Some(true),
             include_copilot: Some(false),
+            include_copilot_cli: Some(false),
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
@@ -10101,6 +10328,7 @@ mod tests {
             active_window_days: Some(7),
             hide_archived: Some(true),
             include_copilot: Some(false),
+            include_copilot_cli: Some(false),
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
@@ -10138,6 +10366,97 @@ mod tests {
     }
 
     #[test]
+    fn copilot_cli_session_store_rows_are_scanned_without_chat_duplicates() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY,
+                    cwd TEXT,
+                    repository TEXT,
+                    host_type TEXT,
+                    branch TEXT,
+                    summary TEXT,
+                    agent_name TEXT,
+                    agent_description TEXT,
+                    created_at TEXT,
+                    updated_at TEXT
+                );
+                CREATE TABLE turns (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    turn_index INTEGER NOT NULL,
+                    user_message TEXT,
+                    assistant_response TEXT,
+                    timestamp TEXT
+                );",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO sessions VALUES (?1, ?2, NULL, 'vscode', 'dev', ?3, 'copilotcli', NULL, ?4, ?5)",
+                rusqlite::params![
+                    "cli-session-1",
+                    r"F:\AiProject\AgentWatcher",
+                    "Latest CLI summary",
+                    "2026-08-05T01:00:00.000Z",
+                    "2026-08-05T02:00:00.000Z"
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO sessions VALUES ('chat-session-1', NULL, NULL, 'vscode', NULL, NULL, 'GitHub Copilot Chat', NULL, ?1, ?1)",
+                ["2026-08-05T02:00:00.000Z"],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO turns (session_id, turn_index, user_message, assistant_response, timestamp) VALUES (?1, 0, ?2, ?3, ?4)",
+                rusqlite::params![
+                    "cli-session-1",
+                    "Please inspect the CLI session store",
+                    "I found the missing session source.",
+                    "2026-08-05T02:00:00.000Z"
+                ],
+            )
+            .unwrap();
+
+        let options = resolve_scan_options(Some(ScanOptions {
+            max_sessions: Some(20),
+            active_window_days: Some(7),
+            hide_archived: Some(true),
+            include_copilot: Some(true),
+            include_copilot_cli: Some(true),
+            include_claude: Some(false),
+            include_codex: Some(false),
+            include_open_code: Some(false),
+        }));
+        let sessions = scan_copilot_cli_sessions_from_connection(
+            &connection,
+            Path::new("session-store.db"),
+            iso_timestamp_ms("2026-08-05T02:05:00.000Z").unwrap(),
+            &options,
+        );
+
+        assert_eq!(sessions.len(), 1);
+        let session = &sessions[0];
+        assert_eq!(session.id, "copilot-cli:cli-session-1");
+        assert_eq!(session.provider, "copilot-cli");
+        assert_eq!(session.provider_label, "GH›");
+        assert_eq!(session.workspace, "AgentWatcher");
+        assert_eq!(session.message_count, 1);
+        assert_eq!(
+            session.last_user_message.as_deref(),
+            Some("Please inspect the CLI session store")
+        );
+        assert_eq!(
+            session.last_ai_message.as_deref(),
+            Some("I found the missing session source.")
+        );
+    }
+
+    #[test]
     fn codex_turn_summary_cache_is_keyed_by_thread_updated_ms() {
         let thread_id = format!("cache-test-{}", current_time_ms());
         cache_codex_turn_summary(
@@ -10168,6 +10487,7 @@ mod tests {
             active_window_days: Some(7),
             hide_archived: Some(true),
             include_copilot: Some(false),
+            include_copilot_cli: Some(false),
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
@@ -10211,6 +10531,7 @@ mod tests {
             active_window_days: Some(7),
             hide_archived: Some(true),
             include_copilot: Some(false),
+            include_copilot_cli: Some(false),
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
