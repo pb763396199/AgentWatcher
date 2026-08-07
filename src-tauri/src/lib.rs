@@ -848,9 +848,21 @@ fn scan_sessions_blocking(options: Option<ScanOptions>) -> Vec<AgentSession> {
             .cmp(&status_rank(&right_session.status))
             .then_with(|| right_session.updated_ms.cmp(&left_session.updated_ms))
     });
-    sessions.truncate(options.max_sessions);
+    apply_session_limit_per_provider(&mut sessions, options.max_sessions);
     update_performance_scan_snapshot(&sessions, scan_started.elapsed());
     sessions
+}
+
+fn apply_session_limit_per_provider(sessions: &mut Vec<AgentSession>, limit: usize) {
+    let mut provider_counts: HashMap<String, usize> = HashMap::new();
+    sessions.retain(|session| {
+        let count = provider_counts.entry(session.provider.clone()).or_default();
+        if *count >= limit {
+            return false;
+        }
+        *count += 1;
+        true
+    });
 }
 
 #[tauri::command]
@@ -9494,6 +9506,64 @@ mod tests {
 
         assert!(!options.include_copilot);
         assert!(options.include_copilot_cli);
+    }
+
+    #[test]
+    fn session_limit_is_applied_per_provider_without_starving_others() {
+        fn session(id: &str, provider: &str, updated_ms: u64) -> AgentSession {
+            AgentSession {
+                id: id.to_string(),
+                provider: provider.to_string(),
+                provider_label: provider.to_string(),
+                title: id.to_string(),
+                workspace: "workspace".to_string(),
+                workspace_path: None,
+                workspace_key: "workspace".to_string(),
+                workspace_name: "workspace".to_string(),
+                workspace_label: "workspace".to_string(),
+                workspace_group: String::new(),
+                workspace_discriminator: String::new(),
+                session_path: None,
+                session_resource: None,
+                status: "idle".to_string(),
+                time_label: String::new(),
+                updated_ms,
+                message_count: 0,
+                last_user_message: None,
+                last_user_message_truncated: false,
+                last_ai_message: None,
+                last_ai_message_truncated: false,
+                last_ai_message_excerpt_kind: None,
+                branch: None,
+                todo_ids: Vec::new(),
+                plugin_workflow: None,
+            }
+        }
+
+        let mut sessions = vec![
+            session("claude-3", "claude", 300),
+            session("claude-2", "claude", 200),
+            session("opencode-2", "opencode", 190),
+            session("claude-1", "claude", 100),
+            session("opencode-1", "opencode", 90),
+            session("codex-1", "codex", 80),
+        ];
+
+        apply_session_limit_per_provider(&mut sessions, 2);
+
+        assert_eq!(
+            sessions
+                .iter()
+                .map(|session| session.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "claude-3",
+                "claude-2",
+                "opencode-2",
+                "opencode-1",
+                "codex-1"
+            ]
+        );
     }
 
     #[test]
