@@ -124,7 +124,7 @@
 - [x] `AgentWatcher-v0.1.4-windows-x64.zip` 包含 `AgentWatcher.exe` 与 `agentwatcher-bridge-0.1.12.vsix`。
 - [x] 最终 VSIX 重复安装两次后只保留 `agentwatcher.agentwatcher-vscode-session-bridge@0.1.12`，无 `safe1`~`safe4`。
 - [x] 从 `artifacts/AgentWatcher/AgentWatcher.exe` 启动成功且不依赖源码目录。
-- [ ] 最终 zip SHA256 已同步到 `CHANGELOG.md`，本地与 GitHub Release asset digest 一致。
+- [x] 最终 zip SHA256 已同步到 `CHANGELOG.md`，本地与 GitHub Release asset digest 一致。
 
 ## v0.1.3 发布检查清单
 
