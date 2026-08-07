@@ -2,16 +2,19 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::time::{Duration, Instant};
 
 const DESCRIPTOR_EXTENSION: &str = "awplugin";
 const MOUNT_STORE_VERSION: u32 = 1;
 const MAX_SCAN_DEPTH: usize = 8;
 const MAX_PLUGIN_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+const PLUGIN_PROCESS_TIMEOUT: Duration = Duration::from_secs(30);
+const PLUGIN_PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(25);
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -265,18 +268,55 @@ pub fn invoke_plugin(
     if plugin.descriptor.name != request.plugin_name {
         return Err("plugin invocation identity mismatch".to_string());
     }
-    if !plugin
+    let declared_command = plugin
         .descriptor
         .commands
         .iter()
-        .any(|command| command.name == request.command)
-    {
+        .find(|command| command.name == request.command)
+        .ok_or_else(|| {
+            format!(
+                "plugin command is not declared by {}: {}",
+                plugin.descriptor.name, request.command
+            )
+        })?;
+    validate_plugin_confirmation(declared_command, request)?;
+
+    invoke_plugin_with_timeout(plugin, request, PLUGIN_PROCESS_TIMEOUT)
+}
+
+fn validate_plugin_confirmation(
+    command: &AwPluginCommand,
+    request: &AwPluginInvokeRequest,
+) -> Result<(), String> {
+    if !command.requires_confirmation {
+        return Ok(());
+    }
+    let required_boundary = command.confirmation_boundary.as_deref().ok_or_else(|| {
+        format!(
+            "plugin command {} requires a declared confirmation boundary",
+            command.name
+        )
+    })?;
+    let supplied_boundary = request
+        .request
+        .get("confirmation")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if supplied_boundary != Some(required_boundary) {
         return Err(format!(
-            "plugin command is not declared by {}: {}",
-            plugin.descriptor.name, request.command
+            "plugin command {} requires confirmation boundary {}",
+            command.name, required_boundary
         ));
     }
+    Ok(())
+}
 
+fn invoke_plugin_with_timeout(
+    plugin: &AwDiscoveredPlugin,
+    request: &AwPluginInvokeRequest,
+    timeout: Duration,
+) -> Result<AwPluginInvokeResponse, String> {
     let root = Path::new(&plugin.root_path);
     let executable = resolve_executable(root, &plugin.descriptor.runtime)?;
     let envelope = serde_json::to_vec(&serde_json::json!({
@@ -305,22 +345,19 @@ pub fn invoke_plugin(
         .ok_or_else(|| "plugin stdin is not available".to_string())?
         .write_all(&envelope)
         .map_err(|error| format!("failed to write plugin request: {error}"))?;
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("failed to wait for plugin process: {error}"))?;
+    let (status, stdout_bytes, stderr_bytes) = wait_for_plugin_output(child, timeout)?;
 
-    if output.stdout.len() > MAX_PLUGIN_OUTPUT_BYTES
-        || output.stderr.len() > MAX_PLUGIN_OUTPUT_BYTES
+    if stdout_bytes.len() > MAX_PLUGIN_OUTPUT_BYTES || stderr_bytes.len() > MAX_PLUGIN_OUTPUT_BYTES
     {
         return Err("plugin output exceeded the 16 MiB contract limit".to_string());
     }
-    let stdout = String::from_utf8(output.stdout)
+    let stdout = String::from_utf8(stdout_bytes)
         .map_err(|error| format!("plugin stdout is not UTF-8: {error}"))?;
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if !output.status.success() {
+    let stderr = String::from_utf8_lossy(&stderr_bytes).trim().to_string();
+    if !status.success() {
         return Err(format!(
             "plugin command failed with {}: {}",
-            output.status,
+            status,
             if stderr.is_empty() {
                 stdout.trim()
             } else {
@@ -337,6 +374,73 @@ pub fn invoke_plugin(
         result,
         diagnostics: (!stderr.is_empty()).then_some(stderr),
     })
+}
+
+fn wait_for_plugin_output(
+    mut child: Child,
+    timeout: Duration,
+) -> Result<(ExitStatus, Vec<u8>, Vec<u8>), String> {
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "plugin stdout is not available".to_string())?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "plugin stderr is not available".to_string())?;
+    std::thread::scope(|scope| {
+        let stdout_reader = scope.spawn(|| read_bounded_plugin_stream(&mut stdout));
+        let stderr_reader = scope.spawn(|| read_bounded_plugin_stream(&mut stderr));
+        let started = Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Ok(status),
+                Ok(None) if started.elapsed() < timeout => {
+                    std::thread::sleep(PLUGIN_PROCESS_POLL_INTERVAL);
+                }
+                Ok(None) => {
+                    terminate_plugin_process_tree(&mut child);
+                    let _ = child.wait();
+                    break Err(format!(
+                        "plugin process timed out after {} ms and was terminated",
+                        timeout.as_millis()
+                    ));
+                }
+                Err(error) => break Err(format!("failed to wait for plugin process: {error}")),
+            }
+        };
+        let stdout_bytes = stdout_reader
+            .join()
+            .map_err(|_| "plugin stdout reader panicked".to_string())??;
+        let stderr_bytes = stderr_reader
+            .join()
+            .map_err(|_| "plugin stderr reader panicked".to_string())??;
+        status.map(|status| (status, stdout_bytes, stderr_bytes))
+    })
+}
+
+fn terminate_plugin_process_tree(child: &mut Child) {
+    #[cfg(target_os = "windows")]
+    {
+        let mut taskkill = Command::new("taskkill.exe");
+        taskkill
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        taskkill.creation_flags(CREATE_NO_WINDOW);
+        let _ = taskkill.status();
+    }
+    let _ = child.kill();
+}
+
+fn read_bounded_plugin_stream(reader: &mut impl Read) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    reader
+        .take((MAX_PLUGIN_OUTPUT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("failed to read plugin process output: {error}"))?;
+    Ok(bytes)
 }
 
 pub fn find_plugin<'a>(
@@ -735,6 +839,54 @@ fn path_text(path: &Path) -> String {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn confirmation_required_command_rejects_missing_or_wrong_boundary() {
+        let command = AwPluginCommand {
+            name: "workflow.execute".to_string(),
+            friendly_name: None,
+            placement: None,
+            safety: "BoundedWrite".to_string(),
+            requires_confirmation: true,
+            confirmation_boundary: Some("Sample.execute.v1".to_string()),
+        };
+        let request = |confirmation: Value| AwPluginInvokeRequest {
+            plugin_name: "SamplePlugin".to_string(),
+            command: command.name.clone(),
+            request: serde_json::json!({ "confirmation": confirmation }),
+        };
+
+        assert!(validate_plugin_confirmation(&command, &request(Value::Null)).is_err());
+        assert!(validate_plugin_confirmation(
+            &command,
+            &request(Value::String("wrong".to_string()))
+        )
+        .is_err());
+        assert!(validate_plugin_confirmation(
+            &command,
+            &request(Value::String("Sample.execute.v1".to_string()))
+        )
+        .is_ok());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn plugin_process_timeout_terminates_hung_child() {
+        let mut command = Command::new("cmd.exe");
+        command
+            .args(["/d", "/s", "/c", "ping -n 6 127.0.0.1 >NUL"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        command.creation_flags(CREATE_NO_WINDOW);
+        let child = command.spawn().expect("timeout probe should start");
+        let started = Instant::now();
+
+        let error = wait_for_plugin_output(child, Duration::from_millis(100)).unwrap_err();
+
+        assert!(error.contains("timed out"));
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
 
     #[test]
     fn zero_plugin_catalog_is_valid() {

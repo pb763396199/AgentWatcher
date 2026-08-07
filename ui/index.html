@@ -5419,14 +5419,14 @@
             <button class="preset-btn" id="bridgeAction" type="button" style="padding: 3px 8px; font-size: 11px;" disabled data-i18n="bridgeInstall">Install</button>
           </div>
         </div>
-        <div class="settings-group plugin-workflow-panel" id="pluginPanel" aria-label="插件管理">
+        <div class="settings-group plugin-workflow-panel" id="pluginPanel" data-i18n-aria="pluginManagement">
           <div class="plugin-workflow-head">
-            <div class="settings-group-title plugin-workflow-title" id="pluginTitle">插件管理</div>
-            <button class="plugin-workflow-action" id="pluginRefresh" type="button">刷新</button>
+            <div class="settings-group-title plugin-workflow-title" id="pluginTitle" data-i18n="pluginManagement">Plugin management</div>
+            <button class="plugin-workflow-action" id="pluginRefresh" type="button" data-i18n="pluginRefresh">Refresh</button>
           </div>
           <div class="plugin-mount-row">
-            <input id="pluginMountPath" type="text" autocomplete="off" placeholder="插件目录，例如 F:\\Tools\\MyPlugin" />
-            <button class="plugin-workflow-action" id="pluginMount" type="button">挂载</button>
+            <input id="pluginMountPath" type="text" autocomplete="off" data-i18n-placeholder="pluginMountPlaceholder" placeholder="Plugin directory, for example F:\\Tools\\MyPlugin" />
+            <button class="plugin-workflow-action" id="pluginMount" type="button" data-i18n="pluginMount">Mount</button>
           </div>
           <div class="plugin-workflow-modules" id="pluginList"></div>
         </div>
@@ -5632,20 +5632,20 @@
                     <span class="agenttask-status" id="agentTaskStatus"></span>
                   </div>
                 </div>
-                <section class="agenttask-plugin-workflow-context" id="agentTaskPluginWorkflowContext" hidden aria-label="插件工作流参数">
+                <section class="agenttask-plugin-workflow-context" id="agentTaskPluginWorkflowContext" hidden data-i18n-aria="pluginWorkflowParametersAria">
                   <div class="agenttask-plugin-workflow-context-head">
-                    <strong id="agentTaskPluginWorkflowTitle">工作流参数</strong>
-                    <span>每个任务单独填写</span>
+                    <strong id="agentTaskPluginWorkflowTitle" data-i18n="pluginWorkflowParameters">Workflow parameters</strong>
+                    <span data-i18n="pluginWorkflowPerTask">Configured per task</span>
                   </div>
                   <div class="agenttask-plugin-workflow-context-grid" id="agentTaskPluginWorkflowFields"></div>
                   <div class="agenttask-plugin-workflow-context-actions">
                     <span id="agentTaskPluginWorkflowContextStatus"></span>
                   </div>
                 </section>
-                <section class="agenttask-plugin-workflow-plan" id="agentTaskPluginWorkflowPlan" hidden aria-label="插件工作流预演">
+                <section class="agenttask-plugin-workflow-plan" id="agentTaskPluginWorkflowPlan" hidden data-i18n-aria="pluginWorkflowPreviewAria">
                   <div class="agenttask-plugin-workflow-plan-head">
-                    <strong id="agentTaskPluginWorkflowPlanTitle">工作流预演</strong>
-                    <span id="agentTaskPluginWorkflowPlanState">等待预演</span>
+                    <strong id="agentTaskPluginWorkflowPlanTitle" data-i18n="pluginWorkflowPreview">Workflow preview</strong>
+                    <span id="agentTaskPluginWorkflowPlanState" data-i18n="pluginWorkflowAwaitingPreview">Awaiting preview</span>
                   </div>
                   <div class="agenttask-plugin-workflow-plan-body" id="agentTaskPluginWorkflowPlanStages"></div>
                 </section>
@@ -6329,7 +6329,7 @@
     let settings = loadSettings();
     const i18n = {
       en: {
-        allSessions: 'All agent sessions', watched: '83 workspaces watched', filterActive: 'Workspace filter active', waitingChip: '8 waiting', workspace: 'Workspace', allWorkspaces: 'All workspaces', perRow: 'Per row', visibleNow: 'visible now', inQueue: 'in scroll queue', sessions: 'sessions', updated: 'Updated 2s ago', workspacePrefix: 'Workspace: ', overflow: 'Scroll continues by priority: waiting, running, idle', priority: 'priority', live: 'live', quiet: 'quiet', waiting: 'Waiting', running: 'Running', idle: 'Idle', all: 'All', wait: 'Wait', run: 'Run', col: 'col', cols: 'cols', perRowButton: '/ row', iconsPerRow: 'icons per row', windowSize: 'Window size', openWorkspace: 'Open VS Code workspace: ', openingAgents: 'Opening session...', openedAgents: 'Session opened', themeLight: 'Light theme', themeDark: 'Dark theme', settings: 'Settings', appearance: 'Appearance', language: 'Language', theme: 'Theme', layout: 'Layout', horizontal: 'Horizontal', vertical: 'Vertical', agentTaskFlipSpeed: 'Flip speed (ms)', lastUser: 'Last user', lastAi: 'Last AI', noUserMessage: 'No user message captured', noAiMessage: 'No AI message captured', tailOnly: 'tail', errorExcerpt: 'error', windowBehavior: 'Window', alwaysOnTop: 'Always on top', dataSources: 'Data', includeCopilot: 'VS Code Copilot sessions', includeCopilotCli: 'Copilot CLI sessions', includeClaude: 'Claude sessions', hideArchived: 'Hide archived', scanLimits: 'Scan limits', activeWindowDays: 'Active window (days)', maxSessions: 'Max sessions', refreshInterval: 'Refresh interval (sec)', settingsSaved: 'Settings updated', maxCardsPerRow: 'Max cards per row', waitingAlertSize: 'Waiting alert size', waitingAlertDuration: 'Waiting alert duration (sec)', small: 'Small', medium: 'Medium', large: 'Large', waitingAlertAria: 'New waiting session', handoffCreate: 'Create handoff session...', handoffCopyPrompt: 'Copy handoff prompt', handoffOpenSource: 'Open source session', handoffTitle: 'Create handoff session', handoffNewSessionIn: 'New session in', handoffWithProvider: 'with', handoffLatestSnapshot: 'Latest snapshot', handoffSourceLocator: 'Source locator', handoffPreview: 'Preview', handoffCopy: 'Copy', handoffLaunch: 'Launch', handoffSaveTodo: 'Save Todo', handoffPromptPreview: 'Prompt preview', handoffTaskPlaceholder: 'What would you like session B to do?', handoffWorkspacePlaceholder: 'Search or paste workspace path', handoffUsePastedPath: 'Use pasted path', handoffNoWorkspace: 'No matching workspace', handoffSelected: 'selected', handoffCopied: 'Copied handoff prompt', handoffClipboardFallback: 'Clipboard write failed; prompt is selected', handoffLaunching: 'Launching handoff...', handoffLaunched: 'Handoff launch requested', handoffNoSession: 'No source session selected', handoffOpenFailed: 'Handoff panel failed to open', handoffSelectWorkspace: 'Select workspace', handoffAgentsLabel: 'Copilot Editor', handoffCodeChatLabel: 'Copilot CLI Editor', handoffClaudeLabel: 'Claude Code Editor', handoffAgentsDescription: 'Open Copilot in a VS Code editor tab and insert the handoff prompt', handoffCodeChatDescription: 'Open a Copilot CLI editor tab and insert the handoff prompt', handoffClaudeDescription: 'Open Claude Code in a VS Code editor tab', bridgeTitle: 'VS Code Bridge', bridgePreviewOnly: 'Preview only', bridgeChecking: 'Checking...', bridgeInstalled: 'Bridge installed', bridgeNeedsUpdate: 'Bridge update available', bridgeNotInstalled: 'Bridge not installed', bridgeInstall: 'Install', bridgeUpdate: 'Update', bridgeRetry: 'Retry', bridgeInstalling: 'Installing...', bridgeInstallFailed: 'Bridge install failed', todoWindowTitle: 'AI Task Input', todoWindowSubtitle: 'Workspace todo queue', todoOpen: 'Open Todo', todoReadyNudge: 'Ready todo in ', todoRefresh: 'Refresh', todoUsePath: 'Use Path', todoCancel: 'Cancel', todoAdd: 'Add', todoSave: 'Save', todoActive: 'Active', todoShowDone: 'Done', todoTitlePlaceholder: 'Task title', todoDescriptionPlaceholder: 'Task notes', todoAcceptancePlaceholder: 'Completion standard', todoPathPlaceholder: 'Paste workspace path', todoNoWorkspace: 'Choose workspace', todoEmpty: 'No active todo for this workspace', todoNoDone: 'No completed todo yet', todoPendingReview: 'Needs confirmation', todoPromptPreview: 'Prompt', todoDispatch: 'Launch', todoComplete: 'Done', todoRetry: 'Rework', todoBlock: 'Block', todoUnblock: 'Unblock', todoDelete: 'Delete', todoEdit: 'Edit', todoSaved: 'Todo saved', todoLaunched: 'Todo launch requested', todoCopied: 'Prompt copied', todoBlocked: 'Blocked', todoDone: 'Completed', todoReady: 'Ready', todoRunning: 'Running', todoReview: 'Review', todoUnbound: 'dispatched, unbound', todoBound: 'bound session', todoCountsText: 'active {active} / done {done}', todoCreateFromHandoff: 'Saved handoff as todo',
+        allSessions: 'All agent sessions', watched: '83 workspaces watched', filterActive: 'Workspace filter active', waitingChip: '8 waiting', workspace: 'Workspace', allWorkspaces: 'All workspaces', perRow: 'Per row', visibleNow: 'visible now', inQueue: 'in scroll queue', sessions: 'sessions', updated: 'Updated 2s ago', workspacePrefix: 'Workspace: ', overflow: 'Scroll continues by priority: waiting, running, idle', priority: 'priority', live: 'live', quiet: 'quiet', waiting: 'Waiting', running: 'Running', idle: 'Idle', all: 'All', wait: 'Wait', run: 'Run', col: 'col', cols: 'cols', perRowButton: '/ row', iconsPerRow: 'icons per row', windowSize: 'Window size', openWorkspace: 'Open VS Code workspace: ', openingAgents: 'Opening session...', openedAgents: 'Session opened', themeLight: 'Light theme', themeDark: 'Dark theme', settings: 'Settings', appearance: 'Appearance', language: 'Language', theme: 'Theme', layout: 'Layout', horizontal: 'Horizontal', vertical: 'Vertical', agentTaskFlipSpeed: 'Flip speed (ms)', lastUser: 'Last user', lastAi: 'Last AI', noUserMessage: 'No user message captured', noAiMessage: 'No AI message captured', tailOnly: 'tail', errorExcerpt: 'error', windowBehavior: 'Window', alwaysOnTop: 'Always on top', dataSources: 'Data', includeCopilot: 'VS Code Copilot sessions', includeCopilotCli: 'Copilot CLI sessions', includeClaude: 'Claude sessions', hideArchived: 'Hide archived', scanLimits: 'Scan limits', activeWindowDays: 'Active window (days)', maxSessions: 'Sessions per provider', refreshInterval: 'Refresh interval (sec)', settingsSaved: 'Settings updated', maxCardsPerRow: 'Max cards per row', waitingAlertSize: 'Waiting alert size', waitingAlertDuration: 'Waiting alert duration (sec)', small: 'Small', medium: 'Medium', large: 'Large', waitingAlertAria: 'New waiting session', handoffCreate: 'Create handoff session...', handoffCopyPrompt: 'Copy handoff prompt', handoffOpenSource: 'Open source session', handoffTitle: 'Create handoff session', handoffNewSessionIn: 'New session in', handoffWithProvider: 'with', handoffLatestSnapshot: 'Latest snapshot', handoffSourceLocator: 'Source locator', handoffPreview: 'Preview', handoffCopy: 'Copy', handoffLaunch: 'Launch', handoffSaveTodo: 'Save Todo', handoffPromptPreview: 'Prompt preview', handoffTaskPlaceholder: 'What would you like session B to do?', handoffWorkspacePlaceholder: 'Search or paste workspace path', handoffUsePastedPath: 'Use pasted path', handoffNoWorkspace: 'No matching workspace', handoffSelected: 'selected', handoffCopied: 'Copied handoff prompt', handoffClipboardFallback: 'Clipboard write failed; prompt is selected', handoffLaunching: 'Launching handoff...', handoffLaunched: 'Handoff launch requested', handoffNoSession: 'No source session selected', handoffOpenFailed: 'Handoff panel failed to open', handoffSelectWorkspace: 'Select workspace', handoffAgentsLabel: 'Copilot Editor', handoffCodeChatLabel: 'Copilot CLI Editor', handoffClaudeLabel: 'Claude Code Editor', handoffAgentsDescription: 'Open Copilot in a VS Code editor tab and insert the handoff prompt', handoffCodeChatDescription: 'Open a Copilot CLI editor tab and insert the handoff prompt', handoffClaudeDescription: 'Open Claude Code in a VS Code editor tab', bridgeTitle: 'VS Code Bridge', bridgePreviewOnly: 'Preview only', bridgeChecking: 'Checking...', bridgeInstalled: 'Bridge installed', bridgeNeedsUpdate: 'Bridge update available', bridgeNotInstalled: 'Bridge not installed', bridgeInstall: 'Install', bridgeUpdate: 'Update', bridgeRetry: 'Retry', bridgeInstalling: 'Installing...', bridgeInstallFailed: 'Bridge install failed', todoWindowTitle: 'AI Task Input', todoWindowSubtitle: 'Workspace todo queue', todoOpen: 'Open Todo', todoReadyNudge: 'Ready todo in ', todoRefresh: 'Refresh', todoUsePath: 'Use Path', todoCancel: 'Cancel', todoAdd: 'Add', todoSave: 'Save', todoActive: 'Active', todoShowDone: 'Done', todoTitlePlaceholder: 'Task title', todoDescriptionPlaceholder: 'Task notes', todoAcceptancePlaceholder: 'Completion standard', todoPathPlaceholder: 'Paste workspace path', todoNoWorkspace: 'Choose workspace', todoEmpty: 'No active todo for this workspace', todoNoDone: 'No completed todo yet', todoPendingReview: 'Needs confirmation', todoPromptPreview: 'Prompt', todoDispatch: 'Launch', todoComplete: 'Done', todoRetry: 'Rework', todoBlock: 'Block', todoUnblock: 'Unblock', todoDelete: 'Delete', todoEdit: 'Edit', todoSaved: 'Todo saved', todoLaunched: 'Todo launch requested', todoCopied: 'Prompt copied', todoBlocked: 'Blocked', todoDone: 'Completed', todoReady: 'Ready', todoRunning: 'Running', todoReview: 'Review', todoUnbound: 'dispatched, unbound', todoBound: 'bound session', todoCountsText: 'active {active} / done {done}', todoCreateFromHandoff: 'Saved handoff as todo',
         handoffPromptIdLabel: 'AgentWatcher Handoff ID',
         handoffSourceAccessTitle: '[Source Access]',
         handoffTargetAgentLabel: 'Target agent',
@@ -6374,7 +6374,7 @@
         workspacePickerNoMatch: 'No matching workspace'
       },
       zh: {
-        allSessions: '全部 Agent 会话', watched: '已监控 83 个工作区', filterActive: '已启用工作区过滤', waitingChip: '8 待回复', workspace: '工作区', allWorkspaces: '全部工作区', perRow: '每排数量', visibleNow: '当前可见', inQueue: '在滚动队列', sessions: '个会话', updated: '2 秒前更新', workspacePrefix: '工作区：', overflow: '按优先级继续滚动：待回复、运行中、闲置', priority: '优先', live: '实时', quiet: '静默', waiting: '待回复', running: '运行中', idle: '闲置', all: '全部', wait: '待回', run: '运行', col: '列', cols: '列', perRowButton: '/ 排', iconsPerRow: '个/排', windowSize: '窗口尺寸', openWorkspace: '打开 VS Code 工作区：', openingAgents: '正在打开会话...', openedAgents: '已打开会话', themeLight: '浅色主题', themeDark: '深色主题', settings: '设置', appearance: '外观', language: '语言', theme: '主题', layout: '布局', horizontal: '横版', vertical: '竖版', agentTaskFlipSpeed: '翻转速度（毫秒）', lastUser: '最后用户输入', lastAi: '最后 AI 回复', noUserMessage: '未捕获到用户输入', noAiMessage: '未捕获到 AI 回复', tailOnly: '尾部', errorExcerpt: '错误', windowBehavior: '窗口', alwaysOnTop: '永远置顶', dataSources: '数据', includeCopilot: 'Copilot 会话', includeClaude: 'Claude 会话', hideArchived: '隐藏归档', scanLimits: '扫描限制', activeWindowDays: '活跃窗口（天）', maxSessions: '最大会话数', refreshInterval: '刷新间隔（秒）', settingsSaved: '设置已更新', maxCardsPerRow: '每排最大数量', waitingAlertSize: '待回复提醒尺寸', waitingAlertDuration: '待回复持续时间（秒）', small: '小', medium: '中', large: '大', waitingAlertAria: '新的待回复会话', handoffCreate: '创建接续会话...', handoffCopyPrompt: '复制接续提示词', handoffOpenSource: '打开原会话', handoffTitle: '创建接续会话', handoffNewSessionIn: '在', handoffWithProvider: '使用', handoffLatestSnapshot: '最新快照', handoffSourceLocator: '来源定位', handoffPreview: '预览', handoffCopy: '复制', handoffLaunch: '启动', handoffSaveTodo: '存为 Todo', handoffPromptPreview: '提示词预览', handoffTaskPlaceholder: '希望新会话做什么？', handoffWorkspacePlaceholder: '搜索或粘贴工作区路径', handoffUsePastedPath: '使用粘贴路径', handoffNoWorkspace: '没有匹配的工作区', handoffSelected: '已选', handoffCopied: '已复制接续提示词', handoffClipboardFallback: '无法直接写剪贴板，已选中提示词', handoffLaunching: '正在启动接续会话...', handoffLaunched: '已请求启动接续会话', handoffNoSession: '未选择来源会话', handoffOpenFailed: '接续面板打开失败', handoffSelectWorkspace: '选择工作区', handoffAgentsLabel: 'Copilot 编辑器', handoffCodeChatLabel: 'Copilot CLI 编辑器', handoffClaudeLabel: 'Claude Code 编辑器', handoffAgentsDescription: '在 VS Code 编辑器标签页中打开 Copilot 并填入接续提示词', handoffCodeChatDescription: '打开 Copilot CLI 编辑器标签页并填入接续提示词', handoffClaudeDescription: '在 VS Code 编辑器标签页中打开 Claude Code', bridgeTitle: 'VS Code Bridge', bridgePreviewOnly: '仅预览', bridgeChecking: '正在检查...', bridgeInstalled: 'Bridge 已安装', bridgeNeedsUpdate: 'Bridge 有可用更新', bridgeNotInstalled: 'Bridge 未安装', bridgeInstall: '安装', bridgeUpdate: '更新', bridgeRetry: '重试', bridgeInstalling: '正在安装...', bridgeInstallFailed: 'Bridge 安装失败', todoWindowTitle: 'AI 任务输入法', todoWindowSubtitle: '工作区 Todo 队列', todoOpen: '打开 Todo', todoReadyNudge: '可推进 Todo：', todoRefresh: '刷新', todoUsePath: '使用路径', todoCancel: '取消', todoAdd: '添加', todoSave: '保存', todoActive: '进行中', todoShowDone: '完成项', todoTitlePlaceholder: '任务标题', todoDescriptionPlaceholder: '任务说明', todoAcceptancePlaceholder: '完成标准', todoPathPlaceholder: '粘贴工作区路径', todoNoWorkspace: '选择工作区', todoEmpty: '这个工作区没有待办任务', todoNoDone: '还没有完成项', todoPendingReview: '待确认完成', todoPromptPreview: '提示词', todoDispatch: '启动', todoComplete: '完成', todoRetry: '返工', todoBlock: '阻塞', todoUnblock: '解除阻塞', todoDelete: '删除', todoEdit: '编辑', todoSaved: 'Todo 已保存', todoLaunched: '已请求启动 Todo', todoCopied: '提示词已复制', todoBlocked: '已阻塞', todoDone: '已完成', todoReady: '就绪', todoRunning: '运行中', todoReview: '待确认', todoUnbound: '已派发，未绑定', todoBound: '已绑定会话', todoCountsText: '待办 {active} / 完成 {done}', todoCreateFromHandoff: '已将接续保存为 Todo',
+        allSessions: '全部 Agent 会话', watched: '已监控 83 个工作区', filterActive: '已启用工作区过滤', waitingChip: '8 待回复', workspace: '工作区', allWorkspaces: '全部工作区', perRow: '每排数量', visibleNow: '当前可见', inQueue: '在滚动队列', sessions: '个会话', updated: '2 秒前更新', workspacePrefix: '工作区：', overflow: '按优先级继续滚动：待回复、运行中、闲置', priority: '优先', live: '实时', quiet: '静默', waiting: '待回复', running: '运行中', idle: '闲置', all: '全部', wait: '待回', run: '运行', col: '列', cols: '列', perRowButton: '/ 排', iconsPerRow: '个/排', windowSize: '窗口尺寸', openWorkspace: '打开 VS Code 工作区：', openingAgents: '正在打开会话...', openedAgents: '已打开会话', themeLight: '浅色主题', themeDark: '深色主题', settings: '设置', appearance: '外观', language: '语言', theme: '主题', layout: '布局', horizontal: '横版', vertical: '竖版', agentTaskFlipSpeed: '翻转速度（毫秒）', lastUser: '最后用户输入', lastAi: '最后 AI 回复', noUserMessage: '未捕获到用户输入', noAiMessage: '未捕获到 AI 回复', tailOnly: '尾部', errorExcerpt: '错误', windowBehavior: '窗口', alwaysOnTop: '永远置顶', dataSources: '数据', includeCopilot: 'Copilot 会话', includeClaude: 'Claude 会话', hideArchived: '隐藏归档', scanLimits: '扫描限制', activeWindowDays: '活跃窗口（天）', maxSessions: '每个提供方会话数', refreshInterval: '刷新间隔（秒）', settingsSaved: '设置已更新', maxCardsPerRow: '每排最大数量', waitingAlertSize: '待回复提醒尺寸', waitingAlertDuration: '待回复持续时间（秒）', small: '小', medium: '中', large: '大', waitingAlertAria: '新的待回复会话', handoffCreate: '创建接续会话...', handoffCopyPrompt: '复制接续提示词', handoffOpenSource: '打开原会话', handoffTitle: '创建接续会话', handoffNewSessionIn: '在', handoffWithProvider: '使用', handoffLatestSnapshot: '最新快照', handoffSourceLocator: '来源定位', handoffPreview: '预览', handoffCopy: '复制', handoffLaunch: '启动', handoffSaveTodo: '存为 Todo', handoffPromptPreview: '提示词预览', handoffTaskPlaceholder: '希望新会话做什么？', handoffWorkspacePlaceholder: '搜索或粘贴工作区路径', handoffUsePastedPath: '使用粘贴路径', handoffNoWorkspace: '没有匹配的工作区', handoffSelected: '已选', handoffCopied: '已复制接续提示词', handoffClipboardFallback: '无法直接写剪贴板，已选中提示词', handoffLaunching: '正在启动接续会话...', handoffLaunched: '已请求启动接续会话', handoffNoSession: '未选择来源会话', handoffOpenFailed: '接续面板打开失败', handoffSelectWorkspace: '选择工作区', handoffAgentsLabel: 'Copilot 编辑器', handoffCodeChatLabel: 'Copilot CLI 编辑器', handoffClaudeLabel: 'Claude Code 编辑器', handoffAgentsDescription: '在 VS Code 编辑器标签页中打开 Copilot 并填入接续提示词', handoffCodeChatDescription: '打开 Copilot CLI 编辑器标签页并填入接续提示词', handoffClaudeDescription: '在 VS Code 编辑器标签页中打开 Claude Code', bridgeTitle: 'VS Code Bridge', bridgePreviewOnly: '仅预览', bridgeChecking: '正在检查...', bridgeInstalled: 'Bridge 已安装', bridgeNeedsUpdate: 'Bridge 有可用更新', bridgeNotInstalled: 'Bridge 未安装', bridgeInstall: '安装', bridgeUpdate: '更新', bridgeRetry: '重试', bridgeInstalling: '正在安装...', bridgeInstallFailed: 'Bridge 安装失败', todoWindowTitle: 'AI 任务输入法', todoWindowSubtitle: '工作区 Todo 队列', todoOpen: '打开 Todo', todoReadyNudge: '可推进 Todo：', todoRefresh: '刷新', todoUsePath: '使用路径', todoCancel: '取消', todoAdd: '添加', todoSave: '保存', todoActive: '进行中', todoShowDone: '完成项', todoTitlePlaceholder: '任务标题', todoDescriptionPlaceholder: '任务说明', todoAcceptancePlaceholder: '完成标准', todoPathPlaceholder: '粘贴工作区路径', todoNoWorkspace: '选择工作区', todoEmpty: '这个工作区没有待办任务', todoNoDone: '还没有完成项', todoPendingReview: '待确认完成', todoPromptPreview: '提示词', todoDispatch: '启动', todoComplete: '完成', todoRetry: '返工', todoBlock: '阻塞', todoUnblock: '解除阻塞', todoDelete: '删除', todoEdit: '编辑', todoSaved: 'Todo 已保存', todoLaunched: '已请求启动 Todo', todoCopied: '提示词已复制', todoBlocked: '已阻塞', todoDone: '已完成', todoReady: '就绪', todoRunning: '运行中', todoReview: '待确认', todoUnbound: '已派发，未绑定', todoBound: '已绑定会话', todoCountsText: '待办 {active} / 完成 {done}', todoCreateFromHandoff: '已将接续保存为 Todo',
         handoffPromptIdLabel: 'AgentWatcher 接续 ID',
         handoffSourceAccessTitle: '【来源访问】',
         handoffTargetAgentLabel: '目标代理',
@@ -6433,6 +6433,8 @@
         includeOpenCode: 'OpenCode sessions',
         includeCopilot: 'VS Code Copilot sessions',
         maxSessions: 'Sessions per provider',
+        pluginManagement: 'Plugin management', pluginRefresh: 'Refresh', pluginMount: 'Mount', pluginMountPlaceholder: 'Plugin directory, for example F:\\Tools\\MyPlugin', pluginWorkflowParametersAria: 'Plugin workflow parameters', pluginWorkflowParameters: 'Workflow parameters', pluginWorkflowPerTask: 'Configured per task', pluginWorkflowPreviewAria: 'Plugin workflow preview', pluginWorkflowPreview: 'Workflow preview', pluginWorkflowAwaitingPreview: 'Awaiting preview', pluginWorkflowDefaultLabel: 'Plugin workflow', pluginNoneMounted: 'No plugins mounted', pluginZeroMode: 'AgentWatcher is running in zero-plugin mode.', pluginFallbackName: 'Plugin', pluginHealthFailed: 'startup check failed', pluginHealthPassed: 'startup check passed', pluginEnabled: 'Enabled', pluginMountedDisabled: 'Mounted, disabled', pluginNoPublicModules: 'No public modules', pluginDisable: 'Disable', pluginEnable: 'Enable', pluginUnmount: 'Unmount', confirmAgain: 'Confirm again',
+        pluginHandshakeMissing: 'Descriptor has no handshake command', pluginWasEnabled: 'Plugin enabled', pluginWasDisabled: 'Plugin disabled', pluginWasMounted: 'Plugin mounted; enable it to load features', pluginWasUnmounted: 'Plugin unmounted', pluginCommandCompleted: 'completed', pluginUnavailable: 'The workflow plugin is not mounted, enabled, or available.', pluginFillRequired: 'Complete these fields first', pluginPlanning: 'Generating workflow preview...', pluginPlanReady: 'Preview generated.', pluginPlanFailed: 'Preview failed', pluginPackageGenerating: 'Generating execution package...', pluginNotReadyForConfirmation: 'The plugin workflow is not ready for completion confirmation. Check the target Agent session first.', pluginPackageMissing: 'The plugin did not generate an execution package.', pluginPackageFailed: 'Execution package generation failed', pluginParametersReady: 'Parameters ready', pluginMissingPrefix: 'Missing: ', pluginStatusPrefix: 'Status: ', pluginStageFallback: 'Stage', pluginConfirmationPrefix: 'Confirmation boundary: ', pluginArtifactsPrefix: 'Artifacts: ', pluginFillForPreview: 'Complete workflow parameters to generate a preview.', pluginNoWorkflowRecord: 'No workflow record yet.',
         workspacePathBlacklist: 'Workspace path blacklist',
         workspacePathBlacklistPlaceholder: 'One directory per line, for example %TEMP%',
         includeCopilotCli: 'Copilot CLI sessions',
@@ -6608,6 +6610,8 @@
         includeOpenCode: 'OpenCode 会话',
         includeCopilot: 'VS Code Copilot 会话',
         maxSessions: '每个提供方的会话数',
+        pluginManagement: '插件管理', pluginRefresh: '刷新', pluginMount: '挂载', pluginMountPlaceholder: '插件目录，例如 F:\\Tools\\MyPlugin', pluginWorkflowParametersAria: '插件工作流参数', pluginWorkflowParameters: '工作流参数', pluginWorkflowPerTask: '每个任务单独填写', pluginWorkflowPreviewAria: '插件工作流预演', pluginWorkflowPreview: '工作流预演', pluginWorkflowAwaitingPreview: '等待预演', pluginWorkflowDefaultLabel: '插件工作流', pluginNoneMounted: '未挂载插件', pluginZeroMode: 'AgentWatcher 当前以零插件模式运行。', pluginFallbackName: '插件', pluginHealthFailed: '启动检查失败', pluginHealthPassed: '已通过启动检查', pluginEnabled: '已启用', pluginMountedDisabled: '已挂载，未启用', pluginNoPublicModules: '无公开模块', pluginDisable: '停用', pluginEnable: '启用', pluginUnmount: '卸载', confirmAgain: '再次确认',
+        pluginHandshakeMissing: '描述文件没有握手命令', pluginWasEnabled: '插件已启用', pluginWasDisabled: '插件已停用', pluginWasMounted: '插件已挂载，启用后才会加载功能', pluginWasUnmounted: '插件已卸载', pluginCommandCompleted: '已完成', pluginUnavailable: '工作流插件未挂载、未启用或已被卸载。', pluginFillRequired: '请先填写', pluginPlanning: '正在由插件生成预演。', pluginPlanReady: '预演已生成。', pluginPlanFailed: '预演失败', pluginPackageGenerating: '正在由插件生成执行包。', pluginNotReadyForConfirmation: '插件工作流还没有进入可确认完成状态，请先检查目标 Agent 会话。', pluginPackageMissing: '插件未能生成执行包。', pluginPackageFailed: '执行包生成失败', pluginParametersReady: '参数已就绪', pluginMissingPrefix: '缺少：', pluginStatusPrefix: '状态：', pluginStageFallback: '阶段', pluginConfirmationPrefix: '确认边界：', pluginArtifactsPrefix: '产物：', pluginFillForPreview: '填写工作流参数后生成预演。', pluginNoWorkflowRecord: '尚无工作流记录。',
         workspacePathBlacklist: '工作区路径黑名单',
         workspacePathBlacklistPlaceholder: '每行一个目录，例如 %TEMP%',
         includeCopilotCli: 'Copilot CLI 会话',
@@ -7622,6 +7626,7 @@
       if (mode === 'claude-panel') return 'claude';
       if (mode === 'codex-app') return 'codex';
       if (mode === 'opencode-cli') return 'opencode';
+      if (mode === 'code-chat') return 'copilot-cli';
       return 'copilot';
     }
 
@@ -8505,7 +8510,7 @@
       if (agentTaskPluginWorkflowTitle) agentTaskPluginWorkflowTitle.textContent = schema.title || entry.label;
       const missing = pluginWorkflowMissing(workflowId, focused ? pluginWorkflowInputFromFields() : values);
       if (agentTaskPluginWorkflowContextStatus) {
-        agentTaskPluginWorkflowContextStatus.textContent = missing.length ? `缺少：${missing.join('、')}` : '参数已就绪';
+        agentTaskPluginWorkflowContextStatus.textContent = missing.length ? `${t('pluginMissingPrefix')}${missing.join('、')}` : t('pluginParametersReady');
       }
     }
 
@@ -8526,7 +8531,7 @@
         .filter(plugin => plugin?.enabled === true && !plugin?.healthError)
         .flatMap(plugin => (plugin.workflows || []).map(workflow => ({
           value: pluginWorkflowId(plugin.descriptor?.Name || '', workflow.name || ''),
-          label: workflow.friendlyName || workflow.name || plugin.descriptor?.FriendlyName || '插件工作流',
+          label: workflow.friendlyName || workflow.name || plugin.descriptor?.FriendlyName || t('pluginWorkflowDefaultLabel'),
           description: workflow.description || plugin.descriptor?.Description || '',
           legacyIds: Array.isArray(workflow.legacyIds) ? workflow.legacyIds.map(value => String(value).toLowerCase()) : [],
           plugin,
@@ -8548,7 +8553,7 @@
 
     function renderPluginPanel() {
       if (!pluginPanel || !pluginList) return;
-      if (pluginTitle) pluginTitle.textContent = '插件管理';
+      if (pluginTitle) pluginTitle.textContent = t('pluginManagement');
       if (pluginRefresh) pluginRefresh.disabled = pluginCatalogLoading;
       if (pluginMount) pluginMount.disabled = pluginCatalogLoading || !tauriInvoke || !pluginMountPath?.value.trim();
       pluginList.replaceChildren();
@@ -8557,8 +8562,8 @@
       if (!plugins.length) {
         const item = document.createElement('div');
         item.className = 'plugin-workflow-module';
-        appendText(item, 'div', 'plugin-workflow-module-name', '未挂载插件');
-        appendText(item, 'div', 'plugin-workflow-module-path', 'AgentWatcher 当前以零插件模式运行。');
+        appendText(item, 'div', 'plugin-workflow-module-name', t('pluginNoneMounted'));
+        appendText(item, 'div', 'plugin-workflow-module-path', t('pluginZeroMode'));
         pluginList.appendChild(item);
       }
 
@@ -8568,26 +8573,26 @@
         item.className = 'plugin-workflow-module';
         const row = document.createElement('div');
         row.className = 'plugin-workflow-module-row';
-        appendText(row, 'div', 'plugin-workflow-module-name', descriptor.FriendlyName || descriptor.Name || '插件');
+        appendText(row, 'div', 'plugin-workflow-module-name', descriptor.FriendlyName || descriptor.Name || t('pluginFallbackName'));
         item.appendChild(row);
         const enabled = plugin.enabled === true;
         const modules = (descriptor.Modules || []).filter(module => module.UserFacing).map(module => module.FriendlyName || module.Name);
-        const health = plugin.healthError ? ` · 启动检查失败：${plugin.healthError}` : (enabled ? ' · 已通过启动检查' : '');
-        appendText(item, 'div', 'plugin-workflow-module-path', `${enabled ? '已启用' : '已挂载，未启用'} · ${modules.join(' / ') || '无公开模块'}${health}`);
+        const health = plugin.healthError ? ` · ${t('pluginHealthFailed')}: ${plugin.healthError}` : (enabled ? ` · ${t('pluginHealthPassed')}` : '');
+        appendText(item, 'div', 'plugin-workflow-module-path', `${enabled ? t('pluginEnabled') : t('pluginMountedDisabled')} · ${modules.join(' / ') || t('pluginNoPublicModules')}${health}`);
 
         const actions = document.createElement('div');
         actions.className = 'plugin-workflow-binding-actions';
         const toggle = document.createElement('button');
         toggle.type = 'button';
         toggle.className = 'plugin-workflow-action';
-        toggle.textContent = enabled ? '停用' : '启用';
+        toggle.textContent = enabled ? t('pluginDisable') : t('pluginEnable');
         toggle.addEventListener('click', () => togglePluginEnabled(descriptor.Name, !enabled));
         actions.appendChild(toggle);
         if (plugin.mounted) {
           const unmount = document.createElement('button');
           unmount.type = 'button';
           unmount.className = 'plugin-workflow-action';
-          unmount.textContent = '卸载';
+          unmount.textContent = t('pluginUnmount');
           unmount.addEventListener('click', () => unmountPluginFromSettings(descriptor.Name));
           actions.appendChild(unmount);
         }
@@ -8601,7 +8606,7 @@
             runAgentTaskConfirmedAction(commandButton, {
               key: `plugin:${descriptor.Name}:${command.Name}`,
               label: commandButton.textContent,
-              confirmLabel: '再次确认',
+              confirmLabel: t('confirmAgain'),
               action: () => invokePluginSettingsCommand(descriptor.Name, command)
             });
           });
@@ -8638,7 +8643,7 @@
         const checkedStates = await Promise.all(states.map(async plugin => {
           if (!plugin.enabled) return plugin;
           const command = plugin.descriptor?.Runtime?.HandshakeCommand;
-          if (!command) return { ...plugin, healthError: '描述文件没有握手命令' };
+          if (!command) return { ...plugin, healthError: t('pluginHandshakeMissing') };
           try {
             await tauriInvoke('invoke_plugin_command', {
               request: { pluginName: plugin.descriptor.Name, command, request: {} }
@@ -8667,7 +8672,7 @@
       renderPluginPanel();
       try {
         await tauriInvoke('set_plugin_enabled', { pluginName, enabled: nextEnabled });
-        showToast(nextEnabled ? '插件已启用' : '插件已停用');
+        showToast(nextEnabled ? t('pluginWasEnabled') : t('pluginWasDisabled'));
         await refreshPluginCatalog({ silent: true });
       } catch (error) {
         showToast(String(error));
@@ -8686,7 +8691,7 @@
       renderPluginPanel();
       try {
         await tauriInvoke('mount_plugin', { pluginPath: path });
-        showToast('插件已挂载，启用后才会加载功能');
+        showToast(t('pluginWasMounted'));
         if (pluginMountPath) pluginMountPath.value = '';
         await refreshPluginCatalog({ silent: true });
       } catch (error) {
@@ -8703,7 +8708,7 @@
       renderPluginPanel();
       try {
         await tauriInvoke('unmount_plugin', { pluginName });
-        showToast('插件已卸载');
+        showToast(t('pluginWasUnmounted'));
         await refreshPluginCatalog({ silent: true });
       } catch (error) {
         showToast(String(error));
@@ -8727,7 +8732,7 @@
             }
           }
         });
-        showToast(`${command.FriendlyName || command.Name}已完成`);
+        showToast(`${command.FriendlyName || command.Name} ${t('pluginCommandCompleted')}`);
         await refreshPluginCatalog({ silent: true });
       } catch (error) {
         showToast(String(error));
@@ -9470,7 +9475,7 @@
       if (!found) return;
       if (status === 'blocked' && !agentTaskCanBlock(found.task)) return;
       if (status === 'done' && isPluginWorkflow(found.task.workflow) && !agentTaskCanComplete(found.task)) {
-        showToast('插件工作流还没有进入可确认完成状态，请先检查目标 Agent 会话。', { kind: 'error' });
+        showToast(t('pluginNotReadyForConfirmation'), { kind: 'error' });
         return;
       }
       if (status === 'blocked') {
@@ -10439,17 +10444,17 @@
       if (!found || !isPluginWorkflow(found.task.workflow)) return false;
       const entry = pluginWorkflowEntry(found.task.workflow);
       if (!entry) {
-        showToast('工作流插件未挂载、未启用或已被卸载。', { kind: 'error' });
+        showToast(t('pluginUnavailable'), { kind: 'error' });
         return false;
       }
       const input = pluginWorkflowInputWithDefaults(found.task.workflow, found.task.pluginWorkflowInput, found.workspace);
       const missing = pluginWorkflowMissing(found.task.workflow, input);
       if (missing.length) {
-        showToast(`请先填写：${missing.join('、')}`, { kind: 'error' });
+        showToast(`${t('pluginFillRequired')}: ${missing.join(', ')}`, { kind: 'error' });
         return false;
       }
       found.task.pluginWorkflowInput = input;
-      setPluginWorkflowLifecycle(found.task, 'planning', '正在由插件生成预演。');
+      setPluginWorkflowLifecycle(found.task, 'planning', t('pluginPlanning'));
       found.task.updatedAt = Date.now();
       await saveTodoState({ force: true, announce: false });
       try {
@@ -10467,7 +10472,7 @@
           createdAt: Date.now(),
           result: response?.result || {}
         };
-        setPluginWorkflowLifecycle(found.task, 'planned', pluginWorkflowSummary(response?.result, '预演已生成。'), { status: 'waiting' });
+        setPluginWorkflowLifecycle(found.task, 'planned', pluginWorkflowSummary(response?.result, t('pluginPlanReady')), { status: 'waiting' });
         found.task.updatedAt = Date.now();
         await saveTodoState({ force: true, announce: false });
         renderTodoEverywhere({ force: true });
@@ -10476,7 +10481,7 @@
         setPluginWorkflowLifecycle(found.task, 'failed', String(error), { status: 'failed' });
         found.task.updatedAt = Date.now();
         await saveTodoState({ force: true, announce: false });
-        showToast(`预演失败：${String(error)}`, { kind: 'error' });
+        showToast(`${t('pluginPlanFailed')}: ${String(error)}`, { kind: 'error' });
         return false;
       }
     }
@@ -10513,11 +10518,11 @@
       }
       const entry = pluginWorkflowEntry(found.task.workflow);
       if (!entry) {
-        showToast('工作流插件未挂载、未启用或已被卸载。', { kind: 'error' });
+        showToast(t('pluginUnavailable'), { kind: 'error' });
         return false;
       }
       const confirmation = pluginWorkflowConfirmation(entry, found.task.pluginWorkflowPlan?.result);
-      setPluginWorkflowLifecycle(found.task, 'package-generating', '正在由插件生成执行包。');
+      setPluginWorkflowLifecycle(found.task, 'package-generating', t('pluginPackageGenerating'));
       found.task.updatedAt = Date.now();
       await saveTodoState({ force: true, announce: false });
       renderTodoEverywhere({ force: true });
@@ -10538,10 +10543,10 @@
           result
         };
         if (!pluginWorkflowTaskHasExecutePackage(found.task)) {
-          setPluginWorkflowLifecycle(found.task, 'failed', pluginWorkflowSummary(result, '插件未能生成执行包。'), { status: 'failed' });
+          setPluginWorkflowLifecycle(found.task, 'failed', pluginWorkflowSummary(result, t('pluginPackageMissing')), { status: 'failed' });
           found.task.updatedAt = Date.now();
           await saveTodoState({ force: true, announce: false });
-          showToast(pluginWorkflowSummary(result, '插件未能生成执行包。'), { kind: 'error' });
+          showToast(pluginWorkflowSummary(result, t('pluginPackageMissing')), { kind: 'error' });
           return false;
         }
         const mode = normalizedAgentTaskMode(found.task.launchMode || DEFAULT_AGENT_TASK_LAUNCH_MODE);
@@ -10575,7 +10580,7 @@
         setPluginWorkflowLifecycle(found.task, 'failed', String(error), { status: 'failed' });
         found.task.updatedAt = Date.now();
         await saveTodoState({ force: true, announce: false });
-        showToast(`执行包生成失败：${String(error)}`, { kind: 'error' });
+        showToast(`${t('pluginPackageFailed')}: ${String(error)}`, { kind: 'error' });
         return false;
       }
     }
@@ -10591,23 +10596,23 @@
       const details = pluginWorkflowDetailsFromTask(task);
       const lifecycle = normalizePluginWorkflowLifecycle(task.pluginWorkflowLifecycle);
       agentTaskPluginWorkflowPlan.hidden = false;
-      if (agentTaskPluginWorkflowPlanTitle) agentTaskPluginWorkflowPlanTitle.textContent = entry?.label || '插件工作流';
+      if (agentTaskPluginWorkflowPlanTitle) agentTaskPluginWorkflowPlanTitle.textContent = entry?.label || t('pluginWorkflowDefaultLabel');
       if (agentTaskPluginWorkflowPlanState) {
-        agentTaskPluginWorkflowPlanState.textContent = lifecycle?.message || (details ? pluginWorkflowSummary(details, '预演已生成') : '等待预演');
+        agentTaskPluginWorkflowPlanState.textContent = lifecycle?.message || (details ? pluginWorkflowSummary(details, t('pluginPlanReady')) : t('pluginWorkflowAwaitingPreview'));
       }
       const lines = [];
       const missing = pluginWorkflowMissing(task.workflow, task.pluginWorkflowInput);
-      if (missing.length) lines.push(`缺少：${missing.join('、')}`);
+      if (missing.length) lines.push(`${t('pluginMissingPrefix')}${missing.join('、')}`);
       if (details) {
-        lines.push(`状态：${pluginWorkflowStatus(details) || 'ready'}`);
+        lines.push(`${t('pluginStatusPrefix')}${pluginWorkflowStatus(details) || 'ready'}`);
         const stages = Array.isArray(details.stages) ? details.stages : [];
-        stages.slice(0, 6).forEach(stage => lines.push(`${stage.title || stage.id || '阶段'} · ${stage.summary || ''}`));
+        stages.slice(0, 6).forEach(stage => lines.push(`${stage.title || stage.id || t('pluginStageFallback')} · ${stage.summary || ''}`));
         const boundary = pluginWorkflowConfirmation(entry, details);
-        if (boundary) lines.push(`确认边界：${boundary}`);
+        if (boundary) lines.push(`${t('pluginConfirmationPrefix')}${boundary}`);
         const artifacts = Array.isArray(details.artifacts) ? details.artifacts : [];
-        if (artifacts.length) lines.push(`产物：${artifacts.slice(0, 4).map(item => item.path || item.label || item).join(' / ')}`);
+        if (artifacts.length) lines.push(`${t('pluginArtifactsPrefix')}${artifacts.slice(0, 4).map(item => item.path || item.label || item).join(' / ')}`);
       }
-      if (!lines.length) lines.push(canEdit ? '填写工作流参数后生成预演。' : '尚无工作流记录。');
+      if (!lines.length) lines.push(canEdit ? t('pluginFillForPreview') : t('pluginNoWorkflowRecord'));
       agentTaskPluginWorkflowPlanStages.replaceChildren(...lines.map(line => appendText(document.createElement('div'), 'div', 'agenttask-plugin-workflow-plan-line', line)));
     }
 
@@ -12693,7 +12698,7 @@
         : t('handoffCrossProviderWarning');
       const parserHint = provider === 'claude'
         ? t('handoffParserHintClaude')
-        : provider === 'copilot'
+        : provider === 'copilot' || provider === 'copilot-cli'
           ? t('handoffParserHintCopilot')
           : provider === 'codex'
             ? t('handoffParserHintCodex')
@@ -14030,6 +14035,7 @@
         updatePerformanceScopeControl();
         updatePerformanceSpeedControl();
         if (shouldUpdatePerformanceForLanguage()) renderPerformancePanel();
+        renderPluginPanel();
       };
       if (options.deferDynamic) {
         window.setTimeout(updateDynamicLanguageSurfaces, 0);

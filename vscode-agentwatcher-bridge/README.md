@@ -2,6 +2,8 @@
 
 Small VS Code extension used by AgentWatcher to reveal or create a specific chat session from a `sessionResource` URI.
 
+Current Bridge version: `0.1.12`. The Bridge version is independent from the AgentWatcher app version.
+
 Extension ID:
 
 ```text

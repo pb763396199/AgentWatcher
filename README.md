@@ -2,10 +2,12 @@
 
 AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候选窗一样常驻在屏幕任意位置，监控以下来源在所有 workspace 的会话状态，并把 waiting / running / idle 会话以可跳转的卡片展示出来：
 - VS Code Copilot 会话
+- Copilot CLI 会话
 - VS Code Claude Code 会话
 - Codex 桌面会话
+- OpenCode 会话
 
-当前发布版本：v0.1.3。仓库已切换到 Tauri 2 作为主应用壳方向，前端入口 [ui/index.html](ui/index.html) 是唯一 UI 源文件。仓库只保留源码和必要的源码内资产，release 产物通过打包脚本按需生成。
+当前发布版本：v0.1.4。仓库使用 Tauri 2 作为桌面应用壳，前端入口 [ui/index.html](ui/index.html) 是唯一 UI 源文件。AgentWatcher 主仓库保持零插件可启动、构建和测试，外部插件通过独立 `*.awplugin` 描述文件发现和启用。
 
 ## 当前 UI 入口
 
@@ -35,25 +37,30 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - 新增 AgentTask / Todo 面板入口，任务流与会话卡片联动；任务状态变化可驱动会话归档策略。
 - 新增 performance-panel，支持 AgentWatcher、VS Code、Codex 进程采样、CPU 历史、列宽记忆和快照复制。
 - 接入 Codex 桌面会话扫描，支持与 Copilot / Claude 一起纳入 Watcher 和任务链路。
+- 接入 OpenCode 和 Copilot CLI 独立会话来源，provider 筛选、状态卡片和数量配额彼此独立。
+- 扫描上限按 provider 分别计算，避免高数量来源挤掉其他 provider。
+- 支持工作区路径黑名单，默认过滤 `%TEMP%` 下的临时测试会话。
 
 ## 技术方向
 
-使用 Tauri 2 实现轻量桌面壳，前端由 [ui/index.html](ui/index.html) 提供。MVP 采用本地文件扫描采集 Copilot / Claude Code session 元数据，配合 VS Code bridge extension 实现精确 session 跳转。
+使用 Tauri 2 实现轻量桌面壳，前端由 [ui/index.html](ui/index.html) 提供。宿主统一聚合 Copilot、Copilot CLI、Claude Code、Codex 和 OpenCode 会话；VS Code 内会话通过 Bridge 精确跳转，外部插件通过描述文件贡献工作流和设置动作。
 
 ## 功能特性
 
-- **实时监控**：自动扫描 VS Code Copilot 和 Claude Code 的所有 workspace sessions
+- **实时监控**：自动扫描 Copilot、Copilot CLI、Claude Code、Codex 和 OpenCode 的 workspace sessions
 - **状态分类**：按 waiting（待回复）、running（运行中）、idle（闲置）分类显示
 - **一键跳转**：点击卡片直接打开对应的 VS Code session
 - **悬浮预览**：悬停卡片右下角展开按钮显示最近用户输入和 AI 正文摘要，预览窗口可 resize 并记忆尺寸
 - **Handoff**：右键 session 卡片可携带上下文接续到 Copilot、Copilot CLI 或 Claude，新会话由目标 provider 负责承接
 - **Codex 会话接入**：接入 Codex 桌面会话，支持与 Copilot、Claude 一起显示状态与跳转
+- **OpenCode 会话接入**：读取本机 OpenCode 数据库，支持状态、预览、打开和 handoff
+- **独立 Copilot CLI provider**：独立筛选、配额和标识，不与 VS Code Copilot 合并
 - **VS Code 连接组件**：首次启动自动安装连接组件，实现精确 session 跳转、handoff 路由和 ack 成功确认
 - **AgentTask / Todo**：新增 AgentTask 与 Todo 面板入口，任务状态与会话状态联动
 - **悬浮窗口**：Windows 悬浮应用，四角 resize，可任意方向缩放
 - **置顶控制**：设置面板内可实时打开或关闭 always-on-top
 - **布局切换**：设置面板内支持 Horizontal / Vertical 两种窗口布局，并记忆偏好
-- **智能过滤**：workspace 过滤、状态过滤、full-path workspace grouping、自动隐藏归档 sessions
+- **智能过滤**：workspace 过滤、状态过滤、full-path workspace grouping、自动隐藏归档 sessions、可配置路径黑名单
 - **多语言**：中英文切换
 - **明暗主题**：支持 Dark / Light 主题切换
 - **窗口缩放**：支持 Ctrl + / - / 0 与 Ctrl+滚轮缩放主窗口，并可在设置中配置缩放比例（默认 100%）
@@ -85,8 +92,9 @@ npm run package:exe
 ```
 artifacts/AgentWatcher/
   AgentWatcher.exe
-  vscode-connector/
-    connector package files
+  vscode-agentwatcher-bridge/
+    package.json
+    agentwatcher-bridge-0.1.12.vsix
 ```
 
 用户只需将整个 `artifacts/AgentWatcher/` 文件夹复制到目标机器即可使用。发布目录会包含预打包的 VS Code 连接组件，正常情况下目标机器不需要安装 Node.js 或 `npx`。
@@ -168,10 +176,9 @@ AgentWatcher 使用自带的 VS Code 连接组件实现精确 session 跳转和 
 
 ## Known Issues
 
-- Prompt handoff 的提示词插入目前整体仍依赖 clipboard 通道：Copilot、Copilot CLI 和 Claude 都由 VS Code 连接组件读取 clipboard 后，再通过各自的目标命令填入。非剪贴板 prompt 通道列入 Future，不作为本次 v0.1.3 发布阻断。
+- Prompt handoff 的提示词插入目前整体仍依赖 clipboard 通道：Copilot、Copilot CLI 和 Claude 都由 VS Code 连接组件读取 clipboard 后，再通过各自的目标命令填入。非剪贴板 prompt 通道列入 Future，不作为本次 v0.1.4 发布阻断。
 - 未来如果引入 prompt 临时文件，禁止写入项目目录，只允许写入 AgentWatcher 自身运行时临时目录或系统临时目录，例如 `%TEMP%\AgentWatcher\...`，并需要 token、TTL 和读取后清理。
 - 历史 VS Code 连接组件测试扩展可能残留在开发机上；当前发布只以稳定组件为准，install/update 会尝试清理旧 ID。
-- docs 是否进入 git 仍由发布前人工决定，当前文档仅记录准备状态，不默认改变仓库策略。
 
 ## Post-v0.1.x Roadmap
 
@@ -236,18 +243,20 @@ AgentWatcher 使用自带的 VS Code 连接组件实现精确 session 跳转和 
 
 - **Layout**：横版 / 竖版窗口布局，适配侧边停靠或窄窗贴边使用
 - **Active window (days)**：活跃窗口天数，默认 7 天
-- **Max sessions**：最大显示 session 数，默认 80
+- **Sessions per provider**：每个 provider 最多保留的 session 数，默认 80
 - **Refresh interval (sec)**：刷新间隔秒数，默认 15 秒
 - **Hide archived**：隐藏已归档的 sessions
-- **Copilot sessions** / **Claude sessions**：是否包含对应 provider 的 sessions
+- **Copilot sessions** / **Copilot CLI sessions** / **Claude sessions**：是否包含对应 provider 的 sessions
 - **Codex sessions**：是否包含 Codex 会话来源
+- **OpenCode sessions**：是否包含 OpenCode 会话来源
+- **Workspace path blacklist**：每行一个目录；默认 `%TEMP%`，命中目录及子目录的会话不参与展示和统计
 
 ## 架构说明
 
 ### Rust Backend (src-tauri/src/lib.rs)
 
 - `scan_sessions`：扫描并返回所有符合条件的 sessions
-- `scan_app_server_sessions`：扫描 Codex app-server 会话并合并入统一会话列表
+- Codex app-server、OpenCode SQLite、Copilot CLI store 和本地 JSONL 扫描结果合并入统一会话列表
 - `open_session`：通过 VS Code CLI 或 deep link 打开指定 session
 - `get_bridge_status`：检查 bridge extension 状态
 - `install_bridge`：打包并安装 bridge extension
@@ -270,6 +279,13 @@ AgentWatcher 使用自带的 VS Code 连接组件实现精确 session 跳转和 
 - 解析 session resource 并打开对应的 chat session
 - 支持 Copilot、Copilot CLI 和 Claude Code handoff 目标
 - 通过 AgentWatcher 临时目录 ack 文件回传 handoff 成功或失败
+
+### 插件宿主
+
+- 插件放在 AgentWatcher 仓库之外，通过与插件同名的 `*.awplugin` 描述文件发现。
+- 挂载仅表示可发现，只有显式启用且握手成功后才暴露插件贡献。
+- 插件命令只能通过 `AgentWatcherPluginStdio/1` 受控协议执行；宿主不接收任意 program、args 或 shell。
+- 零插件状态必须保持完整启动、构建和测试能力。
 
 ## 许可证
 

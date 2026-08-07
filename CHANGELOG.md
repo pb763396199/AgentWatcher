@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.1.4 - 2026-08-07
+
+- 将 OpenCode、Copilot CLI 作为独立 provider 接入统一会话列表，补齐扫描、状态、跳转与真实 Tauri 流程验证。
+- 会话数量上限改为按 provider 分别计算，避免单一来源占满全局配额。
+- 新增工作区路径黑名单，默认过滤 `%TEMP%`，支持用户按行配置目录且不删除任何原始会话数据。
+- 修复 Session Preview、Handoff、Todo、Performance 等悬浮面板的窗口层级与多显示器可见性，预览仍只由卡片右下角入口触发。
+- 改进 Copilot CLI provider 的独立筛选、标识与卡片图标，避免与 VS Code Copilot 或其他 CLI 混淆。
+- 将 AgentWatcher 收敛为零插件也可完整启动、构建和测试的通用插件宿主；具体插件通过独立 `*.awplugin` 描述文件与受控 stdio 协议接入。
+- 完善静默开发入口、WebView2 CDP 真实 Tauri 自动化、OpenCode 会话流程与多窗口验收基础设施。
+
+发布包：`AgentWatcher-v0.1.4-windows-x64.zip`
+
+SHA256：`7E80FBF07C6E1C8395315971402873D51C89F4A72D94FA089330C56E453D7103`
+
+验证：`cargo test --manifest-path src-tauri/Cargo.toml`（75 通过、1 项外部插件握手按设计忽略）、`cargo clippy --all-targets -- -D warnings`、Bridge 语法与路由测试、UI 构建、真实 Tauri 冒烟及任务/性能/接续/OpenCode 流程、`git diff --check`、`npm run package:exe`、zip/manifest/15 尺寸图标检查、最终 VSIX 重复安装两次、发布目录 EXE 独立启动均通过。
+
 ## v0.1.3 - 2026-06-09
 
 - 接入 Codex 桌面会话扫描，主列表与 AgentTask / Todo 流程并入统一会话模型，支持状态筛选与跳转。

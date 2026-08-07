@@ -2,7 +2,7 @@
 
 ## 设计目标
 
-AgentWatcher 是一个 Windows 桌面悬浮工具，用来集中观察 VS Code 中 Copilot 和 Claude Code 的所有 workspace session。它要长期挂在屏幕边缘，像输入法候选窗一样轻、不打断，但在某个 session 等待用户回复时能立刻被看见。
+AgentWatcher 是一个 Windows 桌面悬浮工具，用来集中观察 Copilot、Copilot CLI、Claude Code、Codex 和 OpenCode 的 workspace session。它要长期挂在屏幕边缘，像输入法候选窗一样轻、不打断，但在某个 session 等待用户回复时能立刻被看见。
 
 ## 当前 UI 文件
 
@@ -46,6 +46,8 @@ Tauri 2 前端入口为 [ui/index.html](ui/index.html)，它是当前唯一 UI �
 
 - 状态筛选：All / Wait / Run / Idle。
 - Workspace 下拉筛选：选中后只展示对应 workspace 的 session。
+- Provider 下拉筛选：Copilot、Copilot CLI、Claude Code、Codex 和 OpenCode 独立筛选、独立计算数量配额。
+- 工作区路径黑名单：按目录及其子目录过滤，默认 `%TEMP%`，只影响展示和统计，不删除原始会话。
 - Per row 控制：滑杆连续改变每排数量，按钮在预设数量间循环。
 - 布局切换：Horizontal / Vertical 即时切换并持久化。
 - 中英切换：标题、筛选、状态、队列、底部信息即时切换。
@@ -55,10 +57,16 @@ Tauri 2 前端入口为 [ui/index.html](ui/index.html)，它是当前唯一 UI �
 
 卡片默认只展示 provider、workspace alias、状态、时间和极短任务标题，不直接暴露 prompt 正文、模型输出正文或代码片段。Session Preview 属于用户主动悬停展开后的详情层，只展示最近用户输入和 AI 正文摘要，并过滤工具、terminal、thinking、模型错误等噪声。预览正文只在当前运行时内存和 Tauri event 中传递，不写入 localStorage。
 
+## 插件宿主边界
+
+- AgentWatcher 在零插件状态下保持完整启动、构建和测试能力。
+- 外部插件通过独立 `*.awplugin` 描述文件发现，挂载和启用是两个独立状态。
+- 插件命令只能通过 `AgentWatcherPluginStdio/1` 受控协议执行；宿主强制校验声明的命令、确认边界、输出上限和执行超时。
+
 ## 最大技术风险
 
-点击卡片直接聚焦 VS Code 内某个具体 Copilot / Claude session 还没有公开稳定 deep link。MVP 先做到 workspace 级跳转，精确 session 聚焦放到 VS Code bridge extension 阶段验证。
+VS Code 内会话聚焦依赖 Bridge 与 VS Code 当前命令合同，未来 VS Code 版本变化可能需要更新 Bridge 路由。OpenCode 和 Codex 使用各自的本机数据与打开路径，也需要在发布前用真实桌面运行时验证。
 
 ## 落地技术路线
 
-当前主路线为 Tauri 2 + HTML/CSS/JS。选择它是为了让设计稿直接成为真实 UI，同时比 Electron 更轻。当前已完成 Tauri 2 壳、真实窗口页面、Tauri window API 拖动/resize/最小化/最大化/关闭接入、横版 / 竖版布局切换、VS Code bridge、Session Preview tooltip webview 和 release 打包脚本验证。
+当前主路线为 Tauri 2 + HTML/CSS/JS。选择它是为了让设计稿直接成为真实 UI，同时比 Electron 更轻。当前已完成 Tauri 2 壳、真实窗口页面、多 provider 扫描、Tauri window API 拖动/resize/最小化/最大化/关闭接入、横版 / 竖版布局、VS Code Bridge、Session Preview tooltip webview、通用插件宿主和 release 打包脚本验证。

@@ -516,7 +516,23 @@ async function runAgentTaskFlow() {
     const workflowOption = page.locator('#agentTaskWorkflowOptions [data-mode^="plugin:"]').first();
     const workflowCount = await workflowOption.count();
     if (!workflowCount) {
-      throw new Error('当前没有已启用且通过握手的外部插件工作流，无法验证动态贡献。');
+      const zeroPluginSurface = await page.evaluate(() => ({
+        工作流值: document.querySelector('#agentTaskWorkflowSelect')?.value || '',
+        目标Agent值: document.querySelector('#agentTaskModeSelect')?.value || '',
+        插件工作流数量: [...document.querySelectorAll('#agentTaskWorkflowOptions [data-mode^="plugin:"]')].length,
+        动态表单隐藏: !!document.querySelector('#agentTaskPluginWorkflowContext')?.hidden,
+        工作流与Agent分开: !!document.querySelector('#agentTaskWorkflowButton') && !!document.querySelector('#agentTaskModeButton'),
+      }));
+      if (zeroPluginSurface.插件工作流数量 !== 0
+        || !zeroPluginSurface.动态表单隐藏
+        || !zeroPluginSurface.目标Agent值
+        || !zeroPluginSurface.工作流与Agent分开
+        || !pluginPanel.内容.includes('零插件模式')) {
+        throw new Error(`零插件 AgentTask 安全空态验收失败：${JSON.stringify({ pluginPanel, zeroPluginSurface })}`);
+      }
+      await page.keyboard.press('Escape').catch(() => {});
+      const screenshot = await saveViewportScreenshot(page, 'zero-plugin-agenttask.png');
+      return { 插件管理: pluginPanel, 零插件任务面板: zeroPluginSurface, 截图: [screenshot] };
     }
     const workflowId = await workflowOption.getAttribute('data-mode');
     await page.evaluate(id => {
@@ -944,7 +960,11 @@ async function runOpenCodeSessionFlow() {
     title: element.dataset.sessionTitle || element.querySelector('.session-title')?.textContent || '',
     文本片段: element.innerText.slice(0, 180),
   }));
-  const beforeToast = await page.locator('#toast').textContent().catch(() => '');
+  await page.locator('#toast').evaluate(element => {
+    element.textContent = '';
+    element.classList.remove('show', 'error');
+  });
+  const beforeToast = '';
 
   await card.click();
   await page.waitForFunction((previous) => {
