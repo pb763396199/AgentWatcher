@@ -604,6 +604,19 @@
       -moz-appearance: textfield;
     }
 
+    .setting-path-list {
+      grid-column: 1 / -1;
+      width: 100%;
+      min-height: 58px;
+      resize: vertical;
+      padding: 7px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: var(--surface-3);
+      color: var(--text);
+      font: 12px/1.4 Consolas, monospace;
+    }
+
     .setting-number::-webkit-outer-spin-button,
     .setting-number::-webkit-inner-spin-button {
       margin: 0;
@@ -5379,6 +5392,10 @@
             <label for="hideArchived" data-i18n="hideArchived">Hide archived</label>
             <input class="setting-check" id="hideArchived" type="checkbox" checked />
           </div>
+          <div class="setting-row">
+            <label for="workspacePathBlacklist" data-i18n="workspacePathBlacklist">Workspace path blacklist</label>
+            <textarea class="setting-path-list" id="workspacePathBlacklist" rows="2" spellcheck="false" data-i18n-placeholder="workspacePathBlacklistPlaceholder">%TEMP%</textarea>
+          </div>
         </div>
         <div class="settings-group">
           <div class="settings-group-title" data-i18n="scanLimits">Scan limits</div>
@@ -6001,6 +6018,7 @@
     const includeCodex = document.getElementById('includeCodex');
     const includeOpenCode = document.getElementById('includeOpenCode');
     const hideArchived = document.getElementById('hideArchived');
+    const workspacePathBlacklist = document.getElementById('workspacePathBlacklist');
     const activeWindowDays = document.getElementById('activeWindowDays');
     const maxSessions = document.getElementById('maxSessions');
     const refreshIntervalSeconds = document.getElementById('refreshIntervalSeconds');
@@ -6294,6 +6312,7 @@
       includeCodex: true,
       includeOpenCode: true,
       hideArchived: true,
+      workspacePathBlacklist: ['%TEMP%'],
       activeWindowDays: 7,
       maxSessions: 80,
       refreshIntervalSeconds: 15,
@@ -6414,6 +6433,8 @@
         includeOpenCode: 'OpenCode sessions',
         includeCopilot: 'VS Code Copilot sessions',
         maxSessions: 'Sessions per provider',
+        workspacePathBlacklist: 'Workspace path blacklist',
+        workspacePathBlacklistPlaceholder: 'One directory per line, for example %TEMP%',
         includeCopilotCli: 'Copilot CLI sessions',
         handoffProviderCopilotCli: 'Copilot CLI',
         handoffCodexLabel: 'Codex Desktop',
@@ -6587,6 +6608,8 @@
         includeOpenCode: 'OpenCode 会话',
         includeCopilot: 'VS Code Copilot 会话',
         maxSessions: '每个提供方的会话数',
+        workspacePathBlacklist: '工作区路径黑名单',
+        workspacePathBlacklistPlaceholder: '每行一个目录，例如 %TEMP%',
         includeCopilotCli: 'Copilot CLI 会话',
         handoffProviderCopilotCli: 'Copilot CLI',
         handoffCodexLabel: 'Codex 桌面端',
@@ -11027,6 +11050,9 @@
           includeCodex: savedSettings.includeCodex !== false,
           includeOpenCode: savedSettings.includeOpenCode !== false,
           hideArchived: savedSettings.hideArchived !== false,
+          workspacePathBlacklist: Array.isArray(savedSettings.workspacePathBlacklist)
+            ? savedSettings.workspacePathBlacklist.map(value => String(value).trim()).filter(Boolean)
+            : [...defaultSettings.workspacePathBlacklist],
           activeWindowDays: clampNumber(savedSettings.activeWindowDays, 1, 30, defaultSettings.activeWindowDays),
           maxSessions: clampNumber(savedSettings.maxSessions, 1, 5000, defaultSettings.maxSessions),
           refreshIntervalSeconds: clampNumber(savedSettings.refreshIntervalSeconds, 1, 3600, defaultSettings.refreshIntervalSeconds),
@@ -11057,6 +11083,7 @@
         'includeCodex',
         'includeOpenCode',
         'hideArchived',
+        'workspacePathBlacklist',
         'activeWindowDays',
         'maxSessions'
       ].includes(key);
@@ -11377,7 +11404,8 @@
         includeOpenCode: settings.includeOpenCode,
         hideArchived: settings.hideArchived,
         activeWindowDays: settings.activeWindowDays,
-        maxSessions: settings.maxSessions
+        maxSessions: settings.maxSessions,
+        workspacePathBlacklist: settings.workspacePathBlacklist
       };
     }
 
@@ -11395,6 +11423,7 @@
       includeCodex.checked = settings.includeCodex;
       includeOpenCode.checked = settings.includeOpenCode;
       hideArchived.checked = settings.hideArchived;
+      workspacePathBlacklist.value = settings.workspacePathBlacklist.join('\n');
       activeWindowDays.value = String(settings.activeWindowDays);
       maxSessions.value = String(settings.maxSessions);
       refreshIntervalSeconds.value = String(settings.refreshIntervalSeconds);
@@ -16106,6 +16135,11 @@
       includeCodex.addEventListener('change', () => updateSetting('includeCodex', includeCodex.checked, { announce: true }));
       includeOpenCode.addEventListener('change', () => updateSetting('includeOpenCode', includeOpenCode.checked, { announce: true }));
       hideArchived.addEventListener('change', () => updateSetting('hideArchived', hideArchived.checked, { announce: true }));
+      workspacePathBlacklist.addEventListener('change', () => updateSetting(
+        'workspacePathBlacklist',
+        workspacePathBlacklist.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean),
+        { announce: true }
+      ));
       activeWindowDays.addEventListener('change', () => updateSetting('activeWindowDays', clampNumber(activeWindowDays.value, 1, 30, defaultSettings.activeWindowDays), { announce: true }));
       maxSessions.addEventListener('change', () => updateSetting('maxSessions', clampNumber(maxSessions.value, 1, 5000, defaultSettings.maxSessions), { announce: true }));
       refreshIntervalSeconds.addEventListener('change', () => updateSetting('refreshIntervalSeconds', clampNumber(refreshIntervalSeconds.value, 1, 3600, defaultSettings.refreshIntervalSeconds), { announce: true, reschedule: true }));

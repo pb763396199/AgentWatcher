@@ -297,6 +297,7 @@ struct ScanOptions {
     include_claude: Option<bool>,
     include_codex: Option<bool>,
     include_open_code: Option<bool>,
+    workspace_path_blacklist: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -309,6 +310,7 @@ struct ResolvedScanOptions {
     include_claude: bool,
     include_codex: bool,
     include_open_code: bool,
+    workspace_path_blacklist: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -843,6 +845,7 @@ fn scan_sessions_blocking(options: Option<ScanOptions>) -> Vec<AgentSession> {
         sessions.extend(scan_opencode_sessions(scan_time_ms, &options));
     }
 
+    apply_workspace_path_blacklist(&mut sessions, &options.workspace_path_blacklist);
     sessions.sort_by(|left_session, right_session| {
         status_rank(&left_session.status)
             .cmp(&status_rank(&right_session.status))
@@ -851,6 +854,32 @@ fn scan_sessions_blocking(options: Option<ScanOptions>) -> Vec<AgentSession> {
     apply_session_limit_per_provider(&mut sessions, options.max_sessions);
     update_performance_scan_snapshot(&sessions, scan_started.elapsed());
     sessions
+}
+
+fn apply_workspace_path_blacklist(sessions: &mut Vec<AgentSession>, blacklist: &[String]) {
+    let normalized_blacklist: Vec<String> = blacklist
+        .iter()
+        .filter_map(|path| normalized_workspace_path_key(path))
+        .collect();
+    if normalized_blacklist.is_empty() {
+        return;
+    }
+
+    sessions.retain(|session| {
+        let Some(workspace_key) = session
+            .workspace_path
+            .as_deref()
+            .and_then(normalized_workspace_path_key)
+        else {
+            return true;
+        };
+        !normalized_blacklist.iter().any(|blocked_key| {
+            workspace_key == *blocked_key
+                || workspace_key
+                    .strip_prefix(blocked_key)
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+        })
+    });
 }
 
 fn apply_session_limit_per_provider(sessions: &mut Vec<AgentSession>, limit: usize) {
@@ -7311,6 +7340,7 @@ fn resolve_scan_options(options: Option<ScanOptions>) -> ResolvedScanOptions {
         include_claude: None,
         include_codex: None,
         include_open_code: None,
+        workspace_path_blacklist: None,
     });
     let active_days = options
         .active_window_days
@@ -7329,7 +7359,28 @@ fn resolve_scan_options(options: Option<ScanOptions>) -> ResolvedScanOptions {
         include_claude: options.include_claude.unwrap_or(true),
         include_codex: options.include_codex.unwrap_or(true),
         include_open_code: options.include_open_code.unwrap_or(true),
+        workspace_path_blacklist: options
+            .workspace_path_blacklist
+            .unwrap_or_else(default_workspace_path_blacklist)
+            .into_iter()
+            .filter_map(|entry| resolve_workspace_blacklist_entry(&entry))
+            .collect(),
     }
+}
+
+fn default_workspace_path_blacklist() -> Vec<String> {
+    vec![path_to_string(&env::temp_dir())]
+}
+
+fn resolve_workspace_blacklist_entry(entry: &str) -> Option<String> {
+    let trimmed = entry.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.eq_ignore_ascii_case("%TEMP%") || trimmed.eq_ignore_ascii_case("%TMP%") {
+        return Some(path_to_string(&env::temp_dir()));
+    }
+    Some(trimmed.to_string())
 }
 
 fn read_directory(directory_path: &Path) -> Vec<fs::DirEntry> {
@@ -9486,6 +9537,7 @@ mod tests {
             include_claude: None,
             include_codex: Some(false),
             include_open_code: None,
+            workspace_path_blacklist: None,
         }));
 
         assert!(!options.include_codex);
@@ -9502,6 +9554,7 @@ mod tests {
             include_claude: None,
             include_codex: None,
             include_open_code: None,
+            workspace_path_blacklist: None,
         }));
 
         assert!(!options.include_copilot);
@@ -9567,6 +9620,88 @@ mod tests {
     }
 
     #[test]
+    fn workspace_path_blacklist_filters_directory_and_descendants_only() {
+        fn session(id: &str, workspace_path: Option<&str>) -> AgentSession {
+            AgentSession {
+                id: id.to_string(),
+                provider: "claude".to_string(),
+                provider_label: "C".to_string(),
+                title: id.to_string(),
+                workspace: "workspace".to_string(),
+                workspace_path: workspace_path.map(str::to_string),
+                workspace_key: "workspace".to_string(),
+                workspace_name: "workspace".to_string(),
+                workspace_label: "workspace".to_string(),
+                workspace_group: String::new(),
+                workspace_discriminator: String::new(),
+                session_path: None,
+                session_resource: None,
+                status: "idle".to_string(),
+                time_label: String::new(),
+                updated_ms: 0,
+                message_count: 0,
+                last_user_message: None,
+                last_user_message_truncated: false,
+                last_ai_message: None,
+                last_ai_message_truncated: false,
+                last_ai_message_excerpt_kind: None,
+                branch: None,
+                todo_ids: Vec::new(),
+                plugin_workflow: None,
+            }
+        }
+
+        let mut sessions = vec![
+            session("temp-root", Some(r"C:\Users\YUMEI\AppData\Local\Temp")),
+            session(
+                "temp-child",
+                Some(r"c:/users/yumei/appdata/local/temp/run/task"),
+            ),
+            session(
+                "similar-prefix",
+                Some(r"C:\Users\YUMEI\AppData\Local\TemporaryProject"),
+            ),
+            session("normal", Some(r"F:\AiProject\AgentWatcher")),
+            session("unknown", None),
+        ];
+
+        apply_workspace_path_blacklist(
+            &mut sessions,
+            &[r"C:\Users\YUMEI\AppData\Local\Temp\.".to_string()],
+        );
+
+        assert_eq!(
+            sessions
+                .iter()
+                .map(|session| session.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["similar-prefix", "normal", "unknown"]
+        );
+    }
+
+    #[test]
+    fn workspace_path_blacklist_defaults_to_system_temp_and_respects_explicit_empty_list() {
+        let defaults = resolve_scan_options(None);
+        assert_eq!(
+            defaults.workspace_path_blacklist,
+            default_workspace_path_blacklist()
+        );
+
+        let explicit_empty = resolve_scan_options(Some(ScanOptions {
+            max_sessions: None,
+            active_window_days: None,
+            hide_archived: None,
+            include_copilot: None,
+            include_copilot_cli: None,
+            include_claude: None,
+            include_codex: None,
+            include_open_code: None,
+            workspace_path_blacklist: Some(Vec::new()),
+        }));
+        assert!(explicit_empty.workspace_path_blacklist.is_empty());
+    }
+
+    #[test]
     fn scan_options_include_opencode_by_default_and_can_disable_it() {
         assert!(resolve_scan_options(None).include_open_code);
 
@@ -9579,6 +9714,7 @@ mod tests {
             include_claude: None,
             include_codex: None,
             include_open_code: Some(false),
+            workspace_path_blacklist: None,
         }));
 
         assert!(!options.include_open_code);
@@ -9724,6 +9860,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
+            workspace_path_blacklist: None,
         }));
         let session = read_codex_jsonl_session(&session_path, scan_time_ms, &options).unwrap();
         let expected_session_path = path_to_string(&session_path);
@@ -9807,6 +9944,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
+            workspace_path_blacklist: None,
         }));
 
         assert!(read_codex_jsonl_session(&session_path, current_time_ms(), &options).is_none());
@@ -9989,6 +10127,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(false),
             include_open_code: Some(true),
+            workspace_path_blacklist: None,
         }));
 
         let session = read_opencode_session_row(&row, summary, scan_time_ms, &options).unwrap();
@@ -10151,6 +10290,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(false),
             include_open_code: Some(true),
+            workspace_path_blacklist: None,
         }));
         let start = Instant::now();
         let first_scan = scan_opencode_sessions(current_time_ms(), &options);
@@ -10232,6 +10372,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
+            workspace_path_blacklist: None,
         }));
         let thread = json!({
             "id": "019e9715-ea58-74f2-af8f-feca74ba9d08",
@@ -10316,6 +10457,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
+            workspace_path_blacklist: None,
         }));
         let thread = json!({
             "id": "019f1665-d477-7443-9248-4068f48b2ffb",
@@ -10368,6 +10510,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
+            workspace_path_blacklist: None,
         }));
         let thread = json!({
             "id": "thread-preview-only",
@@ -10402,6 +10545,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
+            workspace_path_blacklist: None,
         }));
         let thread = json!({
             "id": "thread-cached-summary",
@@ -10501,6 +10645,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(false),
             include_open_code: Some(false),
+            workspace_path_blacklist: None,
         }));
         let sessions = scan_copilot_cli_sessions_from_connection(
             &connection,
@@ -10561,6 +10706,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
+            workspace_path_blacklist: None,
         }));
 
         assert_eq!(
@@ -10605,6 +10751,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
+            workspace_path_blacklist: None,
         }));
 
         let session = wait_for_live_codex_session(&thread_id, &token, &options)
