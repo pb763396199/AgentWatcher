@@ -6,8 +6,9 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - VS Code Claude Code 会话
 - Codex 桌面会话
 - OpenCode 会话
+- ZCode 会话
 
-当前发布版本：v0.1.4。仓库使用 Tauri 2 作为桌面应用壳，前端入口 [ui/index.html](ui/index.html) 是唯一 UI 源文件。AgentWatcher 主仓库保持零插件可启动、构建和测试，外部插件通过独立 `*.awplugin` 描述文件发现和启用。
+当前发布版本：v0.1.5。仓库使用 Tauri 2 作为桌面应用壳，前端入口 [ui/index.html](ui/index.html) 是唯一 UI 源文件。AgentWatcher 主仓库保持零插件可启动、构建和测试，外部插件通过独立 `*.awplugin` 描述文件发现和启用。
 
 ## 当前 UI 入口
 
@@ -38,22 +39,24 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - 新增 performance-panel，支持 AgentWatcher、VS Code、Codex 进程采样、CPU 历史、列宽记忆和快照复制。
 - 接入 Codex 桌面会话扫描，支持与 Copilot / Claude 一起纳入 Watcher 和任务链路。
 - 接入 OpenCode 和 Copilot CLI 独立会话来源，provider 筛选、状态卡片和数量配额彼此独立。
+- 接入 ZCode 会话来源（本机 `~/.zcode/cli/db/db.sqlite`）：状态卡片、悬浮预览、接续上下文导出可用；点击跳转暂不实现（ZCode 官方无会话级深链，桌面发行版不含 TUI 运行时，点击返回明确提示）。
 - 扫描上限按 provider 分别计算，避免高数量来源挤掉其他 provider。
 - 支持工作区路径黑名单，默认过滤 `%TEMP%` 下的临时测试会话。
 
 ## 技术方向
 
-使用 Tauri 2 实现轻量桌面壳，前端由 [ui/index.html](ui/index.html) 提供。宿主统一聚合 Copilot、Copilot CLI、Claude Code、Codex 和 OpenCode 会话；VS Code 内会话通过 Bridge 精确跳转，外部插件通过描述文件贡献工作流和设置动作。
+使用 Tauri 2 实现轻量桌面壳，前端由 [ui/index.html](ui/index.html) 提供。宿主统一聚合 Copilot、Copilot CLI、Claude Code、Codex、OpenCode 和 ZCode 会话；VS Code 内会话通过 Bridge 精确跳转，ZCode 会话支持扫描、预览与接续上下文导出（跳转暂不实现），外部插件通过描述文件贡献工作流和设置动作。
 
 ## 功能特性
 
-- **实时监控**：自动扫描 Copilot、Copilot CLI、Claude Code、Codex 和 OpenCode 的 workspace sessions
+- **实时监控**：自动扫描 Copilot、Copilot CLI、Claude Code、Codex、OpenCode 和 ZCode 的 workspace sessions
 - **状态分类**：按 waiting（待回复）、running（运行中）、idle（闲置）分类显示
 - **一键跳转**：点击卡片直接打开对应的 VS Code session
 - **悬浮预览**：悬停卡片右下角展开按钮显示最近用户输入和 AI 正文摘要，预览窗口可 resize 并记忆尺寸
 - **Handoff**：右键 session 卡片可携带上下文接续到 Copilot、Copilot CLI 或 Claude，新会话由目标 provider 负责承接
 - **Codex 会话接入**：接入 Codex 桌面会话，支持与 Copilot、Claude 一起显示状态与跳转
 - **OpenCode 会话接入**：读取本机 OpenCode 数据库，支持状态、预览、打开和 handoff
+- **ZCode 会话接入**：读取本机 ZCode 会话库，支持状态、预览和作为接续来源导出上下文（跳转暂不实现）
 - **独立 Copilot CLI provider**：独立筛选、配额和标识，不与 VS Code Copilot 合并
 - **VS Code 连接组件**：首次启动自动安装连接组件，实现精确 session 跳转、handoff 路由和 ack 成功确认
 - **AgentTask / Todo**：新增 AgentTask 与 Todo 面板入口，任务状态与会话状态联动
@@ -176,7 +179,7 @@ AgentWatcher 使用自带的 VS Code 连接组件实现精确 session 跳转和 
 
 ## Known Issues
 
-- Prompt handoff 的提示词插入目前整体仍依赖 clipboard 通道：Copilot、Copilot CLI 和 Claude 都由 VS Code 连接组件读取 clipboard 后，再通过各自的目标命令填入。非剪贴板 prompt 通道列入 Future，不作为本次 v0.1.4 发布阻断。
+- Prompt handoff 的提示词插入目前整体仍依赖 clipboard 通道：Copilot、Copilot CLI 和 Claude 都由 VS Code 连接组件读取 clipboard 后，再通过各自的目标命令填入。非剪贴板 prompt 通道列入 Future，不作为本次 v0.1.5 发布阻断。
 - 未来如果引入 prompt 临时文件，禁止写入项目目录，只允许写入 AgentWatcher 自身运行时临时目录或系统临时目录，例如 `%TEMP%\AgentWatcher\...`，并需要 token、TTL 和读取后清理。
 - 历史 VS Code 连接组件测试扩展可能残留在开发机上；当前发布只以稳定组件为准，install/update 会尝试清理旧 ID。
 

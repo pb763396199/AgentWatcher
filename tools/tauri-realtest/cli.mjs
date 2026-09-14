@@ -55,6 +55,14 @@ const aliasToFlow = new Map([
   ['opencode-handoff-context', 'opencode-handoff-context'],
   ['opencode-handoff', 'opencode-handoff-context'],
   ['opencode接续', 'opencode-handoff-context'],
+  ['zcode-session', 'zcode-session'],
+  ['zcode-card', 'zcode-session'],
+  ['zcode', 'zcode-session'],
+  ['zcode会话', 'zcode-session'],
+  ['zcode卡片', 'zcode-session'],
+  ['zcode-handoff-context', 'zcode-handoff-context'],
+  ['zcode-handoff', 'zcode-handoff-context'],
+  ['zcode接续', 'zcode-handoff-context'],
   ['settings-performance', 'settings-performance'],
   ['settings-perf', 'settings-performance'],
   ['设置性能', 'settings-performance'],
@@ -73,6 +81,8 @@ const flowDisplay = {
   handoff: '接续面板流程',
   'opencode-session': 'OpenCode 会话卡片流程',
   'opencode-handoff-context': 'OpenCode 接续上下文流程',
+  'zcode-session': 'ZCode 会话卡片流程',
+  'zcode-handoff-context': 'ZCode 接续上下文流程',
   'settings-performance': '设置切换性能流程',
   filtering: '主面板筛选流程',
 };
@@ -180,6 +190,10 @@ try {
       await runStep('确认接续面板 WebViewWindow 可被识别', () => runHandoffFlow());
     } else if (flow === 'opencode-session') {
       await runStep('点击真实 OpenCode 会话卡片', () => runOpenCodeSessionFlow());
+    } else if (flow === 'zcode-session') {
+      await runStep('点击真实 ZCode 会话卡片（TUI 恢复）', () => runZcodeSessionFlow());
+    } else if (flow === 'zcode-handoff-context') {
+      await runStep('验证 ZCode 接续 Prompt 可读取来源文件', () => runZcodeHandoffContextFlow());
     } else if (flow === 'opencode-handoff-context') {
       await runStep('验证 OpenCode 接续 Prompt 可读取来源文件', () => runOpenCodeHandoffContextFlow());
     } else if (flow === 'settings-performance') {
@@ -827,7 +841,7 @@ async function runFilteringFlow() {
     throw new Error(`主面板筛选控件布局不符合预期：${JSON.stringify(layout)}`);
   }
 
-  const providerOrder = ['codex', 'opencode', 'copilot', 'claude'];
+  const providerOrder = ['zcode', 'codex', 'opencode', 'copilot', 'claude'];
   const targetProvider = providerOrder.find(provider => (initial.providerCounts[provider] || 0) > 0)
     || Object.entries(initial.providerCounts).find(([, count]) => count > 0)?.[0]
     || '';
@@ -987,6 +1001,71 @@ async function runOpenCodeSessionFlow() {
   };
 }
 
+async function runZcodeSessionFlow() {
+  const page = await getMainPage();
+  await assertTauriPage(page, '主窗口');
+
+  const includeZcode = page.locator('#includeZcode');
+  if (await includeZcode.count()) {
+    const enabled = await includeZcode.isChecked().catch(() => true);
+    if (!enabled) {
+      await page.locator('#settingsToggle').click();
+      await includeZcode.check();
+      await page.waitForTimeout(500);
+    }
+  }
+
+  await page.waitForFunction(() => {
+    return Array.from(document.querySelectorAll('.lane .session-card'))
+      .some(card => card.dataset.provider === 'zcode');
+  }, null, { timeout: 30000 });
+
+  const card = page.locator('.lane .session-card[data-provider="zcode"]').first();
+  await card.scrollIntoViewIfNeeded();
+  const cardInfo = await card.evaluate(element => ({
+    sessionId: element.dataset.sessionId || '',
+    workspace: element.dataset.workspaceLabel || element.dataset.workspace || '',
+    workspacePath: element.dataset.workspacePath || element.dataset.open || '',
+    status: element.dataset.status || '',
+    title: element.dataset.sessionTitle || element.querySelector('.session-title')?.textContent || '',
+    文本片段: element.innerText.slice(0, 180),
+  }));
+  await page.locator('#toast').evaluate(element => {
+    element.textContent = '';
+    element.classList.remove('show', 'error');
+  });
+  const beforeToast = '';
+
+  await card.click();
+  await page.waitForFunction((previous) => {
+    const text = document.querySelector('#toast')?.textContent || '';
+    return text && text !== previous && !/正在打开会话|Opening session/i.test(text);
+  }, beforeToast, { timeout: 30000 });
+
+  const toastText = await page.locator('#toast').textContent().catch(() => '');
+  if (!/ZCode session jump is not supported yet/i.test(toastText)) {
+    throw new Error(`ZCode 卡片点击未返回「跳转暂不支持」提示：${toastText}`);
+  }
+  const screenshot = await saveScreenshot(page, 'zcode-card-after-click.png');
+
+  return {
+    点击目标: '.lane .session-card[data-provider="zcode"]',
+    卡片: cardInfo,
+    Toast: toastText,
+    截图: screenshot,
+  };
+}
+
+function assertHandoffSourceBelongsToCard(providerLabel, cardSessionId, sourcePath) {
+  const rawId = String(cardSessionId || '').includes(':')
+    ? String(cardSessionId).slice(String(cardSessionId).indexOf(':') + 1)
+    : String(cardSessionId || '');
+  const base = path.basename(sourcePath);
+  if (!rawId || !base.startsWith(rawId + '-')) {
+    throw new Error(`${providerLabel} 接续来源文件不属于被点击的会话：${sourcePath}（期望前缀 ${rawId}-）`);
+  }
+}
+
 async function runOpenCodeHandoffContextFlow() {
   const page = await getMainPage();
   await assertTauriPage(page, '主窗口');
@@ -1038,6 +1117,7 @@ async function runOpenCodeHandoffContextFlow() {
   if (!sourcePath || !fs.existsSync(sourcePath)) {
     throw new Error(`OpenCode 接续来源文件不存在：${sourcePath || '(未从 prompt 解析到)'}`);
   }
+  assertHandoffSourceBelongsToCard('OpenCode', cardInfo.sessionId, sourcePath);
   const sourceText = fs.readFileSync(sourcePath, 'utf8');
   if (!sourceText.includes('AgentWatcher OpenCode Source Session') || !sourceText.includes('## Transcript')) {
     throw new Error(`OpenCode 接续来源文件格式不完整：${sourcePath}`);
@@ -1063,6 +1143,95 @@ async function runOpenCodeHandoffContextFlow() {
     });
   }
   const screenshot = await saveScreenshot(handoff, 'opencode-handoff-context.png');
+
+  return {
+    卡片: cardInfo,
+    Prompt包含来源文件: true,
+    已验证目标模式: modeResults,
+    来源文件: sourcePath,
+    来源文件大小: sourceText.length,
+    Prompt片段: prompt.slice(0, 800),
+    截图: screenshot,
+  };
+}
+
+async function runZcodeHandoffContextFlow() {
+  const page = await getMainPage();
+  await assertTauriPage(page, '主窗口');
+
+  const includeZcode = page.locator('#includeZcode');
+  if (await includeZcode.count()) {
+    const enabled = await includeZcode.isChecked().catch(() => true);
+    if (!enabled) {
+      await page.locator('#settingsToggle').click();
+      await includeZcode.check();
+      await page.waitForTimeout(500);
+    }
+  }
+
+  await page.waitForFunction(() => {
+    return Array.from(document.querySelectorAll('.lane .session-card'))
+      .some(card => card.dataset.provider === 'zcode');
+  }, null, { timeout: 30000 });
+
+  const card = page.locator('.lane .session-card[data-provider="zcode"]').last();
+  await card.scrollIntoViewIfNeeded();
+  const cardInfo = await card.evaluate(element => ({
+    sessionId: element.dataset.sessionId || '',
+    workspace: element.dataset.workspaceLabel || element.dataset.workspace || '',
+    workspacePath: element.dataset.workspacePath || element.dataset.open || '',
+    title: element.dataset.sessionTitle || element.querySelector('.session-title')?.textContent || '',
+  }));
+
+  await card.click({ button: 'right' });
+  await page.locator('#handoffOpen').click();
+
+  const handoff = await waitForPage(
+    candidate => candidate.url().includes('?handoff=1'),
+    '接续面板窗口',
+    20000,
+  );
+  await handoff.waitForLoadState('domcontentloaded');
+  await assertTauriPage(handoff, '接续面板窗口');
+  await handoff.waitForFunction(() => {
+    const prompt = document.querySelector('#handoffPromptPreview')?.value || '';
+    return /handoff-sources[\\/]+zcode/i.test(prompt)
+      && /sess_[A-Za-z0-9]/.test(prompt)
+      && !/主要来源文件:\s*（无）|Primary source file:\s*\(none\)/i.test(prompt);
+  }, null, { timeout: 30000 });
+
+  const prompt = await handoff.locator('#handoffPromptPreview').inputValue();
+  const sourcePathMatch = prompt.match(/(?:主要来源文件|Primary source file):\s*(.+\.md)/);
+  const sourcePath = sourcePathMatch ? sourcePathMatch[1].trim() : '';
+  if (!sourcePath || !fs.existsSync(sourcePath)) {
+    throw new Error(`ZCode 接续来源文件不存在：${sourcePath || '(未从 prompt 解析到)'}`);
+  }
+  assertHandoffSourceBelongsToCard('ZCode', cardInfo.sessionId, sourcePath);
+  const sourceText = fs.readFileSync(sourcePath, 'utf8');
+  if (!sourceText.includes('AgentWatcher ZCode Source Session') || !sourceText.includes('## Transcript')) {
+    throw new Error(`ZCode 接续来源文件格式不完整：${sourcePath}`);
+  }
+  if (!/###\s+(user|assistant)\b/i.test(sourceText)) {
+    throw new Error(`ZCode 接续来源文件没有可读用户/助手回合：${sourcePath}`);
+  }
+  const modeResults = [];
+  for (const mode of ['agents', 'code-chat', 'claude-panel', 'codex-app', 'opencode-cli']) {
+    await handoff.locator('#handoffProviderButton').click();
+    await handoff.locator(`#handoffProviderOptions [data-mode="${mode}"]`).click();
+    await handoff.waitForFunction((expectedSourcePath) => {
+      const prompt = document.querySelector('#handoffPromptPreview')?.value || '';
+      return prompt.includes(expectedSourcePath);
+    }, sourcePath, { timeout: 10000 });
+    const modePrompt = await handoff.locator('#handoffPromptPreview').inputValue();
+    if (!modePrompt.includes(sourcePath)) {
+      throw new Error(`切换目标 ${mode} 后 Prompt 丢失 ZCode 来源文件路径。`);
+    }
+    modeResults.push({
+      mode,
+      targetLine: (modePrompt.match(/目标代理:\s*(.+)|Target agent:\s*(.+)/) || [])[0] || '',
+    });
+  }
+  const screenshot = await saveScreenshot(handoff, 'zcode-handoff-context.png');
 
   return {
     卡片: cardInfo,

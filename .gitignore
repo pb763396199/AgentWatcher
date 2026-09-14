@@ -21,3 +21,9 @@ vscode-agentwatcher-bridge/*.vsix
 .agentwatcher/
 .tmp/
 .plugin-worktrees/
+
+# ZCode agent session artifacts (plans written into the workspace)
+.zcode/
+# local dev launcher binaries
+/tools/agentwatcher-dev-launcher.exe
+/tools/agentwatcher-dev-launcher.pdb

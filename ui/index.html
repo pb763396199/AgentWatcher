@@ -201,6 +201,12 @@
       color: #6b4f00;
     }
 
+    body[data-theme="light"] .provider.zc {
+      border-color: #8a3f86;
+      background: #f9eef9;
+      color: #71337a;
+    }
+
     body[data-theme="light"] .lane-header {
       background: rgba(248, 248, 248, 0.96);
     }
@@ -923,6 +929,7 @@
     .provider-option-badge.cl { color: #ce9178; }
     .provider-option-badge.cx { color: #75beff; }
     .provider-option-badge.oc { color: #d7ba7d; }
+    .provider-option-badge.zc { color: #c586c0; }
 
     .session-empty-state {
       min-height: 132px;
@@ -1444,6 +1451,7 @@
     .provider.cl { color: #ce9178; border-color: #ce9178; }
     .provider.cx { color: #75beff; border-color: #75beff; }
     .provider.oc { color: #d7ba7d; border-color: #d7ba7d; }
+    .provider.zc { color: #c586c0; border-color: #c586c0; }
     .time {
       min-width: 0;
       overflow: hidden;
@@ -5389,6 +5397,10 @@
             <input class="setting-check" id="includeOpenCode" type="checkbox" checked />
           </div>
           <div class="setting-row">
+            <label for="includeZcode" data-i18n="includeZcode">ZCode sessions</label>
+            <input class="setting-check" id="includeZcode" type="checkbox" checked />
+          </div>
+          <div class="setting-row">
             <label for="hideArchived" data-i18n="hideArchived">Hide archived</label>
             <input class="setting-check" id="hideArchived" type="checkbox" checked />
           </div>
@@ -6017,6 +6029,7 @@
     const includeClaude = document.getElementById('includeClaude');
     const includeCodex = document.getElementById('includeCodex');
     const includeOpenCode = document.getElementById('includeOpenCode');
+    const includeZcode = document.getElementById('includeZcode');
     const hideArchived = document.getElementById('hideArchived');
     const workspacePathBlacklist = document.getElementById('workspacePathBlacklist');
     const activeWindowDays = document.getElementById('activeWindowDays');
@@ -6311,6 +6324,7 @@
       includeClaude: true,
       includeCodex: true,
       includeOpenCode: true,
+      includeZcode: true,
       hideArchived: true,
       workspacePathBlacklist: ['%TEMP%'],
       activeWindowDays: 7,
@@ -6431,6 +6445,7 @@
         clearFilters: 'Clear filters',
         includeCodex: 'Codex sessions',
         includeOpenCode: 'OpenCode sessions',
+        includeZcode: 'ZCode sessions',
         includeCopilot: 'VS Code Copilot sessions',
         maxSessions: 'Sessions per provider',
         pluginManagement: 'Plugin management', pluginRefresh: 'Refresh', pluginMount: 'Mount', pluginMountPlaceholder: 'Plugin directory, for example F:\\Tools\\MyPlugin', pluginWorkflowParametersAria: 'Plugin workflow parameters', pluginWorkflowParameters: 'Workflow parameters', pluginWorkflowPerTask: 'Configured per task', pluginWorkflowPreviewAria: 'Plugin workflow preview', pluginWorkflowPreview: 'Workflow preview', pluginWorkflowAwaitingPreview: 'Awaiting preview', pluginWorkflowDefaultLabel: 'Plugin workflow', pluginNoneMounted: 'No plugins mounted', pluginZeroMode: 'AgentWatcher is running in zero-plugin mode.', pluginFallbackName: 'Plugin', pluginHealthFailed: 'startup check failed', pluginHealthPassed: 'startup check passed', pluginEnabled: 'Enabled', pluginMountedDisabled: 'Mounted, disabled', pluginNoPublicModules: 'No public modules', pluginDisable: 'Disable', pluginEnable: 'Enable', pluginUnmount: 'Unmount', confirmAgain: 'Confirm again',
@@ -6447,10 +6462,12 @@
         handoffTargetAgentOpenCode: 'OpenCode CLI',
         handoffProviderCodex: 'Codex desktop',
         handoffProviderOpenCode: 'OpenCode',
+        handoffProviderZcode: 'ZCode',
         handoffPortableSummaryLabel: 'Portable source summary',
         handoffSourceExportPending: 'Exporting portable source file...',
         handoffParserHintCodex: 'Codex sessions are available through the Codex desktop app-server. Use the provider resource to open the source thread when needed, and rely on the snapshot if the source thread is not accessible.',
         handoffParserHintOpenCode: 'OpenCode sessions are exported by AgentWatcher from the local SQLite database into the primary source file. Read that file first; the provider resource is only a navigation hint.',
+        handoffParserHintZcode: 'ZCode sessions are exported by AgentWatcher from the local ZCode SQLite database into the primary source file. Read that file first; there is no provider resource link for ZCode.',
         agentTaskTitle: 'AgentTask',
         watcherWindowLabel: 'AgentWatcher Windows app window',
         agentTaskFaceLabel: 'AgentTask workspace todo',
@@ -6608,6 +6625,7 @@
         clearFilters: '清除筛选',
         includeCodex: 'Codex 会话',
         includeOpenCode: 'OpenCode 会话',
+        includeZcode: 'ZCode 会话',
         includeCopilot: 'VS Code Copilot 会话',
         maxSessions: '每个提供方的会话数',
         pluginManagement: '插件管理', pluginRefresh: '刷新', pluginMount: '挂载', pluginMountPlaceholder: '插件目录，例如 F:\\Tools\\MyPlugin', pluginWorkflowParametersAria: '插件工作流参数', pluginWorkflowParameters: '工作流参数', pluginWorkflowPerTask: '每个任务单独填写', pluginWorkflowPreviewAria: '插件工作流预演', pluginWorkflowPreview: '工作流预演', pluginWorkflowAwaitingPreview: '等待预演', pluginWorkflowDefaultLabel: '插件工作流', pluginNoneMounted: '未挂载插件', pluginZeroMode: 'AgentWatcher 当前以零插件模式运行。', pluginFallbackName: '插件', pluginHealthFailed: '启动检查失败', pluginHealthPassed: '已通过启动检查', pluginEnabled: '已启用', pluginMountedDisabled: '已挂载，未启用', pluginNoPublicModules: '无公开模块', pluginDisable: '停用', pluginEnable: '启用', pluginUnmount: '卸载', confirmAgain: '再次确认',
@@ -6624,10 +6642,12 @@
         handoffTargetAgentOpenCode: 'OpenCode CLI',
         handoffProviderCodex: 'Codex 桌面端',
         handoffProviderOpenCode: 'OpenCode',
+        handoffProviderZcode: 'ZCode',
         handoffPortableSummaryLabel: '可移植来源摘要',
         handoffSourceExportPending: '正在导出可移植来源文件...',
         handoffParserHintCodex: 'Codex 会话通过 Codex 桌面端 app-server 访问。需要时使用 provider resource 打开来源线程；若无法访问来源线程，则从快照继续。',
         handoffParserHintOpenCode: 'OpenCode 会话由 AgentWatcher 从本机 SQLite 数据库导出为主要来源文件。先读取该文件；provider resource 只是导航提示。',
+        handoffParserHintZcode: 'ZCode 会话由 AgentWatcher 从本机 ZCode SQLite 数据库导出为主要来源文件。先读取该文件；ZCode 没有 provider resource 链接。',
         agentTaskTitle: 'AgentTask',
         watcherWindowLabel: 'AgentWatcher 主窗口',
         agentTaskFaceLabel: 'AgentTask 工作区待办',
@@ -11054,6 +11074,7 @@
           includeClaude: savedSettings.includeClaude !== false,
           includeCodex: savedSettings.includeCodex !== false,
           includeOpenCode: savedSettings.includeOpenCode !== false,
+          includeZcode: savedSettings.includeZcode !== false,
           hideArchived: savedSettings.hideArchived !== false,
           workspacePathBlacklist: Array.isArray(savedSettings.workspacePathBlacklist)
             ? savedSettings.workspacePathBlacklist.map(value => String(value).trim()).filter(Boolean)
@@ -11087,6 +11108,7 @@
         'includeClaude',
         'includeCodex',
         'includeOpenCode',
+        'includeZcode',
         'hideArchived',
         'workspacePathBlacklist',
         'activeWindowDays',
@@ -11407,6 +11429,7 @@
         includeClaude: settings.includeClaude,
         includeCodex: settings.includeCodex,
         includeOpenCode: settings.includeOpenCode,
+        includeZcode: settings.includeZcode,
         hideArchived: settings.hideArchived,
         activeWindowDays: settings.activeWindowDays,
         maxSessions: settings.maxSessions,
@@ -11427,6 +11450,7 @@
       includeClaude.checked = settings.includeClaude;
       includeCodex.checked = settings.includeCodex;
       includeOpenCode.checked = settings.includeOpenCode;
+      includeZcode.checked = settings.includeZcode;
       hideArchived.checked = settings.hideArchived;
       workspacePathBlacklist.value = settings.workspacePathBlacklist.join('\n');
       activeWindowDays.value = String(settings.activeWindowDays);
@@ -12247,11 +12271,11 @@
     function formatScanMetric(scan, counts) {
       const duration = Number.isFinite(Number(scan.durationMs)) ? scan.durationMs + 'ms' : '--';
       const total = Number.isFinite(Number(scan.totalSessions)) ? scan.totalSessions : 0;
-      return duration + ' / ' + total + ' | GH ' + (counts.copilot || 0) + ' GH CLI ' + (counts.copilotCli || 0) + ' C ' + (counts.claude || 0) + ' CX ' + (counts.codex || 0) + ' OC ' + (counts.opencode || 0);
+      return duration + ' / ' + total + ' | GH ' + (counts.copilot || 0) + ' GH CLI ' + (counts.copilotCli || 0) + ' C ' + (counts.claude || 0) + ' CX ' + (counts.codex || 0) + ' OC ' + (counts.opencode || 0) + ' ZC ' + (counts.zcode || 0);
     }
 
     function scanExplainText(scan, counts) {
-      const providers = 'GH ' + (counts.copilot || 0) + ' · GH CLI ' + (counts.copilotCli || 0) + ' · C ' + (counts.claude || 0) + ' · CX ' + (counts.codex || 0) + ' · OC ' + (counts.opencode || 0);
+      const providers = 'GH ' + (counts.copilot || 0) + ' · GH CLI ' + (counts.copilotCli || 0) + ' · C ' + (counts.claude || 0) + ' · CX ' + (counts.codex || 0) + ' · OC ' + (counts.opencode || 0) + ' · ZC ' + (counts.zcode || 0);
       const codexRpc = Number(scan.codexTurnRequests) || 0;
       const codexTurns = Number(scan.codexTurnsReturned) || 0;
       return t('perfScanExplain') + ' ' + providers + (codexRpc ? ' · Codex ' + codexRpc + ' rpc / ' + codexTurns + ' turns' : '');
@@ -12507,6 +12531,9 @@
       if (key === 'opencode' || key === 'oc' || key === 'open code' || key === 'opencode cli') {
         return { provider: 'opencode', label: 'OC', className: 'oc', nameKey: 'handoffProviderOpenCode' };
       }
+      if (key === 'zcode' || key === 'zc' || key === 'z code' || key === 'zcode cli' || key === 'zcode tui') {
+        return { provider: 'zcode', label: 'ZC', className: 'zc', nameKey: 'handoffProviderZcode' };
+      }
       if (key === 'claude' || key === 'cl' || key === 'c' || key === 'claude code') {
         return { provider: 'claude', label: 'C', className: 'cl', nameKey: 'handoffProviderClaude' };
       }
@@ -12704,7 +12731,9 @@
             ? t('handoffParserHintCodex')
             : provider === 'opencode'
               ? t('handoffParserHintOpenCode')
-              : t('handoffParserHintUnknown');
+              : provider === 'zcode'
+                ? t('handoffParserHintZcode')
+                : t('handoffParserHintUnknown');
       return [
         '',
         t('handoffSourceAccessTitle'),
@@ -12718,12 +12747,25 @@
       ].join('\n');
     }
 
+    // Rust 返回的 context.sessionId 是去掉 provider 前缀的原始 id；
+    // 一切复用/展示必须先确认 context 确实归属当前来源会话，防止旧导出串号
+    function handoffContextMatchesSource(context, source) {
+      if (!context?.primarySourceFile) return false;
+      const sessionId = String(source?.id || '');
+      if (!sessionId) return false;
+      const rawSessionId = sessionId.includes(':') ? sessionId.slice(sessionId.indexOf(':') + 1) : sessionId;
+      const contextSessionId = String(context.sessionId || '');
+      return contextSessionId === sessionId || contextSessionId === rawSessionId;
+    }
+
     function handoffPortableSourceFile(source) {
-      return handoffSourceContext?.primarySourceFile || source?.handoffSourceFile || source?.sessionPath || t('handoffNone');
+      if (handoffContextMatchesSource(handoffSourceContext, source)) return handoffSourceContext.primarySourceFile;
+      return source?.handoffSourceFile || source?.sessionPath || t('handoffNone');
     }
 
     function handoffPortableSourceSummary(source) {
-      return handoffSourceContext?.inlineSummary || source?.handoffSourceSummary || '';
+      if (handoffContextMatchesSource(handoffSourceContext, source)) return handoffSourceContext.inlineSummary;
+      return source?.handoffSourceSummary || '';
     }
 
     function buildHandoffPrompt() {
@@ -12791,7 +12833,7 @@
     async function prepareHandoffSourceContext() {
       const source = handoffSourceSession || {};
       const provider = providerMeta(source.provider || source.providerLabel).provider;
-      if (!tauriInvoke || provider !== 'opencode') {
+      if (!tauriInvoke || (provider !== 'opencode' && provider !== 'zcode')) {
         handoffSourceContext = source.handoffSourceFile
           ? {
             provider,
@@ -12805,15 +12847,7 @@
         updateHandoffPrompt();
         return;
       }
-      if (handoffSourceContext?.primarySourceFile || source.handoffSourceFile) {
-        handoffSourceContext = handoffSourceContext || {
-          provider,
-          sessionId: source.id || '',
-          primarySourceFile: source.handoffSourceFile || '',
-          inlineSummary: source.handoffSourceSummary || '',
-          messageCount: Number(source.handoffSourceMessageCount) || 0,
-          warning: ''
-        };
+      if (handoffContextMatchesSource(handoffSourceContext, source)) {
         updateHandoffPrompt();
         return;
       }
@@ -12841,7 +12875,7 @@
           }
         });
         if (requestId !== handoffSourceContextRequestId) return;
-        handoffSourceContext = context || null;
+        handoffSourceContext = handoffContextMatchesSource(context, source) ? context : null;
         if (handoffSourceContext?.primarySourceFile) {
           handoffSourceSession = {
             ...handoffSourceSession,
@@ -12869,8 +12903,8 @@
 
     async function ensureHandoffSourceContextReady() {
       const provider = providerMeta(handoffSourceSession?.provider || handoffSourceSession?.providerLabel).provider;
-      if (!tauriInvoke || provider !== 'opencode') return;
-      if (handoffSourceContext?.primarySourceFile) return;
+      if (!tauriInvoke || (provider !== 'opencode' && provider !== 'zcode')) return;
+      if (handoffContextMatchesSource(handoffSourceContext, handoffSourceSession)) return;
       await prepareHandoffSourceContext();
     }
 
@@ -12881,7 +12915,8 @@
       const nextSourceKey = [nextSourceSession?.id, nextSourceSession?.sessionResource].filter(Boolean).join('|');
       const sourceChanged = previousSourceKey && nextSourceKey && previousSourceKey !== nextSourceKey;
       handoffSourceSession = nextSourceSession;
-      handoffSourceContext = payload.sourceContext || handoffSourceSession.handoffSourceContext || (sourceChanged ? null : handoffSourceContext) || null;
+      const nextContext = payload.sourceContext || handoffSourceSession.handoffSourceContext || (sourceChanged ? null : handoffSourceContext) || null;
+      handoffSourceContext = handoffContextMatchesSource(nextContext, nextSourceSession) ? nextContext : null;
       handoffTargetWorkspace = payload.targetWorkspace || handoffSourceSession.workspacePath || handoffSourceSession.workspaceLabel || handoffSourceSession.workspace || '';
       handoffLaunchMode = handoffLaunchModes.some(item => item.value === payload.launchMode) ? payload.launchMode : 'agents';
       handoffId = payload.handoffId || makeHandoffId();
@@ -13757,7 +13792,7 @@
     }
 
     function providerFilterItems() {
-      return ['all', 'copilot', 'copilot-cli', 'claude', 'codex', 'opencode'].map(provider => {
+      return ['all', 'copilot', 'copilot-cli', 'claude', 'codex', 'opencode', 'zcode'].map(provider => {
         if (provider === 'all') {
           return {
             provider,
@@ -16140,6 +16175,7 @@
       includeClaude.addEventListener('change', () => updateSetting('includeClaude', includeClaude.checked, { announce: true }));
       includeCodex.addEventListener('change', () => updateSetting('includeCodex', includeCodex.checked, { announce: true }));
       includeOpenCode.addEventListener('change', () => updateSetting('includeOpenCode', includeOpenCode.checked, { announce: true }));
+      includeZcode.addEventListener('change', () => updateSetting('includeZcode', includeZcode.checked, { announce: true }));
       hideArchived.addEventListener('change', () => updateSetting('hideArchived', hideArchived.checked, { announce: true }));
       workspacePathBlacklist.addEventListener('change', () => updateSetting(
         'workspacePathBlacklist',

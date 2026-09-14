@@ -38,7 +38,12 @@ const OPENCODE_PART_SCAN_LIMIT: usize = 24;
 const OPENCODE_SUMMARY_FETCH_BUDGET: usize = 4;
 const OPENCODE_SQLITE_BUSY_TIMEOUT_MS: u64 = 50;
 const OPENCODE_SCAN_CACHE_TTL_MS: u64 = 10_000;
-const OPENCODE_HANDOFF_PART_MAX_CHARS: usize = 64 * 1024;
+const ZCODE_SESSION_SCAN_LIMIT_MAX: usize = 240;
+const ZCODE_PART_SCAN_LIMIT: usize = 32;
+const ZCODE_SUMMARY_FETCH_BUDGET: usize = 8;
+const ZCODE_SQLITE_BUSY_TIMEOUT_MS: u64 = 50;
+const ZCODE_SCAN_CACHE_TTL_MS: u64 = 10_000;
+const HANDOFF_PART_MAX_CHARS: usize = 64 * 1024;
 const STATUS_RUNNING_HINT_WINDOW_MS: u64 = 2 * 60 * 60_000;
 const STATUS_RECENT_CONTENT_WINDOW_MS: u64 = 10 * 60_000;
 const STATUS_RECENT_FILE_WINDOW_MS: u64 = 3 * 60_000;
@@ -297,6 +302,7 @@ struct ScanOptions {
     include_claude: Option<bool>,
     include_codex: Option<bool>,
     include_open_code: Option<bool>,
+    include_zcode: Option<bool>,
     workspace_path_blacklist: Option<Vec<String>>,
 }
 
@@ -310,6 +316,7 @@ struct ResolvedScanOptions {
     include_claude: bool,
     include_codex: bool,
     include_open_code: bool,
+    include_zcode: bool,
     workspace_path_blacklist: Vec<String>,
 }
 
@@ -321,6 +328,7 @@ struct PerformanceProviderCounts {
     claude: usize,
     codex: usize,
     opencode: usize,
+    zcode: usize,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -534,16 +542,57 @@ struct OpenCodeSessionRow {
     time_archived: Option<u64>,
 }
 
-#[derive(Debug, Clone)]
-struct OpenCodeTranscriptMessage {
-    id: String,
-    role: String,
-    time_ms: u64,
-    parts: Vec<OpenCodeTranscriptPart>,
+#[derive(Debug, Clone, Default)]
+struct ZcodeSessionSummary {
+    last_user_message: Option<String>,
+    last_ai_message: Option<String>,
+    message_count: u32,
+    latest_part_ms: u64,
+    status_hint: Option<SessionStatusHint>,
+    todo_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-struct OpenCodeTranscriptPart {
+struct CachedZcodeSummary {
+    session_updated_ms: u64,
+    summary: ZcodeSessionSummary,
+}
+
+#[derive(Debug, Clone)]
+struct CachedZcodeScan {
+    captured_ms: u64,
+    key: ZcodeScanCacheKey,
+    sessions: Vec<AgentSession>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ZcodeScanCacheKey {
+    max_sessions: usize,
+    active_window_ms: u64,
+    hide_archived: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ZcodeSessionRow {
+    id: String,
+    title: String,
+    directory: String,
+    task_type: Option<String>,
+    time_created: u64,
+    time_updated: u64,
+    time_archived: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct HandoffTranscriptMessage {
+    id: String,
+    role: String,
+    time_ms: u64,
+    parts: Vec<HandoffTranscriptPart>,
+}
+
+#[derive(Debug, Clone)]
+struct HandoffTranscriptPart {
     label: String,
     text: String,
 }
@@ -567,6 +616,9 @@ static OPENCODE_SESSION_SUMMARY_CACHE: OnceLock<Mutex<HashMap<String, CachedOpen
     OnceLock::new();
 static OPENCODE_SCAN_CACHE: OnceLock<Mutex<Option<CachedOpenCodeScan>>> = OnceLock::new();
 static OPENCODE_WEB_SERVER: OnceLock<Mutex<Option<OpenCodeWebServerProcess>>> = OnceLock::new();
+static ZCODE_SESSION_SUMMARY_CACHE: OnceLock<Mutex<HashMap<String, CachedZcodeSummary>>> =
+    OnceLock::new();
+static ZCODE_SCAN_CACHE: OnceLock<Mutex<Option<CachedZcodeScan>>> = OnceLock::new();
 
 fn start_session_file_watcher(app_handle: tauri::AppHandle) {
     std::thread::spawn(move || {
@@ -662,6 +714,13 @@ fn session_watch_roots() -> Vec<PathBuf> {
             push_existing_path(&mut roots, codex_path);
         }
         push_existing_path(&mut roots, opencode_data.join("opencode.db"));
+        let zcode_db = user_profile_path
+            .join(".zcode")
+            .join("cli")
+            .join("db")
+            .join("db.sqlite");
+        push_existing_path(&mut roots, zcode_db.clone());
+        push_existing_path(&mut roots, zcode_db.with_extension("sqlite-wal"));
     }
     roots
 }
@@ -701,6 +760,7 @@ fn is_session_file_event(event: &Event) -> bool {
 
 fn emit_sessions_changed(app_handle: &tauri::AppHandle, emitted_ms: u64) {
     clear_opencode_scan_cache();
+    clear_zcode_scan_cache();
     let _ = app_handle.emit(SESSIONS_CHANGED_EVENT, emitted_ms);
 }
 
@@ -844,6 +904,9 @@ fn scan_sessions_blocking(options: Option<ScanOptions>) -> Vec<AgentSession> {
     if options.include_open_code {
         sessions.extend(scan_opencode_sessions(scan_time_ms, &options));
     }
+    if options.include_zcode {
+        sessions.extend(scan_zcode_sessions(scan_time_ms, &options));
+    }
 
     apply_workspace_path_blacklist(&mut sessions, &options.workspace_path_blacklist);
     sessions.sort_by(|left_session, right_session| {
@@ -956,6 +1019,7 @@ fn update_performance_scan_snapshot(sessions: &[AgentSession], duration: Duratio
             "claude" => provider_counts.claude += 1,
             "codex" => provider_counts.codex += 1,
             "opencode" => provider_counts.opencode += 1,
+            "zcode" => provider_counts.zcode += 1,
             _ => {}
         }
     }
@@ -1347,6 +1411,9 @@ fn open_session(session: OpenSessionRequest) -> Result<(), String> {
     if clean_option(session.provider.as_deref()) == Some("opencode") {
         return open_opencode_session(&session);
     }
+    if clean_option(session.provider.as_deref()) == Some("zcode") {
+        return open_zcode_session(&session);
+    }
 
     if bridge_extension_installed() && request_session_resource(&session).is_some() {
         let session_deep_link = session_deep_link(&session).map(|text| text.to_string());
@@ -1406,22 +1473,25 @@ fn prepare_handoff_source_context_blocking(
     request: HandoffSourceContextRequest,
 ) -> Result<HandoffSourceContext, String> {
     let provider = clean_option(request.provider.as_deref()).unwrap_or("unknown");
-    if provider != "opencode" {
-        return Ok(HandoffSourceContext {
-            provider: provider.to_string(),
-            session_id: raw_request_session_id(request.id.as_deref()).map(str::to_string),
-            primary_source_file: request
-                .session_path
-                .as_deref()
-                .and_then(|path| clean_option(Some(path)))
-                .map(str::to_string),
-            inline_summary: None,
-            message_count: 0,
-            warning: None,
-        });
+    if provider == "opencode" {
+        return prepare_opencode_handoff_source_context(&request);
+    }
+    if provider == "zcode" {
+        return prepare_zcode_handoff_source_context(&request);
     }
 
-    prepare_opencode_handoff_source_context(&request)
+    Ok(HandoffSourceContext {
+        provider: provider.to_string(),
+        session_id: raw_request_session_id(request.id.as_deref()).map(str::to_string),
+        primary_source_file: request
+            .session_path
+            .as_deref()
+            .and_then(|path| clean_option(Some(path)))
+            .map(str::to_string),
+        inline_summary: None,
+        message_count: 0,
+        warning: None,
+    })
 }
 
 fn launch_handoff_blocking(request: HandoffLaunchRequest) -> Result<(), String> {
@@ -3240,7 +3310,7 @@ fn scan_opencode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> V
     let hide_archived = if options.hide_archived { 1_i64 } else { 0_i64 };
     let rows = match statement.query_map(
         rusqlite::params![
-            opencode_session_scan_limit(options) as i64,
+            sqlite_session_scan_limit(options, OPENCODE_SESSION_SCAN_LIMIT_MAX) as i64,
             active_cutoff_ms,
             hide_archived
         ],
@@ -3297,12 +3367,12 @@ fn opencode_db_path() -> Option<PathBuf> {
         })
 }
 
-fn opencode_session_scan_limit(options: &ResolvedScanOptions) -> usize {
+fn sqlite_session_scan_limit(options: &ResolvedScanOptions, hard_max: usize) -> usize {
     options
         .max_sessions
         .saturating_mul(3)
         .max(options.max_sessions + 20)
-        .clamp(40, OPENCODE_SESSION_SCAN_LIMIT_MAX)
+        .clamp(40, hard_max)
 }
 
 fn sqlite_millis_to_u64(value: i64) -> u64 {
@@ -3564,7 +3634,7 @@ fn opencode_session_summary(connection: &Connection, session_id: &str) -> OpenCo
                 if let Ok(message_json) = serde_json::from_str::<Value>(&message_data) {
                     merge_session_status_hint(
                         &mut summary.status_hint,
-                        opencode_message_status_hint(&message_json),
+                        assistant_message_status_hint(&message_json),
                     );
                     message_json_by_id.insert(message_id, message_json);
                 }
@@ -3597,7 +3667,7 @@ fn opencode_session_summary(connection: &Connection, session_id: &str) -> OpenCo
                 let message_json = message_json_by_id.get(&message_id);
                 merge_session_status_hint(
                     &mut summary.status_hint,
-                    opencode_part_status_hint(&part_json),
+                    agent_part_status_hint(&part_json),
                 );
 
                 if let Some(text) = string_at(&part_json, &["/text"]) {
@@ -3654,8 +3724,13 @@ fn prepare_opencode_handoff_source_context(
     let row = read_opencode_session_metadata(&connection, &session_id, request)?;
     let messages = read_opencode_transcript_messages(&connection, &session_id)?;
     let markdown = render_opencode_handoff_source_markdown(&row, &messages);
-    let path = write_opencode_handoff_source_markdown(&row, &markdown)?;
-    let inline_summary = opencode_handoff_inline_summary(&row, &messages);
+    let path = write_handoff_source_markdown(
+        "opencode",
+        &row.id,
+        row.time_updated.max(row.time_created),
+        &markdown,
+    )?;
+    let inline_summary = handoff_inline_summary("OpenCode", &row.id, &messages);
 
     Ok(HandoffSourceContext {
         provider: "opencode".to_string(),
@@ -3729,7 +3804,7 @@ fn read_opencode_session_metadata(
 fn read_opencode_transcript_messages(
     connection: &Connection,
     session_id: &str,
-) -> Result<Vec<OpenCodeTranscriptMessage>, String> {
+) -> Result<Vec<HandoffTranscriptMessage>, String> {
     let mut messages = Vec::new();
     let mut message_index_by_id = HashMap::new();
     let mut statement = connection
@@ -3757,7 +3832,7 @@ fn read_opencode_transcript_messages(
             .and_then(|json| string_at(&json, &["/role"]).map(str::to_string))
             .unwrap_or_else(|| "unknown".to_string());
         message_index_by_id.insert(message_id.clone(), messages.len());
-        messages.push(OpenCodeTranscriptMessage {
+        messages.push(HandoffTranscriptMessage {
             id: message_id,
             role,
             time_ms: time_updated.max(time_created),
@@ -3785,7 +3860,7 @@ fn read_opencode_transcript_messages(
         .map_err(|error| format!("Failed to read OpenCode parts: {}", error))?;
 
     for (message_id, time_created, time_updated, part_data) in part_rows.filter_map(Result::ok) {
-        let Some(part) = opencode_transcript_part_from_data(&part_data) else {
+        let Some(part) = handoff_transcript_part_from_data(&part_data) else {
             continue;
         };
         if let Some(index) = message_index_by_id.get(&message_id).copied() {
@@ -3797,36 +3872,36 @@ fn read_opencode_transcript_messages(
     Ok(messages)
 }
 
-fn opencode_transcript_part_from_data(part_data: &str) -> Option<OpenCodeTranscriptPart> {
+fn handoff_transcript_part_from_data(part_data: &str) -> Option<HandoffTranscriptPart> {
     let part_json = serde_json::from_str::<Value>(part_data).ok()?;
     let part_type = string_at(&part_json, &["/type"]).unwrap_or("unknown");
     match part_type {
         "text" => string_at(&part_json, &["/text"])
             .and_then(clean_handoff_part_text)
-            .map(|text| OpenCodeTranscriptPart {
+            .map(|text| HandoffTranscriptPart {
                 label: "text".to_string(),
                 text,
             }),
-        "tool" => opencode_tool_part_handoff_text(&part_json).map(|text| OpenCodeTranscriptPart {
+        "tool" => handoff_tool_part_text(&part_json).map(|text| HandoffTranscriptPart {
             label: "tool".to_string(),
             text,
         }),
-        "reasoning" => Some(OpenCodeTranscriptPart {
+        "reasoning" => Some(HandoffTranscriptPart {
             label: "reasoning".to_string(),
             text: "[reasoning omitted from portable handoff context]".to_string(),
         }),
-        "step-start" | "step-finish" => Some(OpenCodeTranscriptPart {
+        "step-start" | "step-finish" => Some(HandoffTranscriptPart {
             label: part_type.to_string(),
-            text: opencode_compact_json_for_handoff(&part_json, 2_000),
+            text: compact_json_for_handoff(&part_json, 2_000),
         }),
-        _ => Some(OpenCodeTranscriptPart {
+        _ => Some(HandoffTranscriptPart {
             label: part_type.to_string(),
-            text: opencode_compact_json_for_handoff(&part_json, 8_000),
+            text: compact_json_for_handoff(&part_json, 8_000),
         }),
     }
 }
 
-fn opencode_tool_part_handoff_text(part_json: &Value) -> Option<String> {
+fn handoff_tool_part_text(part_json: &Value) -> Option<String> {
     let tool = string_at(part_json, &["/tool"]).unwrap_or("unknown");
     let status = string_at(part_json, &["/state/status"]).unwrap_or("unknown");
     let call_id = string_at(part_json, &["/callID"]).unwrap_or("");
@@ -3838,7 +3913,7 @@ fn opencode_tool_part_handoff_text(part_json: &Value) -> Option<String> {
     if let Some(input) = part_json.pointer("/state/input") {
         if !input.is_null() {
             lines.push("input:".to_string());
-            lines.push(opencode_compact_json_for_handoff(input, 12_000));
+            lines.push(compact_json_for_handoff(input, 12_000));
         }
     }
     if let Some(error) = string_at(part_json, &["/state/error"]).and_then(clean_handoff_part_text) {
@@ -3855,10 +3930,10 @@ fn opencode_tool_part_handoff_text(part_json: &Value) -> Option<String> {
 
 fn clean_handoff_part_text(raw_text: &str) -> Option<String> {
     let cleaned = clean_preview_text(raw_text)?;
-    Some(limit_chars(&cleaned, OPENCODE_HANDOFF_PART_MAX_CHARS))
+    Some(limit_chars(&cleaned, HANDOFF_PART_MAX_CHARS))
 }
 
-fn opencode_compact_json_for_handoff(value: &Value, max_chars: usize) -> String {
+fn compact_json_for_handoff(value: &Value, max_chars: usize) -> String {
     let text = serde_json::to_string(value).unwrap_or_else(|_| value.to_string());
     limit_chars(&text, max_chars)
 }
@@ -3881,7 +3956,7 @@ fn limit_chars(text: &str, max_chars: usize) -> String {
 
 fn render_opencode_handoff_source_markdown(
     row: &OpenCodeSessionRow,
-    messages: &[OpenCodeTranscriptMessage],
+    messages: &[HandoffTranscriptMessage],
 ) -> String {
     let mut output = String::new();
     output.push_str("# AgentWatcher OpenCode Source Session\n\n");
@@ -3896,12 +3971,23 @@ fn render_opencode_handoff_source_markdown(
         opencode_session_resource(&row.id)
     ));
     output.push_str(&format!("- Message count: {}\n", messages.len()));
-    output.push_str("\n## Transcript\n\n");
+    output.push_str(&render_handoff_transcript_body(
+        "OpenCode",
+        messages,
+    ));
+    output
+}
 
+fn render_handoff_transcript_body(
+    provider_name: &str,
+    messages: &[HandoffTranscriptMessage],
+) -> String {
+    let mut output = String::from("\n## Transcript\n\n");
     if messages.is_empty() {
-        output.push_str(
-            "_No OpenCode message/part rows were readable from the local SQLite database._\n",
-        );
+        output.push_str(&format!(
+            "_No {} message/part rows were readable from the local SQLite database._\n",
+            provider_name
+        ));
         return output;
     }
 
@@ -3924,37 +4010,36 @@ fn render_opencode_handoff_source_markdown(
     output
 }
 
-fn write_opencode_handoff_source_markdown(
-    row: &OpenCodeSessionRow,
+fn write_handoff_source_markdown(
+    provider: &str,
+    file_stem: &str,
+    timestamp_ms: u64,
     markdown: &str,
 ) -> Result<PathBuf, String> {
     let dir = env::temp_dir()
         .join("AgentWatcher")
         .join("handoff-sources")
-        .join("opencode");
+        .join(provider);
     fs::create_dir_all(&dir)
         .map_err(|error| format!("Failed to prepare handoff source directory: {}", error))?;
-    let file_name = format!(
-        "{}-{}.md",
-        safe_file_name_token(&row.id),
-        row.time_updated.max(row.time_created)
-    );
+    let file_name = format!("{}-{}.md", safe_file_name_token(file_stem), timestamp_ms);
     let path = dir.join(file_name);
     let temp_path = path.with_extension("md.tmp");
     fs::write(&temp_path, markdown)
-        .map_err(|error| format!("Failed to write OpenCode handoff source: {}", error))?;
+        .map_err(|error| format!("Failed to write {} handoff source: {}", provider, error))?;
     if path.exists() {
         fs::remove_file(&path)
-            .map_err(|error| format!("Failed to replace OpenCode handoff source: {}", error))?;
+            .map_err(|error| format!("Failed to replace {} handoff source: {}", provider, error))?;
     }
     fs::rename(&temp_path, &path)
-        .map_err(|error| format!("Failed to finalize OpenCode handoff source: {}", error))?;
+        .map_err(|error| format!("Failed to finalize {} handoff source: {}", provider, error))?;
     Ok(path)
 }
 
-fn opencode_handoff_inline_summary(
-    row: &OpenCodeSessionRow,
-    messages: &[OpenCodeTranscriptMessage],
+fn handoff_inline_summary(
+    provider_name: &str,
+    session_id: &str,
+    messages: &[HandoffTranscriptMessage],
 ) -> Option<String> {
     let last_user = messages
         .iter()
@@ -3970,8 +4055,8 @@ fn opencode_handoff_inline_summary(
         .map(|part| limit_chars(&part.text, 1_200));
     let mut lines = vec![
         format!(
-            "OpenCode source file was exported from SQLite for session {}.",
-            row.id
+            "{} source file was exported from SQLite for session {}.",
+            provider_name, session_id
         ),
         format!("Exported message count: {}.", messages.len()),
     ];
@@ -3987,6 +4072,584 @@ fn opencode_handoff_inline_summary(
     clean_preview_text(&lines.join("\n"))
 }
 
+fn scan_zcode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<AgentSession> {
+    let Some(db_path) = zcode_db_path() else {
+        return Vec::new();
+    };
+    if !db_path.exists() {
+        return Vec::new();
+    }
+    if let Some(cached_sessions) = cached_zcode_scan(scan_time_ms, options) {
+        return cached_sessions;
+    }
+
+    let Ok(connection) = Connection::open_with_flags(
+        &db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return Vec::new();
+    };
+    let _ = connection.busy_timeout(Duration::from_millis(ZCODE_SQLITE_BUSY_TIMEOUT_MS));
+    let _ = connection.pragma_update(None, "query_only", "ON");
+    let _ = connection.pragma_update(None, "temp_store", "MEMORY");
+
+    let mut statement = match connection.prepare(
+        "select id, title, directory, task_type, time_created, time_updated, time_archived \
+         from session \
+         where (?2 = 0 or time_updated >= ?2 or time_created >= ?2) \
+           and (?3 = 0 or time_archived is null) \
+           and task_type <> 'subagent_child' \
+         order by time_updated desc \
+         limit ?1",
+    ) {
+        Ok(statement) => statement,
+        Err(_) => return Vec::new(),
+    };
+
+    let active_cutoff_ms = scan_time_ms.saturating_sub(options.active_window_ms) as i64;
+    let hide_archived = if options.hide_archived { 1_i64 } else { 0_i64 };
+    let rows = match statement.query_map(
+        rusqlite::params![
+            sqlite_session_scan_limit(options, ZCODE_SESSION_SCAN_LIMIT_MAX) as i64,
+            active_cutoff_ms,
+            hide_archived
+        ],
+        |row| {
+            let time_archived: Option<i64> = row.get(6)?;
+            Ok(ZcodeSessionRow {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                directory: row.get(2)?,
+                task_type: row.get(3)?,
+                time_created: sqlite_millis_to_u64(row.get::<_, i64>(4)?),
+                time_updated: sqlite_millis_to_u64(row.get::<_, i64>(5)?),
+                time_archived: time_archived.map(sqlite_millis_to_u64),
+            })
+        },
+    ) {
+        Ok(rows) => rows,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut sessions = Vec::new();
+    let mut summary_fetch_budget = ZCODE_SUMMARY_FETCH_BUDGET.min(options.max_sessions);
+    for row in rows.filter_map(Result::ok) {
+        if options.hide_archived && row.time_archived.is_some() {
+            continue;
+        }
+        if row.task_type.as_deref() == Some("subagent_child") {
+            continue;
+        }
+        let row_updated_ms = row.time_updated.max(row.time_created);
+        if !is_active_session(row_updated_ms, scan_time_ms, options) {
+            continue;
+        }
+        let summary = cached_or_read_zcode_session_summary(&connection, &row, &mut summary_fetch_budget);
+        if let Some(session) = read_zcode_session_row(&row, summary, scan_time_ms, options) {
+            sessions.push(session);
+            if sessions.len() >= options.max_sessions {
+                break;
+            }
+        }
+    }
+
+    cache_zcode_scan(scan_time_ms, options, &sessions);
+    sessions
+}
+
+fn zcode_db_path() -> Option<PathBuf> {
+    env::var_os("USERPROFILE").map(PathBuf::from).map(|user_profile| {
+        user_profile
+            .join(".zcode")
+            .join("cli")
+            .join("db")
+            .join("db.sqlite")
+    })
+}
+
+fn cached_zcode_scan(
+    scan_time_ms: u64,
+    options: &ResolvedScanOptions,
+) -> Option<Vec<AgentSession>> {
+    let key = zcode_scan_cache_key(options);
+    ZCODE_SCAN_CACHE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|cache| cache.clone())
+        .filter(|cached| {
+            cached.key == key
+                && scan_time_ms.saturating_sub(cached.captured_ms) <= ZCODE_SCAN_CACHE_TTL_MS
+        })
+        .map(|cached| refresh_cached_session_time_labels(&cached.sessions, scan_time_ms))
+}
+
+fn cache_zcode_scan(
+    scan_time_ms: u64,
+    options: &ResolvedScanOptions,
+    sessions: &[AgentSession],
+) {
+    if let Ok(mut cache) = ZCODE_SCAN_CACHE.get_or_init(|| Mutex::new(None)).lock() {
+        *cache = Some(CachedZcodeScan {
+            captured_ms: scan_time_ms,
+            key: zcode_scan_cache_key(options),
+            sessions: sessions.to_vec(),
+        });
+    }
+}
+
+fn zcode_scan_cache_key(options: &ResolvedScanOptions) -> ZcodeScanCacheKey {
+    ZcodeScanCacheKey {
+        max_sessions: options.max_sessions,
+        active_window_ms: options.active_window_ms,
+        hide_archived: options.hide_archived,
+    }
+}
+
+fn clear_zcode_scan_cache() {
+    if let Ok(mut cache) = ZCODE_SCAN_CACHE.get_or_init(|| Mutex::new(None)).lock() {
+        *cache = None;
+    }
+}
+
+fn cached_or_read_zcode_session_summary(
+    connection: &Connection,
+    row: &ZcodeSessionRow,
+    summary_fetch_budget: &mut usize,
+) -> ZcodeSessionSummary {
+    if let Some(cached) = cached_zcode_session_summary(&row.id, row.time_updated) {
+        return cached;
+    }
+    if *summary_fetch_budget == 0 {
+        return lightweight_zcode_session_summary(row);
+    }
+    *summary_fetch_budget = summary_fetch_budget.saturating_sub(1);
+    let summary = zcode_session_summary(connection, &row.id);
+    cache_zcode_session_summary(&row.id, row.time_updated, summary.clone());
+    summary
+}
+
+fn lightweight_zcode_session_summary(row: &ZcodeSessionRow) -> ZcodeSessionSummary {
+    ZcodeSessionSummary {
+        latest_part_ms: row.time_updated.max(row.time_created),
+        ..ZcodeSessionSummary::default()
+    }
+}
+
+fn cached_zcode_session_summary(
+    session_id: &str,
+    session_updated_ms: u64,
+) -> Option<ZcodeSessionSummary> {
+    ZCODE_SESSION_SUMMARY_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(session_id).cloned())
+        .filter(|cached| cached.session_updated_ms == session_updated_ms)
+        .map(|cached| cached.summary)
+}
+
+fn cache_zcode_session_summary(
+    session_id: &str,
+    session_updated_ms: u64,
+    summary: ZcodeSessionSummary,
+) {
+    if let Ok(mut cache) = ZCODE_SESSION_SUMMARY_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        cache.insert(
+            session_id.to_string(),
+            CachedZcodeSummary {
+                session_updated_ms,
+                summary,
+            },
+        );
+        if cache.len() > 512 {
+            let mut entries: Vec<(String, u64)> = cache
+                .iter()
+                .map(|(cached_session_id, cached)| {
+                    (cached_session_id.clone(), cached.session_updated_ms)
+                })
+                .collect();
+            entries.sort_by_key(|(_, updated_ms)| *updated_ms);
+            let prune_count = cache.len().saturating_sub(512);
+            for (cached_session_id, _) in entries.into_iter().take(prune_count) {
+                cache.remove(&cached_session_id);
+            }
+        }
+    }
+}
+
+fn zcode_session_summary(connection: &Connection, session_id: &str) -> ZcodeSessionSummary {
+    let mut summary = ZcodeSessionSummary::default();
+    let mut message_json_by_id: HashMap<String, Value> = HashMap::new();
+
+    if let Ok(count) = connection.query_row(
+        "select count(*) from message where session_id = ?1",
+        rusqlite::params![session_id],
+        |row| row.get::<_, i64>(0),
+    ) {
+        summary.message_count = count.max(0) as u32;
+    }
+
+    if let Ok(mut statement) = connection.prepare(
+        "select id, time_updated, data \
+         from message \
+         where session_id = ?1 \
+         order by time_updated desc \
+         limit ?2",
+    ) {
+        if let Ok(rows) = statement.query_map(
+            rusqlite::params![session_id, ZCODE_PART_SCAN_LIMIT as i64],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    sqlite_millis_to_u64(row.get::<_, i64>(1)?),
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        ) {
+            for (message_id, time_updated, message_data) in rows.filter_map(Result::ok) {
+                summary.latest_part_ms = summary.latest_part_ms.max(time_updated);
+                if let Ok(message_json) = serde_json::from_str::<Value>(&message_data) {
+                    merge_session_status_hint(
+                        &mut summary.status_hint,
+                        assistant_message_status_hint(&message_json),
+                    );
+                    message_json_by_id.insert(message_id, message_json);
+                }
+            }
+        }
+    }
+
+    if let Ok(mut statement) = connection.prepare(
+        "select message_id, time_updated, data \
+         from part \
+         where session_id = ?1 \
+         order by time_updated desc \
+         limit ?2",
+    ) {
+        if let Ok(rows) = statement.query_map(
+            rusqlite::params![session_id, ZCODE_PART_SCAN_LIMIT as i64],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    sqlite_millis_to_u64(row.get::<_, i64>(1)?),
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        ) {
+            for (message_id, time_updated, part_data) in rows.filter_map(Result::ok) {
+                summary.latest_part_ms = summary.latest_part_ms.max(time_updated);
+                let Ok(part_json) = serde_json::from_str::<Value>(&part_data) else {
+                    continue;
+                };
+                let message_json = message_json_by_id.get(&message_id);
+                merge_session_status_hint(
+                    &mut summary.status_hint,
+                    agent_part_status_hint(&part_json),
+                );
+
+                if let Some(text) = string_at(&part_json, &["/text"]) {
+                    collect_todo_ids_from_text(text, &mut summary.todo_ids);
+                }
+
+                if string_at(&part_json, &["/type"]) != Some("text") {
+                    continue;
+                }
+                let Some(text) = string_at(&part_json, &["/text"]).and_then(clean_preview_text)
+                else {
+                    continue;
+                };
+                match message_json.and_then(|message| string_at(message, &["/role"])) {
+                    Some("user") if summary.last_user_message.is_none() => {
+                        summary.last_user_message = Some(text);
+                    }
+                    Some("assistant")
+                        if summary.last_ai_message.is_none() && !is_ai_model_noise_text(&text) =>
+                    {
+                        summary.last_ai_message = Some(text);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    summary
+}
+
+fn read_zcode_session_row(
+    row: &ZcodeSessionRow,
+    summary: ZcodeSessionSummary,
+    scan_time_ms: u64,
+    options: &ResolvedScanOptions,
+) -> Option<AgentSession> {
+    let updated_ms = row
+        .time_updated
+        .max(row.time_created)
+        .max(summary.latest_part_ms);
+    if !is_active_session(updated_ms, scan_time_ms, options) {
+        return None;
+    }
+
+    let workspace_path = clean_option(Some(row.directory.as_str())).map(str::to_string);
+    let workspace_hint = workspace_path
+        .as_deref()
+        .and_then(|path_text| path_segments_basename(&workspace_path_segments(path_text)))
+        .unwrap_or_else(|| "ZCode".to_string());
+    let title = clean_option(Some(row.title.as_str()))
+        .and_then(title_candidate_from_text)
+        .or_else(|| {
+            summary
+                .last_user_message
+                .as_deref()
+                .and_then(title_candidate_from_text)
+        })
+        .unwrap_or_else(|| fallback_session_title("ZCode", &workspace_hint, &row.id));
+    // session.time_updated 是亚秒级心跳，空闲时可能空刷；状态机的新鲜度必须用
+    // message/part 的内容时间戳，否则空闲会话会被误判为 running。
+    let status = status_from_activity(
+        summary.latest_part_ms.max(row.time_created),
+        scan_time_ms,
+        ActivitySource::ContentTimestamp,
+        summary.status_hint,
+    );
+    let workspace_identity = build_workspace_identity(
+        "zcode",
+        &row.id,
+        &workspace_hint,
+        workspace_path.as_deref(),
+        None,
+        None,
+    );
+    let mut todo_ids = summary.todo_ids;
+    collect_todo_ids_from_text(&title, &mut todo_ids);
+    let (last_user_message, last_user_message_truncated) =
+        apply_user_preview_budget(summary.last_user_message);
+    let (last_ai_message, last_ai_message_truncated, last_ai_message_excerpt_kind) =
+        apply_ai_preview_budget(summary.last_ai_message);
+
+    let plugin_workflow = detect_plugin_workflow_session_marker(
+        "zcode",
+        &[last_user_message.as_deref(), last_ai_message.as_deref()],
+    );
+
+    Some(AgentSession {
+        id: format!("zcode:{}", row.id),
+        provider: "zcode".to_string(),
+        provider_label: "ZC".to_string(),
+        title,
+        workspace: workspace_identity.name.clone(),
+        workspace_path,
+        workspace_key: workspace_identity.key,
+        workspace_name: workspace_identity.name,
+        workspace_label: workspace_identity.label,
+        workspace_group: workspace_identity.group,
+        workspace_discriminator: workspace_identity.discriminator,
+        session_path: None,
+        session_resource: None,
+        status,
+        time_label: time_label(updated_ms, scan_time_ms),
+        updated_ms,
+        message_count: summary.message_count,
+        last_user_message,
+        last_user_message_truncated,
+        last_ai_message,
+        last_ai_message_truncated,
+        last_ai_message_excerpt_kind,
+        branch: None,
+        todo_ids,
+        plugin_workflow,
+    })
+}
+
+fn open_zcode_session(session: &OpenSessionRequest) -> Result<(), String> {
+    let _ = raw_request_session_id(session.id.as_deref());
+    let _ = clean_option(session.workspace_path.as_deref());
+    // 跳转暂不实现（用户拍板）：ZCode 官方无会话级深链（feedback#465 待响应）、
+    // 桌面发行版不含 @zcode/tui、独立 CLI 未公开分发。扫描/悬浮预览/接续上下文导出不受影响。
+    Err("ZCode session jump is not supported yet: 官方暂无会话级深链与可用的独立 CLI；悬浮预览与接续上下文导出可用".to_string())
+}
+
+fn prepare_zcode_handoff_source_context(
+    request: &HandoffSourceContextRequest,
+) -> Result<HandoffSourceContext, String> {
+    let session_id = raw_request_session_id(request.id.as_deref())
+        .map(str::to_string)
+        .ok_or_else(|| "Missing ZCode source session id".to_string())?;
+    let db_path = zcode_db_path()
+        .filter(|path| path.exists())
+        .ok_or_else(|| "ZCode database not found".to_string())?;
+    let connection = Connection::open_with_flags(
+        &db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|error| format!("Failed to open ZCode database: {}", error))?;
+    let _ = connection.busy_timeout(Duration::from_millis(ZCODE_SQLITE_BUSY_TIMEOUT_MS));
+    let _ = connection.pragma_update(None, "query_only", "ON");
+    let row = read_zcode_session_metadata(&connection, &session_id, request)?;
+    let messages = read_zcode_transcript_messages(&connection, &session_id)?;
+    let markdown = render_zcode_handoff_source_markdown(&row, &messages);
+    let path = write_handoff_source_markdown(
+        "zcode",
+        &row.id,
+        row.time_updated.max(row.time_created),
+        &markdown,
+    )?;
+    let inline_summary = handoff_inline_summary("ZCode", &row.id, &messages);
+
+    Ok(HandoffSourceContext {
+        provider: "zcode".to_string(),
+        session_id: Some(session_id),
+        primary_source_file: Some(path_to_cli_string(&path)),
+        inline_summary,
+        message_count: messages.len() as u32,
+        warning: None,
+    })
+}
+
+fn read_zcode_session_metadata(
+    connection: &Connection,
+    session_id: &str,
+    request: &HandoffSourceContextRequest,
+) -> Result<ZcodeSessionRow, String> {
+    let mut statement = connection
+        .prepare(
+            "select id, title, directory, task_type, time_created, time_updated, time_archived \
+             from session \
+             where id = ?1 \
+             limit 1",
+        )
+        .map_err(|error| format!("Failed to prepare ZCode session query: {}", error))?;
+
+    let result = statement.query_row(rusqlite::params![session_id], |row| {
+        let time_archived: Option<i64> = row.get(6)?;
+        Ok(ZcodeSessionRow {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            directory: row.get(2)?,
+            task_type: row.get(3)?,
+            time_created: sqlite_millis_to_u64(row.get::<_, i64>(4)?),
+            time_updated: sqlite_millis_to_u64(row.get::<_, i64>(5)?),
+            time_archived: time_archived.map(sqlite_millis_to_u64),
+        })
+    });
+
+    match result {
+        Ok(row) => Ok(row),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(ZcodeSessionRow {
+            id: session_id.to_string(),
+            title: request
+                .title
+                .as_deref()
+                .and_then(|title| clean_option(Some(title)))
+                .unwrap_or("ZCode source session")
+                .to_string(),
+            directory: request
+                .workspace_path
+                .as_deref()
+                .and_then(|path| clean_option(Some(path)))
+                .unwrap_or("")
+                .to_string(),
+            task_type: Some("interactive".to_string()),
+            time_created: current_time_ms(),
+            time_updated: current_time_ms(),
+            time_archived: None,
+        }),
+        Err(error) => Err(format!("Failed to read ZCode session metadata: {}", error)),
+    }
+}
+
+fn read_zcode_transcript_messages(
+    connection: &Connection,
+    session_id: &str,
+) -> Result<Vec<HandoffTranscriptMessage>, String> {
+    let mut messages = Vec::new();
+    let mut message_index_by_id = HashMap::new();
+    let mut statement = connection
+        .prepare(
+            "select id, time_created, time_updated, data \
+             from message \
+             where session_id = ?1 \
+             order by sequence asc, time_created asc, id asc",
+        )
+        .map_err(|error| format!("Failed to prepare ZCode message query: {}", error))?;
+    let rows = statement
+        .query_map(rusqlite::params![session_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                sqlite_millis_to_u64(row.get::<_, i64>(1)?),
+                sqlite_millis_to_u64(row.get::<_, i64>(2)?),
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|error| format!("Failed to read ZCode messages: {}", error))?;
+
+    for (message_id, time_created, time_updated, message_data) in rows.filter_map(Result::ok) {
+        let role = serde_json::from_str::<Value>(&message_data)
+            .ok()
+            .and_then(|json| string_at(&json, &["/role"]).map(str::to_string))
+            .unwrap_or_else(|| "unknown".to_string());
+        message_index_by_id.insert(message_id.clone(), messages.len());
+        messages.push(HandoffTranscriptMessage {
+            id: message_id,
+            role,
+            time_ms: time_updated.max(time_created),
+            parts: Vec::new(),
+        });
+    }
+
+    let mut part_statement = connection
+        .prepare(
+            "select message_id, time_created, time_updated, data \
+             from part \
+             where session_id = ?1 \
+             order by sequence asc, time_created asc, id asc",
+        )
+        .map_err(|error| format!("Failed to prepare ZCode part query: {}", error))?;
+    let part_rows = part_statement
+        .query_map(rusqlite::params![session_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                sqlite_millis_to_u64(row.get::<_, i64>(1)?),
+                sqlite_millis_to_u64(row.get::<_, i64>(2)?),
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|error| format!("Failed to read ZCode parts: {}", error))?;
+
+    for (message_id, time_created, time_updated, part_data) in part_rows.filter_map(Result::ok) {
+        let Some(part) = handoff_transcript_part_from_data(&part_data) else {
+            continue;
+        };
+        if let Some(index) = message_index_by_id.get(&message_id).copied() {
+            messages[index].time_ms = messages[index].time_ms.max(time_updated.max(time_created));
+            messages[index].parts.push(part);
+        }
+    }
+
+    Ok(messages)
+}
+
+fn render_zcode_handoff_source_markdown(
+    row: &ZcodeSessionRow,
+    messages: &[HandoffTranscriptMessage],
+) -> String {
+    let mut output = String::new();
+    output.push_str("# AgentWatcher ZCode Source Session\n\n");
+    output.push_str("This file is generated by AgentWatcher for cross-provider handoff. Source session A is reference context only; the new task in session B has priority.\n\n");
+    output.push_str("## Metadata\n\n");
+    output.push_str("- Provider: ZCode\n");
+    output.push_str(&format!("- Session ID: {}\n", row.id));
+    output.push_str(&format!("- Title: {}\n", row.title));
+    output.push_str(&format!("- Workspace: {}\n", row.directory));
+    output.push_str(&format!("- Message count: {}\n", messages.len()));
+    output.push_str(&render_handoff_transcript_body("ZCode", messages));
+    output
+}
+
 fn merge_session_status_hint(
     current_hint: &mut Option<SessionStatusHint>,
     candidate_hint: Option<SessionStatusHint>,
@@ -4000,9 +4663,9 @@ fn merge_session_status_hint(
     }
 }
 
-fn opencode_message_status_hint(message_json: &Value) -> Option<SessionStatusHint> {
+fn assistant_message_status_hint(message_json: &Value) -> Option<SessionStatusHint> {
     if string_at(message_json, &["/role"]) == Some("assistant")
-        && !opencode_assistant_message_finished(message_json)
+        && !assistant_message_finished(message_json)
     {
         Some(SessionStatusHint::Running)
     } else {
@@ -4010,13 +4673,13 @@ fn opencode_message_status_hint(message_json: &Value) -> Option<SessionStatusHin
     }
 }
 
-fn opencode_assistant_message_finished(message_json: &Value) -> bool {
+fn assistant_message_finished(message_json: &Value) -> bool {
     message_json.pointer("/time/completed").is_some()
         || clean_option(string_at(message_json, &["/finish"])).is_some()
         || message_json.pointer("/error").is_some()
 }
 
-fn opencode_part_status_hint(part_json: &Value) -> Option<SessionStatusHint> {
+fn agent_part_status_hint(part_json: &Value) -> Option<SessionStatusHint> {
     let part_type = string_at(part_json, &["/type"])
         .unwrap_or_default()
         .to_ascii_lowercase();
@@ -4024,19 +4687,19 @@ fn opencode_part_status_hint(part_json: &Value) -> Option<SessionStatusHint> {
         .unwrap_or_default()
         .to_ascii_lowercase();
 
-    if opencode_is_waiting_status(&state_status) {
+    if part_status_is_waiting(&state_status) {
         return Some(SessionStatusHint::Waiting);
     }
-    if opencode_is_running_status(&state_status) {
-        return if opencode_part_mentions_user_control(part_json) {
+    if part_status_is_running(&state_status) {
+        return if part_mentions_user_control(part_json) {
             Some(SessionStatusHint::Waiting)
         } else {
             Some(SessionStatusHint::Running)
         };
     }
 
-    if part_type == "tool" && !opencode_tool_part_finished(part_json) {
-        if opencode_part_mentions_user_control(part_json) {
+    if part_type == "tool" && !tool_part_finished(part_json) {
+        if part_mentions_user_control(part_json) {
             Some(SessionStatusHint::Waiting)
         } else {
             Some(SessionStatusHint::Running)
@@ -4046,21 +4709,21 @@ fn opencode_part_status_hint(part_json: &Value) -> Option<SessionStatusHint> {
     }
 }
 
-fn opencode_is_waiting_status(status_text: &str) -> bool {
+fn part_status_is_waiting(status_text: &str) -> bool {
     matches!(
         status_text,
         "waiting" | "blocked" | "needs_user_input" | "requires_action" | "requires_approval"
     )
 }
 
-fn opencode_is_running_status(status_text: &str) -> bool {
+fn part_status_is_running(status_text: &str) -> bool {
     matches!(
         status_text,
         "pending" | "queued" | "running" | "started" | "in_progress" | "submitted"
     )
 }
 
-fn opencode_tool_part_finished(part_json: &Value) -> bool {
+fn tool_part_finished(part_json: &Value) -> bool {
     let status = string_at(part_json, &["/state/status", "/status"])
         .unwrap_or_default()
         .to_ascii_lowercase();
@@ -4071,7 +4734,7 @@ fn opencode_tool_part_finished(part_json: &Value) -> bool {
         || part_json.pointer("/time/end").is_some()
 }
 
-fn opencode_part_mentions_user_control(part_json: &Value) -> bool {
+fn part_mentions_user_control(part_json: &Value) -> bool {
     for text in [
         string_at(part_json, &["/type"]),
         string_at(part_json, &["/tool"]),
@@ -7340,6 +8003,7 @@ fn resolve_scan_options(options: Option<ScanOptions>) -> ResolvedScanOptions {
         include_claude: None,
         include_codex: None,
         include_open_code: None,
+        include_zcode: None,
         workspace_path_blacklist: None,
     });
     let active_days = options
@@ -7359,6 +8023,7 @@ fn resolve_scan_options(options: Option<ScanOptions>) -> ResolvedScanOptions {
         include_claude: options.include_claude.unwrap_or(true),
         include_codex: options.include_codex.unwrap_or(true),
         include_open_code: options.include_open_code.unwrap_or(true),
+        include_zcode: options.include_zcode.unwrap_or(true),
         workspace_path_blacklist: options
             .workspace_path_blacklist
             .unwrap_or_else(default_workspace_path_blacklist)
@@ -9537,6 +10202,7 @@ mod tests {
             include_claude: None,
             include_codex: Some(false),
             include_open_code: None,
+            include_zcode: None,
             workspace_path_blacklist: None,
         }));
 
@@ -9554,6 +10220,7 @@ mod tests {
             include_claude: None,
             include_codex: None,
             include_open_code: None,
+            include_zcode: None,
             workspace_path_blacklist: None,
         }));
 
@@ -9696,6 +10363,7 @@ mod tests {
             include_claude: None,
             include_codex: None,
             include_open_code: None,
+            include_zcode: None,
             workspace_path_blacklist: Some(Vec::new()),
         }));
         assert!(explicit_empty.workspace_path_blacklist.is_empty());
@@ -9714,10 +10382,308 @@ mod tests {
             include_claude: None,
             include_codex: None,
             include_open_code: Some(false),
+            include_zcode: Some(false),
             workspace_path_blacklist: None,
         }));
 
         assert!(!options.include_open_code);
+    }
+
+    #[test]
+    fn scan_options_include_zcode_by_default_and_can_disable_it() {
+        assert!(resolve_scan_options(None).include_zcode);
+
+        let options = resolve_scan_options(Some(ScanOptions {
+            max_sessions: None,
+            active_window_days: None,
+            hide_archived: None,
+            include_copilot: None,
+            include_copilot_cli: None,
+            include_claude: None,
+            include_codex: None,
+            include_open_code: None,
+            include_zcode: Some(false),
+            workspace_path_blacklist: None,
+        }));
+
+        assert!(!options.include_zcode);
+    }
+
+    #[test]
+    fn zcode_session_row_maps_to_agent_session() {
+        let scan_time_ms = 1_780_651_255_000;
+        let row = ZcodeSessionRow {
+            id: "sess_test".to_string(),
+            title: "实现 ZCode provider".to_string(),
+            directory: r"X:\Workspace\AgentWatcher".to_string(),
+            task_type: Some("interactive".to_string()),
+            time_created: scan_time_ms - 600_000,
+            time_updated: scan_time_ms - 120_000,
+            time_archived: None,
+        };
+        let summary = ZcodeSessionSummary {
+            last_user_message: Some("Please wire ZCode todo-awzc-abc123".to_string()),
+            last_ai_message: Some("ZCode scanner is ready.".to_string()),
+            message_count: 2,
+            latest_part_ms: scan_time_ms - 60_000,
+            status_hint: Some(SessionStatusHint::Waiting),
+            todo_ids: vec!["todo-awzc-abc123".to_string()],
+        };
+        let options = resolve_scan_options(Some(ScanOptions {
+            max_sessions: Some(80),
+            active_window_days: Some(7),
+            hide_archived: Some(true),
+            include_copilot: Some(false),
+            include_copilot_cli: Some(false),
+            include_claude: Some(false),
+            include_codex: Some(false),
+            include_open_code: Some(false),
+            include_zcode: Some(true),
+            workspace_path_blacklist: None,
+        }));
+
+        let session = read_zcode_session_row(&row, summary, scan_time_ms, &options).unwrap();
+
+        assert_eq!(session.id, "zcode:sess_test");
+        assert_eq!(session.provider, "zcode");
+        assert_eq!(session.provider_label, "ZC");
+        assert_eq!(session.title, "实现 ZCode provider");
+        assert_eq!(session.workspace_name, "AgentWatcher");
+        assert_eq!(
+            session.workspace_path.as_deref(),
+            Some(r"X:\Workspace\AgentWatcher")
+        );
+        assert_eq!(session.status, "waiting");
+        assert_eq!(session.session_path, None);
+        assert_eq!(session.session_resource, None);
+        assert_eq!(session.todo_ids, vec!["todo-awzc-abc123".to_string()]);
+    }
+
+    #[test]
+    fn zcode_status_ignores_session_heartbeat_and_uses_content_timestamp() {
+        let scan_time_ms = 1_780_651_255_000;
+        let options = resolve_scan_options(None);
+        let row = ZcodeSessionRow {
+            id: "sess_heartbeat".to_string(),
+            title: "idle session".to_string(),
+            directory: r"X:\Workspace\AgentWatcher".to_string(),
+            task_type: Some("interactive".to_string()),
+            time_created: scan_time_ms - 3_600_000,
+            // session.time_updated 是亚秒级心跳：就算刚刚刷过，也不能当成内容活动
+            time_updated: scan_time_ms - 1_000,
+            time_archived: None,
+        };
+        let stale_summary = ZcodeSessionSummary {
+            latest_part_ms: scan_time_ms - STATUS_RECENT_CONTENT_WINDOW_MS - 1,
+            ..ZcodeSessionSummary::default()
+        };
+
+        let session =
+            read_zcode_session_row(&row, stale_summary, scan_time_ms, &options).unwrap();
+        assert_eq!(session.status, "idle");
+        assert_eq!(session.updated_ms, scan_time_ms - 1_000);
+
+        let fresh_summary = ZcodeSessionSummary {
+            latest_part_ms: scan_time_ms - 60_000,
+            ..ZcodeSessionSummary::default()
+        };
+        let session =
+            read_zcode_session_row(&row, fresh_summary, scan_time_ms, &options).unwrap();
+        assert_eq!(session.status, "running");
+    }
+
+    fn zcode_memory_connection() -> Connection {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute(
+                "create table message (
+                    id text primary key,
+                    session_id text not null,
+                    time_created integer not null,
+                    time_updated integer not null,
+                    data text not null,
+                    sequence integer
+                )",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "create table part (
+                    id text primary key,
+                    message_id text not null,
+                    session_id text not null,
+                    time_created integer not null,
+                    time_updated integer not null,
+                    data text not null,
+                    sequence integer
+                )",
+                [],
+            )
+            .unwrap();
+        connection
+    }
+
+    fn insert_zcode_message(
+        connection: &Connection,
+        id: &str,
+        sequence: i64,
+        data: Value,
+    ) {
+        connection
+            .execute(
+                "insert into message (id, session_id, time_created, time_updated, data, sequence) values (?1, 'sess_z', 1000, 1000, ?2, ?3)",
+                rusqlite::params![id, data.to_string(), sequence],
+            )
+            .unwrap();
+    }
+
+    fn insert_zcode_part(connection: &Connection, id: &str, message_id: &str, data: Value) {
+        connection
+            .execute(
+                "insert into part (id, message_id, session_id, time_created, time_updated, data) values (?1, ?2, 'sess_z', 1000, 1000, ?3)",
+                rusqlite::params![id, message_id, data.to_string()],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn zcode_summary_reads_user_ai_text_and_status_hints() {
+        let connection = zcode_memory_connection();
+        insert_zcode_message(
+            &connection,
+            "msg_user",
+            1,
+            json!({ "role": "user", "time": { "created": 1_000 } }),
+        );
+        insert_zcode_message(
+            &connection,
+            "msg_assistant",
+            2,
+            json!({ "role": "assistant", "time": { "created": 2_000 } }),
+        );
+        insert_zcode_part(
+            &connection,
+            "part_user",
+            "msg_user",
+            json!({ "type": "text", "text": "继续 ZCode 任务 todo-awzc-abc123" }),
+        );
+        insert_zcode_part(
+            &connection,
+            "part_assistant",
+            "msg_assistant",
+            json!({ "type": "text", "text": "ZCode 回复可见。" }),
+        );
+        insert_zcode_part(
+            &connection,
+            "part_bash",
+            "msg_assistant",
+            json!({ "type": "tool", "callID": "call_1", "tool": "Bash", "state": { "status": "completed", "input": { "command": "dir" } } }),
+        );
+        insert_zcode_part(
+            &connection,
+            "part_ask",
+            "msg_assistant",
+            json!({ "type": "tool", "callID": "call_2", "tool": "AskUserQuestion", "state": { "status": "pending" } }),
+        );
+
+        let summary = zcode_session_summary(&connection, "sess_z");
+
+        assert_eq!(summary.message_count, 2);
+        assert_eq!(summary.latest_part_ms, 1_000);
+        assert_eq!(
+            summary.last_user_message.as_deref(),
+            Some("继续 ZCode 任务 todo-awzc-abc123")
+        );
+        assert_eq!(summary.last_ai_message.as_deref(), Some("ZCode 回复可见。"));
+        assert_eq!(summary.todo_ids, vec!["todo-awzc-abc123".to_string()]);
+        assert_eq!(summary.status_hint, Some(SessionStatusHint::Waiting));
+    }
+
+    #[test]
+    fn zcode_summary_maps_running_tool_status() {
+        let connection = zcode_memory_connection();
+        insert_zcode_message(
+            &connection,
+            "msg_assistant",
+            1,
+            json!({ "role": "assistant", "time": { "created": 1_000 } }),
+        );
+        insert_zcode_part(
+            &connection,
+            "part_bash",
+            "msg_assistant",
+            json!({ "type": "tool", "callID": "call_1", "tool": "Bash", "state": { "status": "running", "input": { "command": "cargo test" } } }),
+        );
+
+        let summary = zcode_session_summary(&connection, "sess_z");
+        assert_eq!(summary.status_hint, Some(SessionStatusHint::Running));
+    }
+
+    #[test]
+    fn zcode_handoff_transcript_orders_by_sequence_and_renders_markdown() {
+        let connection = zcode_memory_connection();
+        // sequence 与 time_created 故意相反：导出必须按 sequence 排序
+        insert_zcode_message(
+            &connection,
+            "msg_second",
+            2,
+            json!({ "role": "assistant", "time": { "created": 1_000 } }),
+        );
+        insert_zcode_message(
+            &connection,
+            "msg_first",
+            1,
+            json!({ "role": "user", "time": { "created": 2_000 } }),
+        );
+        insert_zcode_part(
+            &connection,
+            "part_second",
+            "msg_second",
+            json!({ "type": "text", "text": "assistant reply" }),
+        );
+        insert_zcode_part(
+            &connection,
+            "part_first",
+            "msg_first",
+            json!({ "type": "text", "text": "user prompt" }),
+        );
+        insert_zcode_part(
+            &connection,
+            "part_reasoning",
+            "msg_second",
+            json!({ "type": "reasoning", "text": "secret chain of thought" }),
+        );
+
+        let messages = read_zcode_transcript_messages(&connection, "sess_z").unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].id, "msg_first");
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[1].id, "msg_second");
+
+        let row = ZcodeSessionRow {
+            id: "sess_z".to_string(),
+            title: "ZCode 源会话".to_string(),
+            directory: r"X:\Workspace\AgentWatcher".to_string(),
+            task_type: Some("interactive".to_string()),
+            time_created: 1_000,
+            time_updated: 2_000,
+            time_archived: None,
+        };
+        let markdown = render_zcode_handoff_source_markdown(&row, &messages);
+
+        assert!(markdown.contains("# AgentWatcher ZCode Source Session"));
+        assert!(markdown.contains("- Provider: ZCode"));
+        assert!(markdown.contains("- Session ID: sess_z"));
+        assert!(markdown.contains("user prompt"));
+        assert!(markdown.contains("assistant reply"));
+        assert!(markdown
+            .contains("[reasoning omitted from portable handoff context]"));
+        assert!(!markdown.contains("secret chain of thought"));
+        assert!(markdown.find("user prompt").unwrap() < markdown.find("assistant reply").unwrap());
+        assert!(handoff_inline_summary("ZCode", "sess_z", &messages)
+            .unwrap()
+            .contains("Exported message count: 2."));
     }
 
     #[test]
@@ -9860,6 +10826,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
+            include_zcode: Some(false),
             workspace_path_blacklist: None,
         }));
         let session = read_codex_jsonl_session(&session_path, scan_time_ms, &options).unwrap();
@@ -9944,6 +10911,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
+            include_zcode: Some(false),
             workspace_path_blacklist: None,
         }));
 
@@ -10048,26 +11016,26 @@ mod tests {
             time_archived: None,
         };
         let messages = vec![
-            OpenCodeTranscriptMessage {
+            HandoffTranscriptMessage {
                 id: "msg_user".to_string(),
                 role: "user".to_string(),
                 time_ms: 1100,
-                parts: vec![OpenCodeTranscriptPart {
+                parts: vec![HandoffTranscriptPart {
                     label: "text".to_string(),
                     text: "Please continue todo-awoc-123456".to_string(),
                 }],
             },
-            OpenCodeTranscriptMessage {
+            HandoffTranscriptMessage {
                 id: "msg_assistant".to_string(),
                 role: "assistant".to_string(),
                 time_ms: 1200,
                 parts: vec![
-                    OpenCodeTranscriptPart {
+                    HandoffTranscriptPart {
                         label: "tool".to_string(),
                         text: "[tool: shell status=completed callID=call_1]\nraw output:\npassed"
                             .to_string(),
                     },
-                    OpenCodeTranscriptPart {
+                    HandoffTranscriptPart {
                         label: "text".to_string(),
                         text: "Done and verified.".to_string(),
                     },
@@ -10081,14 +11049,14 @@ mod tests {
         assert!(markdown.contains("Please continue todo-awoc-123456"));
         assert!(markdown.contains("[tool: shell status=completed callID=call_1]"));
         assert!(markdown.contains("Done and verified."));
-        assert!(opencode_handoff_inline_summary(&row, &messages)
+        assert!(handoff_inline_summary("OpenCode", &row.id, &messages)
             .unwrap()
             .contains("Exported message count: 2."));
     }
 
     #[test]
     fn opencode_handoff_part_renderer_omits_reasoning_text() {
-        let part = opencode_transcript_part_from_data(
+        let part = handoff_transcript_part_from_data(
             r#"{"type":"reasoning","text":"private chain of thought"}"#,
         )
         .unwrap();
@@ -10127,6 +11095,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(false),
             include_open_code: Some(true),
+            include_zcode: Some(false),
             workspace_path_blacklist: None,
         }));
 
@@ -10290,6 +11259,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(false),
             include_open_code: Some(true),
+            include_zcode: Some(false),
             workspace_path_blacklist: None,
         }));
         let start = Instant::now();
@@ -10312,7 +11282,7 @@ mod tests {
     #[test]
     fn opencode_status_maps_running_tool_and_permission_waiting() {
         assert_eq!(
-            opencode_part_status_hint(&json!({
+            agent_part_status_hint(&json!({
                 "type": "tool",
                 "tool": "bash",
                 "state": { "status": "running" }
@@ -10320,7 +11290,7 @@ mod tests {
             Some(SessionStatusHint::Running)
         );
         assert_eq!(
-            opencode_part_status_hint(&json!({
+            agent_part_status_hint(&json!({
                 "type": "tool",
                 "tool": "permission",
                 "state": { "status": "pending", "title": "Permission request" }
@@ -10372,6 +11342,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
+            include_zcode: Some(false),
             workspace_path_blacklist: None,
         }));
         let thread = json!({
@@ -10457,6 +11428,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
+            include_zcode: Some(false),
             workspace_path_blacklist: None,
         }));
         let thread = json!({
@@ -10510,6 +11482,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
+            include_zcode: Some(false),
             workspace_path_blacklist: None,
         }));
         let thread = json!({
@@ -10545,6 +11518,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
+            include_zcode: Some(false),
             workspace_path_blacklist: None,
         }));
         let thread = json!({
@@ -10645,6 +11619,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(false),
             include_open_code: Some(false),
+            include_zcode: Some(false),
             workspace_path_blacklist: None,
         }));
         let sessions = scan_copilot_cli_sessions_from_connection(
@@ -10706,6 +11681,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
+            include_zcode: Some(false),
             workspace_path_blacklist: None,
         }));
 
@@ -10751,6 +11727,7 @@ mod tests {
             include_claude: Some(false),
             include_codex: Some(true),
             include_open_code: Some(false),
+            include_zcode: Some(false),
             workspace_path_blacklist: None,
         }));
 
