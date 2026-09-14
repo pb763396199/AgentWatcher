@@ -109,19 +109,19 @@
 
 ## 当前优先级
 
-1. 完成 v0.1.4 新版本发布，核对全部 provider、路径黑名单、插件宿主、Bridge 0.1.12 和最终 artifact。
+1. 完成 v0.1.5 新版本发布：ZCode provider（扫描/预览/接续导出，跳转暂不实现）、接续上下文归属守卫与最终 artifact 核对。
 2. 验证长时间运行时的扫描和 UI 刷新稳定性。
 3. 补充窗口位置记忆、托盘入口和全局快捷键。
 4. 扩展 VS Code Stable/Insiders 与 100%/125%/150% DPI 验证矩阵。
 
-## v0.1.4 发布检查清单
+## v0.1.5 发布检查清单
 
-- [x] App 版本在 `package.json`、`Cargo.toml`、`tauri.conf.json` 和 lockfile 中一致为 `0.1.4`。
-- [x] Rust 全量测试、Bridge 语法检查、Bridge 路由测试、UI 构建和 `git diff --check` 通过。
-- [x] 真实 Tauri 流程覆盖主窗口、性能面板、接续面板和 OpenCode 会话。
-- [x] `%TEMP%` 默认黑名单过滤临时会话，清空列表后可恢复显示；每 provider 配额互不挤占。
-- [ ] 主窗口、Session Preview、Handoff、Todo、Performance 的中文/英文、dark/light、横版/竖版与窗口层级可用。
-- [x] `AgentWatcher-v0.1.4-windows-x64.zip` 包含 `AgentWatcher.exe` 与 `agentwatcher-bridge-0.1.12.vsix`。
+- [x] App 版本在 `package.json`、`Cargo.toml`、`tauri.conf.json` 中一致为 `0.1.5`；Bridge 保持 `0.1.12`。
+- [x] Rust 全量测试（81 通过）、Bridge 语法检查、Bridge 路由测试、UI 构建和 `git diff --check` 通过。
+- [x] 真实 Tauri 流程覆盖 zcode-session（点击返回「暂不支持」提示）与 zcode-handoff-context（导出归属断言）。
+- [x] ZCode 悬浮预览与接续上下文导出逐项对照 db 审计通过；接续上下文归属守卫（防串号）已回归固化。
+- [ ] 主窗口、Session Preview、Handoff、Todo、Performance 的中文/英文、dark/light、横版/竖版与窗口层级可用（ZCode 徽标四组合已程序化核验）。
+- [x] `AgentWatcher-v0.1.5-windows-x64.zip` 包含 `AgentWatcher.exe` 与 `agentwatcher-bridge-0.1.12.vsix`。
 - [x] 最终 VSIX 重复安装两次后只保留 `agentwatcher.agentwatcher-vscode-session-bridge@0.1.12`，无 `safe1`~`safe4`。
 - [x] 从 `artifacts/AgentWatcher/AgentWatcher.exe` 启动成功且不依赖源码目录。
 - [x] 最终 zip SHA256 已同步到 `CHANGELOG.md`，本地与 GitHub Release asset digest 一致。

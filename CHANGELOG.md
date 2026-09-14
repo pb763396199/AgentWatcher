@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.1.5 - 2026-09-14
+
+- 接入 ZCode 作为第 6 个会话 provider（徽标 ZC）：从本机 `~\.zcode\cli\db\db.sqlite` 只读扫描，状态机（waiting=AskUserQuestion pending、running=内容时间戳新鲜度）、provider 筛选、设置开关、性能计数与悬浮预览全部可用；子 agent 会话（`task_type=subagent_child`）默认过滤。
+- ZCode 接续上下文导出：右键 zcode 卡片可将全量转录导出为 Markdown 落盘 `%TEMP%\AgentWatcher\handoff-sources\zcode\`，作为跨 provider 接续来源（含可移植摘要与 parser hint）。
+- ZCode 点击跳转暂不实现（官方无会话级深链 zai-org/feedback#465、桌面发行版 3.11.2/3.12.1 均不含 `@zcode/tui`、独立 CLI 未公开分发），点击返回明确提示；上游能力就绪后可恢复。
+- 修复接续面板上下文串号（跨 provider 通用缺陷）：来源会话切换后不再复用上一次导出的 sourceContext，`handoffContextMatchesSource` 不变量在发布/复用/渲染全链路校验归属，OpenCode/ZCode handoff flow 增加导出文件归属断言。
+- 抽取 OpenCode 专有的状态 hint 与 handoff transcript 结构为共享 helper（`agent_part_status_hint` 等），ZCode 复用而非复制。
+- 新增 `zcode-session` / `zcode-handoff-context` 真实 Tauri 流程；性能面板 provider 计数含 ZC。
+
+发布包：`AgentWatcher-v0.1.5-windows-x64.zip`
+
+SHA256：`EC356AF8FABAECE38FA8E1C75DB1B1D19C43BDC902C17C76E324AF22EF653DE7`
+
+验证：`cargo test --manifest-path src-tauri/Cargo.toml`（81 通过、1 项外部插件握手按设计忽略）、`cargo clippy --all-targets -- -D warnings`、Bridge 语法与路由测试、UI 构建、真实 Tauri 冒烟及 zcode-session/zcode-handoff-context 流程、ZCode 悬浮预览与接续导出逐项对照 db 审计、中英文×dark/light 四组合徽标程序化核验、`git diff --check`、`npm run package:exe`、zip/manifest/15 尺寸图标检查、最终 VSIX 重复安装两次、发布目录 EXE 独立启动均通过。
+
 ## v0.1.4 - 2026-08-07
 
 - 将 OpenCode、Copilot CLI 作为独立 provider 接入统一会话列表，补齐扫描、状态、跳转与真实 Tauri 流程验证。
