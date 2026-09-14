@@ -2,75 +2,67 @@
 schema_version: 1
 protocol: 1.3.0
 artifact: validation
-artifact_id: ar_01M2F4REPJV65VNY2WGC3W62BF
+artifact_id: ar_01M2FDDDHW446PZ1GSAEA7VCJY
 work_item_id: wi_3QQPFJCPXD24P1CCXMXAZ730TQ
-created_at: 2026-09-14T05:08:00Z
+created_at: 2026-09-14T07:50:00Z
 producer: aes-validate
 outcome: passed
+executed_at: 2026-09-14T15:55:00+08:00
+environment: Windows 11 10.0.26200 / ZCode 桌面 3.11.2（无独立 CLI）/ VS Code + Bridge 0.1.12
 supersedes: null
 dependencies:
-  work_item_contract_digest: sha256:459f4ee8b901939c53f38c70a8943698719fe1808efb82d10ed86ca691149e99
+  work_item_contract_digest: sha256:efa5a5233be0f6e70b70442ff1fb5cb63dad810669e2356c04643038eb83e195
   artifacts:
     - artifact_id: ar_01M2F4REGYSZC2KA486XPBBE20
+      digest: sha256:4e3b4bf048f5f730e1accd05699dd51f44edb4963d1a706602107f6cf2a82d93
+      locator: implementation.md
   subject:
     kind: change_set
-    digest: sha256:9a5af7d9d42069b5bd89c585260d6c378946d3a68bb959be49d71f161e8cfcf9
+    digest: sha256:b60025e1431c0ee311f478d7afc97e421507a7622c71084518b4a11adc575a21
     repository: https://github.com/pb763396199/AgentWatcher.git
     base_revision: cd721467e82a7199ca0da299071e2b99f33312b7
-    revision: cd721467e82a7199ca0da299071e2b99f33312b7
-    tree: 66e8b88e1c5ca2bd9a33da06e17e3634074b76ee
-    content_digest: sha256:9a5af7d9d42069b5bd89c585260d6c378946d3a68bb959be49d71f161e8cfcf9
+    revision: 10649708e7168a397c850b38fccf1b31cecebfbd
+    tree: 1f344685d607a9bccaacef077f1e1ec3d07fc9be
+    content_digest: sha256:b60025e1431c0ee311f478d7afc97e421507a7622c71084518b4a11adc575a21
     branch_or_pr: dev
+    excluded_prefixes: []
     workflow_excluded: true
+acceptance:
+  - acceptance_id: AC-001
+    outcome: passed
+    method: cargo test --manifest-path src-tauri/Cargo.toml
+    evidence: 81 passed / 0 failed（含 8 个 zcode 新测试：行映射、摘要、waiting/running hint、心跳免疫、handoff markdown）
+  - acceptance_id: AC-002
+    outcome: passed
+    method: npm run test:tauri:flow -- zcode-session（真实 WebView2 CDP）
+    evidence: .tmp/tauri-realtest/20260914-151918/result.json 通过；Toast=「ZCode session jump is not supported yet…」，无终端 spawn
+  - acceptance_id: AC-003
+    outcome: passed
+    method: zcode-handoff-context flow + .tmp/zcode-prompt-audit.mjs + .tmp/zcode-preview-check.mjs 逐项对照 db
+    evidence: 导出文件名=卡片会话 ID、文件内 Session ID 一致、工作区=db.directory、快照与 db 最后一条一致、消息数 96=96；悬浮预览窗口工作区/标题/状态/两段正文全非空且与 db 一致
+  - acceptance_id: AC-004
+    outcome: passed
+    method: CDP 计算样式四组合 + 截图核验
+    evidence: .tmp/zcode-visual/（dark/light × zh/en 徽标 #c586c0/#71337a，#includeZcode 默认开，筛选项含 zcode）
+  - acceptance_id: AC-005
+    outcome: passed
+    method: npm run test:tauri:flow -- zcode-handoff-context（点最后一张 zcode 卡）
+    evidence: 导出落盘 %TEMP%\AgentWatcher\handoff-sources\zcode\sess_<卡片ID>-<ts>.md；5 种目标模式 prompt 均携带来源文件路径；ZCode 无目标模式（与 AC-002 一致）
+  - acceptance_id: AC-006
+    outcome: passed
+    method: npm run build:ui + npm run test:tauri:smoke + 源码走查
+    evidence: build:ui 退出码 0（vite 343ms）；smoke result.json 通过（.tmp/tauri-realtest/20260914-150651）；formatScanMetric/scanExplainText 输出行均拼入「ZC <n>」计数
+  - acceptance_id: AC-007
+    outcome: passed
+    method: 文档口径复查
+    evidence: AGENTS.md/README/TODO/CHANGELOG 均为「跳转暂不实现、扫描/预览/接续导出可用」口径；发布包与 SHA256 已写入 CHANGELOG
 ---
 
-# 验证：AgentWatcher 支持 ZCode Provider
+# 验证：AgentWatcher 支持 ZCode Provider（对齐最终版合同）
 
-按 work item AC 逐条（本机为「仅桌面发行版、无独立 zcode CLI」环境）：
-
-- AC-001 通过：`cargo test` 82 passed / 0 failed（含 9 个 zcode 新测试）。
-- AC-002 通过：`npm run test:tauri:flow -- zcode-session` 真实 WebView2 CDP 附着 dev 运行时；
-  卡片（zcode:sess_493c0cf7…，running，标题/工作区正确）点击后走「TUI 运行时不可用」
-  分支，toast 明确报「ZCode TUI runtime not available: 桌面发行版不含 @zcode/tui…」，
-  未弹注定失败的终端。PATH 独立 CLI 分支由单测 `zcode_bundle_tui_runtime_requires_sibling_tui_package`
-  与 `find_zcode_cli_on_path` 逻辑覆盖，真机分支待有独立 CLI 的环境复验（未测，明示）。
-- AC-003 通过：运行时缺失返回明确错误；running 会话警示 toast 已实现
-  （警示展示依赖启动成功，本机 TUI 不可用故未在真实点击中呈现——实现路径已过单测与代码审查，标注未真机验证）。
-- AC-004 通过：`#includeZcode` 默认开；dark/light × zh/en 四组合徽标（#c586c0 / #71337a）
-  与筛选项存在（计算样式 + 截图核验，截图在 .tmp/zcode-visual/）。
-- AC-005 通过：`zcode-handoff-context` flow 真实导出
-  `%TEMP%\AgentWatcher\handoff-sources\zcode\sess_493c0cf7…-1789362035447.md`（311 KB、
-  246 条消息），6 种目标模式（含 zcode → 目标代理: ZCode TUI）全部切换验证。
-- AC-006 通过：性能面板 `formatScanMetric`/`scanExplainText` 输出含 ZC 计数（构建验证 + smoke）。
-- AC-007 通过：AGENTS.md / README 已同步（数据源、ScanOptions、状态机、TUI 边界、测试要求）。
-
-其他：`node --check` bridge/cli.mjs 通过；`npm run build:ui` 通过；
-`node .tmp/bridge-handoff-routing-test.cjs` 通过；`npm run test:tauri:smoke` 通过；
-`git diff --check` 通过。未测项：DPI 125%/150%、8 小时长跑、发版流水线（不在本任务范围）。
-
-## 用户二次拍板后（2026-09-14 傍晚）：跳转下线 + 预览/上下文可用性复验
-
-- 跳转下线：`zcode-session` flow 断言点击返回「ZCode session jump is not supported yet」
-  提示（无终端 spawn、无 TUI 逻辑残留）；`zcode-handoff-context` flow 的目标模式列表
-  不再含 zcode；cargo test 81 通过（TUI 预检测试随实现删除）。
-- 悬浮预览真机验证（.tmp/zcode-preview-check.mjs）：悬停 zcode 卡片展开按钮 →
-  session-preview 窗口显示工作区 aes-workflow · AiProject + 完整路径 + 标题 + 状态 +
-  最后用户输入/最后 AI 正文两段均非空，内容与 db 一致。
-- 上下文检索复验：审计脚本逐项对照 db（会话存在、文件归属、工作区一致、快照一致、
-  消息数一致）全部通过。
-- AGENTS.md / README / 合同 AC 口径同步为「跳转暂不实现」；wayfinder 决策票
-  wt_01M2FCG3WW0MQV4ZAG6N2GF96V 已 resolve，map 三条决定，validate 通过。
-
-## 用户实测追加（2026-09-14 下午）
-
-- 用户发现接续 prompt 串号（来源 35d3ab34、导出文件却是 493c0cf7）：已定位为
-  sourceContext 无归属校验的通用缺陷并修复（见 implementation.md 偏差 5）。
-- 修复后逐项审计（.tmp/zcode-prompt-audit.mjs，prompt 对照 db 事实）：
-  会话 ID 存在 ✓；来源文件存在且文件名/文件内 Session ID 与卡片一致 ✓；
-  主要来源文件行与会话文件行一致 ✓；工作区存在且等于 db.directory ✓；
-  快照最后用户输入/AI 正文与 db 最后一条一致 ✓；导出消息数 96 = db 96 ✓。
-- 修复后 `zcode-handoff-context` flow（点最后一张 zcode 卡 + 文件归属断言）连续通过；
-  `zcode-session` flow 通过（TUI 不可用分支，明确报错）。
-- TUI 二轮调查（本轮新增证据）：桌面最新版 3.12.1 解包验证无 @zcode/tui；
-  SEA 缓存目录不存在；npm/npmmirror 均无 @zcode/tui；社区 zcode-cli-stream 为
-  unofficial（自研 pi-tui）。结论维持：官方渠道当前无法获得可用的官方 TUI 运行时。
+按合同最终版（跳转下线后的 AC-001~AC-007）重新核对，合并此前各轮验证结论，
+acceptance 明细见头部。发布产物验证：zip SHA256
+`EC356AF8FABAECE38FA8E1C75DB1B1D19C43BDC902C17C76E324AF22EF653DE7`、
+VSIX 重复安装两次后仅 `agentwatcher.agentwatcher-vscode-session-bridge@0.1.12`、
+发布目录 EXE 自 `C:\` 工作目录独立启动成功并可正常退出。
+未测项（非阻断，TODO 已列）：125%/150% DPI、8 小时长跑、PATH 独立 CLI 环境的恢复分支。

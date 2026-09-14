@@ -9,9 +9,11 @@ producer: aes-plan
 result: ready
 supersedes: null
 dependencies:
-  work_item_contract_digest: sha256:459f4ee8b901939c53f38c70a8943698719fe1808efb82d10ed86ca691149e99
+  work_item_contract_digest: sha256:efa5a5233be0f6e70b70442ff1fb5cb63dad810669e2356c04643038eb83e195
   artifacts:
     - artifact_id: ar_01M2F4RE4Q0RM4E1KHYJW8HJQ5
+      digest: sha256:508d1b3dc26df8d04bdde9603a8aae7875e823b7ab713fd6039b22737443872b
+      locator: design.md
 ---
 
 # 计划：AgentWatcher 支持 ZCode Provider

@@ -9,19 +9,24 @@ producer: aes-execute
 result: complete
 supersedes: null
 dependencies:
-  work_item_contract_digest: sha256:459f4ee8b901939c53f38c70a8943698719fe1808efb82d10ed86ca691149e99
+  work_item_contract_digest: sha256:efa5a5233be0f6e70b70442ff1fb5cb63dad810669e2356c04643038eb83e195
   artifacts:
     - artifact_id: ar_01M2F4RE4Q0RM4E1KHYJW8HJQ5
+      digest: sha256:508d1b3dc26df8d04bdde9603a8aae7875e823b7ab713fd6039b22737443872b
+      locator: design.md
     - artifact_id: ar_01M2F4REB0VAPKGZ4EE052QRTW
+      digest: sha256:58a462ffb3a7a586d6a4418b5d8cd2c37dabd2cd3ee4021327a978658a87783b
+      locator: plan.md
   subject:
     kind: change_set
-    digest: sha256:9a5af7d9d42069b5bd89c585260d6c378946d3a68bb959be49d71f161e8cfcf9
+    digest: sha256:b60025e1431c0ee311f478d7afc97e421507a7622c71084518b4a11adc575a21
     repository: https://github.com/pb763396199/AgentWatcher.git
     base_revision: cd721467e82a7199ca0da299071e2b99f33312b7
-    revision: cd721467e82a7199ca0da299071e2b99f33312b7
-    tree: 66e8b88e1c5ca2bd9a33da06e17e3634074b76ee
-    content_digest: sha256:9a5af7d9d42069b5bd89c585260d6c378946d3a68bb959be49d71f161e8cfcf9
+    revision: 10649708e7168a397c850b38fccf1b31cecebfbd
+    tree: 1f344685d607a9bccaacef077f1e1ec3d07fc9be
+    content_digest: sha256:b60025e1431c0ee311f478d7afc97e421507a7622c71084518b4a11adc575a21
     branch_or_pr: dev
+    excluded_prefixes: []
     workflow_excluded: true
 ---
 

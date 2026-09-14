@@ -6,13 +6,13 @@ artifact_id: "ar_01M2F27YF1BYC844M1BSJXVR8K"
 work_item_id: "wi_3QQPFJCPXD24P1CCXMXAZ730TQ"
 created_at: "2026-09-14T04:19:12Z"
 producer: "aes-wayfinder"
-state: "ready"
+state: "handed_off"
 dependencies:
-  work_item_contract_digest: "sha256:2410eceeb9ae829ae563760922e7a1914bdbd84aa01f73fb221311fc4bd14686"
+  work_item_contract_digest: sha256:efa5a5233be0f6e70b70442ff1fb5cb63dad810669e2356c04643038eb83e195
   artifacts: []
 navigation:
   destination: "AgentWatcher 新增第 6 个会话 provider `zcode`（徽标 ZC）：从 ZCode 的本地会话库"
-  route: "先处理 frontier，再等待用户确认交接"
+  route: "路线已按用户确认交接：跳转下线，数据面交付并发布 v0.1.5"
   domains: []
   nodes: []
   edges: []
@@ -21,12 +21,12 @@ navigation:
   resume:
     session: "ws_pending"
     position: "handoff"
-    next: "等待交接"
+    next: "已交接"
     claimed_tasks: []
   handoff:
     route: "aes-brainstorm"
-    confirmation: "pending"
-    summary: "路线清楚后等待用户确认"
+    confirmation: "confirmed"
+    summary: "用户 2026-09-14 确认：提交并收尾、合到 dev、发布 v0.1.5，不提 issue"
 ---
 
 # WayFinder

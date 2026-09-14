@@ -1,0 +1,183 @@
+{
+  "artifacts": [
+    {
+      "artifact_id": "ar_01M2FDFWCZQGZE2NQEYHE4ZV0F",
+      "depends_on": [],
+      "freshness": "fresh",
+      "outcome": "delivered",
+      "path": "delivery.md",
+      "stage": 80,
+      "type": "delivery"
+    },
+    {
+      "artifact_id": "ar_01M2F4RE4Q0RM4E1KHYJW8HJQ5",
+      "depends_on": [],
+      "freshness": "fresh",
+      "outcome": "accepted",
+      "path": "design.md",
+      "stage": 20,
+      "type": "design"
+    },
+    {
+      "artifact_id": "ar_01M2F4REGYSZC2KA486XPBBE20",
+      "depends_on": [
+        "ar_01M2F4RE4Q0RM4E1KHYJW8HJQ5",
+        "ar_01M2F4REB0VAPKGZ4EE052QRTW"
+      ],
+      "freshness": "fresh",
+      "outcome": "complete",
+      "path": "implementation.md",
+      "stage": 50,
+      "type": "implementation"
+    },
+    {
+      "artifact_id": "ar_01M2FDDE1QT5Q12F8D8C1AH3FK",
+      "depends_on": [],
+      "freshness": "fresh",
+      "outcome": "passed",
+      "path": "manual-test.md",
+      "stage": 70,
+      "type": "manual-test"
+    },
+    {
+      "artifact_id": "ar_01M2F4REB0VAPKGZ4EE052QRTW",
+      "depends_on": [
+        "ar_01M2F4RE4Q0RM4E1KHYJW8HJQ5"
+      ],
+      "freshness": "fresh",
+      "outcome": "ready",
+      "path": "plan.md",
+      "stage": 30,
+      "type": "plan"
+    },
+    {
+      "artifact_id": "ar_01M2FDDDCPCX9ZNE75XB7QEQHT",
+      "depends_on": [],
+      "freshness": "fresh",
+      "outcome": "approved",
+      "path": "reviews/zcode-provider-review.md",
+      "stage": 60,
+      "type": "review"
+    },
+    {
+      "artifact_id": "ar_01M2FDDDQ4HYKPCH5EZ4V0CTQ9",
+      "depends_on": [],
+      "freshness": "fresh",
+      "outcome": "complete",
+      "path": "summary.md",
+      "stage": 55,
+      "type": "summary"
+    },
+    {
+      "artifact_id": "ar_01M2FDDDHW446PZ1GSAEA7VCJY",
+      "depends_on": [
+        "ar_01M2F4REGYSZC2KA486XPBBE20"
+      ],
+      "freshness": "fresh",
+      "outcome": "passed",
+      "path": "validation.md",
+      "stage": 70,
+      "type": "validation"
+    },
+    {
+      "artifact_id": "ar_01M2F27YF1BYC844M1BSJXVR8K",
+      "depends_on": [],
+      "freshness": "fresh",
+      "outcome": "handed_off",
+      "path": "wayfinder.md",
+      "stage": 35,
+      "type": "wayfinder"
+    },
+    {
+      "artifact_id": "ar_01M2FDDDWFQJGM42Y0ZHDRKRK3",
+      "depends_on": [],
+      "freshness": "fresh",
+      "outcome": "complete",
+      "path": "work-item-summary.md",
+      "stage": 55,
+      "type": "summary"
+    }
+  ],
+  "computed_from": {
+    "change_set": {
+      "content_digest": "sha256:1681f77afb950f9ceacc58653a45a171ecc30d39be2fb2ee5198c6c0e9bc80ec",
+      "revision": "10649708e7168a397c850b38fccf1b31cecebfbd",
+      "tree": "1f344685d607a9bccaacef077f1e1ec3d07fc9be"
+    },
+    "documents": {
+      "delivery.md": "sha256:4074ac3c313f22ad0cef76eeac699442c0933193abbad4fd0c9a60c34e9e41c3",
+      "design.md": "sha256:fc9856d35c1b090ad2195558ad0ec68ab45370ac3bfb94076e47e3c77d6d0fb2",
+      "implementation.md": "sha256:0f57b5cefe4c5ab06ae4059a4f30ddd4a1e9cf5d7fb72cd4e1ec8cba326725c6",
+      "manual-test.md": "sha256:b26e698508f1bc9966eb897c31a6d7646a531e1d56fb750b6a5552088ad21b12",
+      "plan.md": "sha256:65ecf07418a461bf6d7398d6e8d50d5e464eec95f65de2ba18de702d50a562cd",
+      "reviews/zcode-provider-review.md": "sha256:8c7730df46af43d8578c533b81bac1b28c65d7356857af107a99d55b5b5c0b9f",
+      "summary.md": "sha256:168d6da7fd394d4393ae9f41d71ed9500eb8c1ffc178b4eaeac62d82dd8be337",
+      "validation.md": "sha256:f1a03c033f4a53af02746d70d3cfe84d741eb2455355ee47a32a32399e2de9e7",
+      "wayfinder.md": "sha256:e748d97825af1e26ec6f6733a4988f1396b7df9f896cd2d88cb3a5e442f824d6",
+      "work-item-summary.md": "sha256:25ebf0c54a893a40390f22ff30416fd7be0dffe3c8809a7f435d0928db20ca50",
+      "work-item.md": "sha256:9a8f80f79210cb529c7f504ad3604c77b372a2babe432641414ff90042925b0e"
+    }
+  },
+  "generated_at": "2026-09-14T07:42:37.646207Z",
+  "generated_by": {
+    "tool_revision": "sha256:e86ec7761a83"
+  },
+  "manual_test": {
+    "failed": 0,
+    "open": 0,
+    "passed": 8
+  },
+  "next": "已收口",
+  "protocol": "1.3.0",
+  "schema_version": 1,
+  "stage": {
+    "next_skill": "aes-retrospect",
+    "reached": "delivery",
+    "reached_stage": 80,
+    "waiting_on": null
+  },
+  "wayfinder": {
+    "artifact_id": "ar_01M2F27YF1BYC844M1BSJXVR8K",
+    "destination": "AgentWatcher 新增第 6 个会话 provider `zcode`（徽标 ZC）：从 ZCode 的本地会话库",
+    "domains": [],
+    "edges": [],
+    "freshness": "fresh",
+    "frontier": [],
+    "handoff": {
+      "confirmation": "confirmed",
+      "route": "aes-brainstorm",
+      "summary": "用户 2026-09-14 确认：提交并收尾、合到 dev、发布 v0.1.5，不提 issue"
+    },
+    "nodes": [],
+    "path": "workflow/agentwatcher-zcode-provider/wayfinder.md",
+    "resume": {
+      "claimed_tasks": [],
+      "next": "已交接",
+      "position": "handoff",
+      "session": "ws_pending"
+    },
+    "route": "路线已按用户确认交接：跳转下线，数据面交付并发布 v0.1.5",
+    "state": "handed_off",
+    "tasks": []
+  },
+  "work_item": {
+    "acceptance_ids": [
+      "AC-001",
+      "AC-002",
+      "AC-003",
+      "AC-004",
+      "AC-005",
+      "AC-006",
+      "AC-007"
+    ],
+    "branch": "feature/agentwatcher-zcode-provider",
+    "contract_digest": "sha256:efa5a5233be0f6e70b70442ff1fb5cb63dad810669e2356c04643038eb83e195",
+    "home_repository": "https://github.com/pb763396199/AgentWatcher.git",
+    "id": "wi_3QQPFJCPXD24P1CCXMXAZ730TQ",
+    "kind": null,
+    "short_id": "xf9ag8cp",
+    "slug": "agentwatcher-zcode-provider",
+    "status": "done",
+    "title": "AgentWatcher 支持 ZCode Provider"
+  }
+}

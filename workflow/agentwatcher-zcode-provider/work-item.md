@@ -6,7 +6,7 @@ id: "wi_3QQPFJCPXD24P1CCXMXAZ730TQ"
 protocol: "1.3.0"
 schema_version: "1"
 short_id: "xf9ag8cp"
-status: "active"
+status: "done"
 title: "AgentWatcher 支持 ZCode Provider"
 ---
 ## 目标
