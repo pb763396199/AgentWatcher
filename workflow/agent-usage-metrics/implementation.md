@@ -12,7 +12,7 @@ dependencies:
   work_item_contract_digest: sha256:b1d0e0503375d88153a6711d42195454acdbf4b2117b2b4a4a6cca41a6fcc8d9
   artifacts:
     - artifact_id: ar_01M2J40XKJ0004SY6GMZW2RKW6
-      digest: sha256:7c1d61101737a5ea369040009c1397f1667ce97c7a628ab1a54c86f9d05f2797
+      digest: sha256:b6056b09c2465fc6738527c509ef7c18a81f8aa617478672cd9cc80f986ff942
       locator: change-note.md
     - artifact_id: ar_01M2J1HY7000034P57XZ03CQ8W
       digest: sha256:19eb2e8ec3d41f479085aae6ce8ee724b5831ee8ad840ddb52a589e64bccf62f
