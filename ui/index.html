@@ -1504,6 +1504,128 @@
       white-space: nowrap;
     }
 
+    .card-usage {
+      position: absolute;
+      left: var(--tile-padding);
+      right: var(--tile-padding);
+      bottom: calc(var(--tile-padding) + 20px);
+      display: block;
+      min-width: 0;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: max(9px, calc(var(--tile-meta) - 1px));
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .card-usage b {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .card-usage .usage-sep {
+      color: var(--soft);
+    }
+
+    .watcher-window.compact-cards .card-usage,
+    .waiting-alert-layer.compact-cards .card-usage,
+    .watcher-window.dense-cards .card-usage,
+    .waiting-alert-layer.dense-cards .card-usage,
+    .watcher-window.micro-cards .card-usage,
+    .waiting-alert-layer.micro-cards .card-usage {
+      display: none;
+    }
+
+    .usage-hero {
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 4px 8px;
+      margin-bottom: 8px;
+      padding: 7px 9px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+    }
+
+    .usage-hero-label {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .usage-hero-value {
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1.1;
+    }
+
+    .usage-hero-value.missing {
+      color: var(--soft);
+      font-size: 14px;
+      font-weight: 400;
+    }
+
+    .usage-hero-sub {
+      color: var(--soft);
+      font-size: 11px;
+    }
+
+    .usage-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px 12px;
+    }
+
+    .usage-item {
+      min-width: 0;
+    }
+
+    .usage-item-label {
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .usage-item-value {
+      overflow: hidden;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 17px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .usage-item-value.missing {
+      color: var(--soft);
+      font-weight: 400;
+    }
+
+    .usage-item-sub {
+      overflow: hidden;
+      color: var(--soft);
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .usage-empty-note {
+      margin-top: 6px;
+      color: var(--soft);
+      font-size: 11px;
+    }
+
+    body[data-theme="light"] .usage-hero {
+      background: #ffffff;
+    }
+
     .card-expand-btn {
       position: absolute;
       right: var(--tile-padding);
@@ -6385,7 +6507,8 @@
         updatedNow: 'Updated now',
         workspaceSearchPlaceholder: 'Search workspace, path, branch',
         workspacePickerShowAllPaths: 'Show every workspace path',
-        workspacePickerNoMatch: 'No matching workspace'
+        workspacePickerNoMatch: 'No matching workspace',
+        usage: 'Usage', usageTotalInput: 'Total input', usageOutput: 'Total output', usageContext: 'Context', usageTurns: 'User turns', usageToolCalls: 'Tool calls', usageModelCalls: 'Model calls', usageModels: 'Model', usageDuration: 'Duration', usageCost: 'Cost', usageTurnsUnit: 'turns', usageToolsUnit: 'tools', usageCached: 'cached {percent}%', usageOfWindow: 'of {window} window', usageActiveSpan: '{active} active · {span} span', usageSpanOnly: 'span {span}', usageModelMore: '+{count}', usageNoDataNote: 'This source does not report usage data', usageCredits: 'credits'
       },
       zh: {
         allSessions: '全部 Agent 会话', watched: '已监控 83 个工作区', filterActive: '已启用工作区过滤', waitingChip: '8 待回复', workspace: '工作区', allWorkspaces: '全部工作区', perRow: '每排数量', visibleNow: '当前可见', inQueue: '在滚动队列', sessions: '个会话', updated: '2 秒前更新', workspacePrefix: '工作区：', overflow: '按优先级继续滚动：待回复、运行中、闲置', priority: '优先', live: '实时', quiet: '静默', waiting: '待回复', running: '运行中', idle: '闲置', all: '全部', wait: '待回', run: '运行', col: '列', cols: '列', perRowButton: '/ 排', iconsPerRow: '个/排', windowSize: '窗口尺寸', openWorkspace: '打开 VS Code 工作区：', openingAgents: '正在打开会话...', openedAgents: '已打开会话', themeLight: '浅色主题', themeDark: '深色主题', settings: '设置', appearance: '外观', language: '语言', theme: '主题', layout: '布局', horizontal: '横版', vertical: '竖版', agentTaskFlipSpeed: '翻转速度（毫秒）', lastUser: '最后用户输入', lastAi: '最后 AI 回复', noUserMessage: '未捕获到用户输入', noAiMessage: '未捕获到 AI 回复', tailOnly: '尾部', errorExcerpt: '错误', windowBehavior: '窗口', alwaysOnTop: '永远置顶', dataSources: '数据', includeCopilot: 'Copilot 会话', includeClaude: 'Claude 会话', hideArchived: '隐藏归档', scanLimits: '扫描限制', activeWindowDays: '活跃窗口（天）', maxSessions: '每个提供方会话数', refreshInterval: '刷新间隔（秒）', settingsSaved: '设置已更新', maxCardsPerRow: '每排最大数量', waitingAlertSize: '待回复提醒尺寸', waitingAlertDuration: '待回复持续时间（秒）', small: '小', medium: '中', large: '大', waitingAlertAria: '新的待回复会话', handoffCreate: '创建接续会话...', handoffCopyPrompt: '复制接续提示词', handoffOpenSource: '打开原会话', handoffTitle: '创建接续会话', handoffNewSessionIn: '在', handoffWithProvider: '使用', handoffLatestSnapshot: '最新快照', handoffSourceLocator: '来源定位', handoffPreview: '预览', handoffCopy: '复制', handoffLaunch: '启动', handoffSaveTodo: '存为 Todo', handoffPromptPreview: '提示词预览', handoffTaskPlaceholder: '希望新会话做什么？', handoffWorkspacePlaceholder: '搜索或粘贴工作区路径', handoffUsePastedPath: '使用粘贴路径', handoffNoWorkspace: '没有匹配的工作区', handoffSelected: '已选', handoffCopied: '已复制接续提示词', handoffClipboardFallback: '无法直接写剪贴板，已选中提示词', handoffLaunching: '正在启动接续会话...', handoffLaunched: '已请求启动接续会话', handoffNoSession: '未选择来源会话', handoffOpenFailed: '接续面板打开失败', handoffSelectWorkspace: '选择工作区', handoffAgentsLabel: 'Copilot 编辑器', handoffCodeChatLabel: 'Copilot CLI 编辑器', handoffClaudeLabel: 'Claude Code 编辑器', handoffAgentsDescription: '在 VS Code 编辑器标签页中打开 Copilot 并填入接续提示词', handoffCodeChatDescription: '打开 Copilot CLI 编辑器标签页并填入接续提示词', handoffClaudeDescription: '在 VS Code 编辑器标签页中打开 Claude Code', bridgeTitle: 'VS Code Bridge', bridgePreviewOnly: '仅预览', bridgeChecking: '正在检查...', bridgeInstalled: 'Bridge 已安装', bridgeNeedsUpdate: 'Bridge 有可用更新', bridgeNotInstalled: 'Bridge 未安装', bridgeInstall: '安装', bridgeUpdate: '更新', bridgeRetry: '重试', bridgeInstalling: '正在安装...', bridgeInstallFailed: 'Bridge 安装失败', todoWindowTitle: 'AI 任务输入法', todoWindowSubtitle: '工作区 Todo 队列', todoOpen: '打开 Todo', todoReadyNudge: '可推进 Todo：', todoRefresh: '刷新', todoUsePath: '使用路径', todoCancel: '取消', todoAdd: '添加', todoSave: '保存', todoActive: '进行中', todoShowDone: '完成项', todoTitlePlaceholder: '任务标题', todoDescriptionPlaceholder: '任务说明', todoAcceptancePlaceholder: '完成标准', todoPathPlaceholder: '粘贴工作区路径', todoNoWorkspace: '选择工作区', todoEmpty: '这个工作区没有待办任务', todoNoDone: '还没有完成项', todoPendingReview: '待确认完成', todoPromptPreview: '提示词', todoDispatch: '启动', todoComplete: '完成', todoRetry: '返工', todoBlock: '阻塞', todoUnblock: '解除阻塞', todoDelete: '删除', todoEdit: '编辑', todoSaved: 'Todo 已保存', todoLaunched: '已请求启动 Todo', todoCopied: '提示词已复制', todoBlocked: '已阻塞', todoDone: '已完成', todoReady: '就绪', todoRunning: '运行中', todoReview: '待确认', todoUnbound: '已派发，未绑定', todoBound: '已绑定会话', todoCountsText: '待办 {active} / 完成 {done}', todoCreateFromHandoff: '已将接续保存为 Todo',
@@ -6430,7 +6553,8 @@
         updatedNow: '刚刚更新',
         workspaceSearchPlaceholder: '搜索 workspace、路径、分支',
         workspacePickerShowAllPaths: '显示所有 workspace 路径',
-        workspacePickerNoMatch: '没有匹配的 workspace'
+        workspacePickerNoMatch: '没有匹配的 workspace',
+        usage: '用量', usageTotalInput: '累计输入', usageOutput: '累计输出', usageContext: '当前上下文', usageTurns: '对话轮次', usageToolCalls: '工具调用', usageModelCalls: '模型调用', usageModels: '模型', usageDuration: '时长', usageCost: '成本', usageTurnsUnit: '轮', usageToolsUnit: '工具', usageCached: '缓存 {percent}%', usageOfWindow: '/ {window} 窗口', usageActiveSpan: '{active} 活跃 · {span} 跨度', usageSpanOnly: '跨度 {span}', usageModelMore: '+{count}', usageNoDataNote: '该数据源不提供用量数据', usageCredits: 'credits'
       }
     };
       Object.assign(i18n.en, {
@@ -14958,6 +15082,7 @@
       const title = session.title || cardText(card, '.session-title') || shortCardId(card.dataset.sessionId);
 
       return {
+        sessionId: String(session.id || card.dataset.sessionId || ''),
         workspace,
         workspacePath,
         title,
@@ -14968,6 +15093,7 @@
         lastAi: session.lastAiMessage || t('noAiMessage'),
         lastAiTruncated: !!session.lastAiMessageTruncated,
         lastAiExcerptKind: session.lastAiMessageExcerptKind || null,
+        usage: sessionUsageOf(session),
       };
     }
 
@@ -15013,6 +15139,7 @@
       aiSection.appendChild(makeLabelWithBadge(t('lastAi'), aiBadgeKey, aiBadgeClass));
       appendText(aiSection, 'div', 'session-preview-text', data.lastAi);
       body.appendChild(aiSection);
+      renderSessionPreviewUsage(data, body);
       sessionPreview.appendChild(body);
 
       ['nw', 'ne', 'sw', 'se'].forEach(corner => {
@@ -15023,6 +15150,116 @@
         handle.setAttribute('aria-label', 'Resize preview from ' + corner);
         sessionPreview.appendChild(handle);
       });
+    }
+
+    function renderSessionPreviewUsage(data, body) {
+      const usage = sessionUsageOf(data);
+      const sessionId = String(data.sessionId || '');
+      const isCliSource = sessionId.startsWith('copilot-cli:');
+      if (!usage && !isCliSource) return;
+
+      const section = document.createElement('section');
+      section.className = 'session-preview-section';
+      appendText(section, 'div', 'session-preview-label', t('usage'));
+
+      if (!usage) {
+        // Copilot CLI 的数据源没有任何用量字段，明确说明而不是显示一排 0
+        if (isCliSource) appendText(section, 'div', 'usage-empty-note', t('usageNoDataNote'));
+        body.appendChild(section);
+        return;
+      }
+
+      const detail = data.usageDetail && typeof data.usageDetail === 'object' ? data.usageDetail : null;
+      const topTools = Array.isArray(detail?.topTools) ? detail.topTools : [];
+      const dash = '—';
+      const numberOr = (value, min = 0) => {
+        const number = Number(value);
+        return Number.isFinite(number) && number > min ? number : null;
+      };
+
+      const hero = document.createElement('div');
+      hero.className = 'usage-hero';
+      appendText(hero, 'span', 'usage-hero-label', t('usageTotalInput'));
+      const heroTotal = numberOr(usage.totalInputTokens);
+      if (heroTotal != null) {
+        appendText(hero, 'span', 'usage-hero-value', formatUsageTokens(heroTotal));
+        const cached = numberOr(usage.cachedInputTokens);
+        if (cached != null) {
+          appendText(hero, 'span', 'usage-hero-sub', t('usageCached').replace('{percent}', String(Math.round(cached / heroTotal * 100))));
+        }
+      } else {
+        appendText(hero, 'span', 'usage-hero-value missing', dash);
+      }
+      section.appendChild(hero);
+
+      const grid = document.createElement('div');
+      grid.className = 'usage-grid';
+      const addItem = (labelKey, valueText, subText, missing) => {
+        const item = document.createElement('div');
+        item.className = 'usage-item';
+        appendText(item, 'div', 'usage-item-label', t(labelKey));
+        appendText(item, 'div', 'usage-item-value' + (missing ? ' missing' : ''), valueText);
+        if (subText) appendText(item, 'div', 'usage-item-sub', subText);
+        grid.appendChild(item);
+      };
+
+      const output = numberOr(usage.totalOutputTokens);
+      addItem('usageOutput', output != null ? formatUsageTokens(output) : dash, '', output == null);
+
+      const context = numberOr(usage.contextTokens);
+      const windowTokens = numberOr(usage.contextWindowTokens);
+      const contextSub = windowTokens != null
+        ? t('usageOfWindow').replace('{window}', formatUsageTokens(windowTokens))
+        : '';
+      addItem('usageContext', context != null ? formatUsageTokens(context) : dash, contextSub, context == null);
+
+      const turns = numberOr(usage.userTurns);
+      addItem('usageTurns', turns != null ? `${turns} ${t('usageTurnsUnit')}` : dash, '', turns == null);
+
+      const tools = numberOr(usage.toolCalls);
+      const toolsSub = topTools.slice(0, 3).map(tool => `${tool.name} ${tool.count}`).join(' · ');
+      addItem('usageToolCalls', tools != null ? String(tools) : dash, toolsSub, tools == null);
+
+      const modelCalls = numberOr(usage.modelCalls);
+      addItem('usageModelCalls', modelCalls != null ? String(modelCalls) : dash, '', modelCalls == null);
+
+      const models = Array.isArray(usage.models) ? usage.models.filter(Boolean) : [];
+      const modelsText = models.length
+        ? (models.length === 1 ? models[0] : `${models[0]} ${t('usageModelMore').replace('{count}', String(models.length - 1))}`)
+        : dash;
+      addItem('usageModels', modelsText, '', !models.length);
+
+      const activeMs = numberOr(usage.activeDurationMs);
+      const spanMs = numberOr(usage.durationMs);
+      let durationText = dash;
+      let durationMissing = true;
+      if (activeMs != null && spanMs != null) {
+        durationText = t('usageActiveSpan')
+          .replace('{active}', formatUsageDuration(activeMs))
+          .replace('{span}', formatUsageDuration(spanMs));
+        durationMissing = false;
+      } else if (spanMs != null) {
+        durationText = t('usageSpanOnly').replace('{span}', formatUsageDuration(spanMs));
+        durationMissing = false;
+      }
+      addItem('usageDuration', durationText, '', durationMissing);
+
+      const costUsd = numberOr(usage.costUsd);
+      const credits = numberOr(usage.copilotCredits);
+      let costText = dash;
+      let costMissing = true;
+      if (costUsd != null) {
+        costText = '$' + costUsd.toFixed(2);
+        costMissing = false;
+      } else if (credits != null) {
+        costText = `${formatUsageNumber(credits)} ${t('usageCredits')}`;
+        costMissing = false;
+      }
+      addItem('usageCost', costText, '', costMissing);
+
+      section.appendChild(grid);
+      if (isCliSource) appendText(section, 'div', 'usage-empty-note', t('usageNoDataNote'));
+      body.appendChild(section);
     }
 
     async function showSessionPreview(card, anchorButton) {
@@ -15223,6 +15460,7 @@
       };
       latestSessionPreviewData = localizedData;
       renderSessionPreview(localizedData);
+      loadSessionUsageDetail(localizedData);
       sessionPreview.hidden = false;
       sessionPreview.style.left = '0px';
       sessionPreview.style.top = '0px';
@@ -15230,8 +15468,27 @@
       sessionPreview.style.height = '100vh';
     }
 
+    async function loadSessionUsageDetail(data) {
+      const sessionId = String(data?.sessionId || '');
+      if (!sessionId) return;
+      // OpenCode 的上下文/轮次/工具明细与 ZCode 的工具分布走懒加载；
+      // 其余来源在扫描端已经带齐用量，不额外发请求。
+      if (!sessionId.startsWith('zcode:') && !sessionId.startsWith('opencode:')) return;
+      if (typeof tauriInvoke !== 'function') return;
+      try {
+        const detail = await tauriInvoke('get_session_usage_detail', { id: sessionId });
+        if (!detail) return;
+        if (String(latestSessionPreviewData?.sessionId || '') !== sessionId) return;
+        latestSessionPreviewData.usageDetail = detail;
+        renderSessionPreview(latestSessionPreviewData);
+      } catch (_) {
+        // 明细查询失败时保留扫描端的基础用量显示
+      }
+    }
+
     function setupSessionPreviewWindow() {
       updatePreviewWindowContent({
+        sessionId: '',
         workspace: 'AgentWatcher',
         title: 'Session Preview',
         statusClass: 'idle',
@@ -15240,7 +15497,8 @@
         lastUserTruncated: false,
         lastAi: t('noAiMessage'),
         lastAiTruncated: false,
-        lastAiExcerptKind: null
+        lastAiExcerptKind: null,
+        usage: null
       });
 
       tauriListen?.('agentwatcher-settings-data', event => applyRuntimeSettings(event.payload)).catch(() => {});
@@ -15604,6 +15862,56 @@
       ].join(' ').toLowerCase();
     }
 
+    function formatUsageTokens(value) {
+      const number = Number(value);
+      if (!Number.isFinite(number) || number <= 0) return '';
+      if (number >= 1e9) return (number / 1e9).toFixed(number >= 1e10 ? 0 : 1) + 'B';
+      if (number >= 1e6) return (number / 1e6).toFixed(number >= 1e8 ? 0 : 1) + 'M';
+      if (number >= 1e3) return (number / 1e3).toFixed(number >= 1e5 ? 0 : 1) + 'k';
+      return String(Math.round(number));
+    }
+
+    function formatUsageDuration(ms) {
+      const number = Number(ms);
+      if (!Number.isFinite(number) || number <= 0) return '';
+      const hours = number / 3600000;
+      if (hours >= 48) return (hours / 24).toFixed(1) + 'd';
+      if (hours >= 1) return hours.toFixed(1) + 'h';
+      return Math.max(1, Math.round(number / 60000)) + 'm';
+    }
+
+    function formatUsageNumber(value) {
+      return Number(value).toLocaleString('en-US', { maximumFractionDigits: 1 });
+    }
+
+    function sessionUsageOf(session) {
+      return session?.usage && typeof session.usage === 'object' ? session.usage : null;
+    }
+
+    function buildCardUsageRow(session) {
+      const usage = sessionUsageOf(session);
+      if (!usage) return null;
+      const parts = [];
+      const turns = Number(usage.userTurns);
+      if (Number.isFinite(turns) && turns > 0) parts.push({ value: String(turns), unit: t('usageTurnsUnit') });
+      const tools = Number(usage.toolCalls);
+      if (Number.isFinite(tools) && tools > 0) parts.push({ value: String(tools), unit: t('usageToolsUnit') });
+      const tokens = formatUsageTokens(usage.totalInputTokens);
+      if (tokens) parts.push({ value: tokens, unit: '' });
+      if (!parts.length) return null;
+
+      const row = document.createElement('div');
+      row.className = 'card-usage';
+      parts.forEach((part, index) => {
+        if (index > 0) appendText(row, 'span', 'usage-sep', ' · ');
+        const strong = document.createElement('b');
+        strong.textContent = part.value;
+        row.appendChild(strong);
+        if (part.unit) appendText(row, 'span', '', ' ' + part.unit);
+      });
+      return row;
+    }
+
     function createSessionCard(session) {
       const normalizedSession = normalizeSession(session || {});
       const status = normalizedSession.status;
@@ -15627,6 +15935,8 @@
 
       appendText(card, 'div', 'workspace', normalizedSession.workspaceLabel || normalizedSession.workspace || 'Unknown');
       appendText(card, 'div', 'session-title', normalizedSession.title || shortCardId(normalizedSession.id));
+      const usageRow = buildCardUsageRow(normalizedSession);
+      if (usageRow) card.appendChild(usageRow);
 
       const cardFoot = document.createElement('div');
       cardFoot.className = 'card-foot';
@@ -15679,7 +15989,13 @@
 
     function buildSessionSignature(sessions) {
       return (Array.isArray(sessions) ? sessions : [])
-        .map(session => [session.id, session.status, session.updatedMs, session.workspaceKey, session.workspaceLabel, session.title, session.lastUserMessage, session.lastAiMessage].join(':'))
+        .map(session => {
+          const usage = sessionUsageOf(session);
+          const usageKey = usage
+            ? [usage.totalInputTokens, usage.totalOutputTokens, usage.contextTokens, usage.userTurns, usage.toolCalls, usage.modelCalls].join(',')
+            : '';
+          return [session.id, session.status, session.updatedMs, session.workspaceKey, session.workspaceLabel, session.title, session.lastUserMessage, session.lastAiMessage, usageKey].join(':');
+        })
         .join('|');
     }
 

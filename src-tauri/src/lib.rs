@@ -2,7 +2,7 @@ use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watche
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -11,7 +11,7 @@ use std::net::{Shutdown, TcpListener, TcpStream};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager};
@@ -120,6 +120,59 @@ struct AgentSession {
     branch: Option<String>,
     todo_ids: Vec<String>,
     plugin_workflow: Option<PluginWorkflowSessionMarker>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    usage: Option<SessionUsage>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionUsage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cached_input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_output_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_window_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_turns: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_calls: Option<u32>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    models: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    active_duration_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cost_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    copilot_credits: Option<f64>,
+}
+
+impl SessionUsage {
+    fn is_empty(&self) -> bool {
+        *self == SessionUsage::default()
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UsageToolCount {
+    name: String,
+    count: u32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionUsageDetail {
+    usage: Option<SessionUsage>,
+    top_tools: Vec<UsageToolCount>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -540,6 +593,11 @@ struct OpenCodeSessionRow {
     time_created: u64,
     time_updated: u64,
     time_archived: Option<u64>,
+    cost: f64,
+    tokens_input: u64,
+    tokens_output: u64,
+    tokens_cache_read: u64,
+    tokens_cache_write: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -887,6 +945,7 @@ fn scan_sessions_blocking(options: Option<ScanOptions>) -> Vec<AgentSession> {
     let options = resolve_scan_options(options);
     PERFORMANCE_CODEX_TURN_REQUESTS.store(0, Ordering::Relaxed);
     PERFORMANCE_CODEX_TURNS_RETURNED.store(0, Ordering::Relaxed);
+    reset_usage_scan_budget();
     let mut sessions = Vec::new();
 
     if options.include_copilot {
@@ -955,6 +1014,814 @@ fn apply_session_limit_per_provider(sessions: &mut Vec<AgentSession>, limit: usi
         *count += 1;
         true
     });
+}
+
+// ---------- per-session usage aggregation ----------
+
+// 每轮扫描最多全量聚合多少个未缓存的 JSONL 会话文件；超出的本轮 usage 置 None，
+// 由后续扫描渐进补齐，避免首次扫描出现秒级停顿。
+const USAGE_AGGREGATION_BUDGET_PER_SCAN: usize = 10;
+const JSONL_USAGE_CACHE_CAPACITY: usize = 1024;
+const CODEX_ROLLOUT_INDEX_TTL_MS: u64 = 5_000;
+
+#[derive(Debug, Clone)]
+struct CachedJsonlUsage {
+    size: u64,
+    modified_ms: u64,
+    usage: SessionUsage,
+    top_tools: Vec<(String, u32)>,
+}
+
+static JSONL_USAGE_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlUsage>>> = OnceLock::new();
+static JSONL_USAGE_DETAIL_BY_SESSION: OnceLock<Mutex<HashMap<String, CachedJsonlUsage>>> =
+    OnceLock::new();
+static JSONL_USAGE_BUDGET_USED: AtomicUsize = AtomicUsize::new(0);
+static CODEX_ROLLOUT_INDEX_CACHE: OnceLock<
+    Mutex<Option<(u64, HashMap<String, PathBuf>)>>,
+> = OnceLock::new();
+
+fn jsonl_usage_cache() -> &'static Mutex<HashMap<String, CachedJsonlUsage>> {
+    JSONL_USAGE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn jsonl_usage_detail_by_session() -> &'static Mutex<HashMap<String, CachedJsonlUsage>> {
+    JSONL_USAGE_DETAIL_BY_SESSION.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn reset_usage_scan_budget() {
+    JSONL_USAGE_BUDGET_USED.store(0, Ordering::Relaxed);
+}
+
+fn usage_scan_budget_try_consume() -> bool {
+    let used = JSONL_USAGE_BUDGET_USED.fetch_add(1, Ordering::Relaxed);
+    used < USAGE_AGGREGATION_BUDGET_PER_SCAN
+}
+
+fn cached_jsonl_usage_for_path<F>(path: &Path, compute: F) -> Option<CachedJsonlUsage>
+where
+    F: FnOnce(&str) -> Option<(SessionUsage, Vec<(String, u32)>)>,
+{
+    let metadata = fs::metadata(path).ok()?;
+    let modified_ms = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64)?;
+    let cache_key = path_to_string(path);
+    {
+        let cache = jsonl_usage_cache().lock().ok()?;
+        if let Some(hit) = cache.get(&cache_key) {
+            if hit.size == metadata.len() && hit.modified_ms == modified_ms {
+                return Some(hit.clone());
+            }
+        }
+    }
+    if !usage_scan_budget_try_consume() {
+        return None;
+    }
+    let bytes = fs::read(path).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let (usage, top_tools) = compute(&text)?;
+    let entry = CachedJsonlUsage {
+        size: metadata.len(),
+        modified_ms,
+        usage,
+        top_tools,
+    };
+    let mut cache = jsonl_usage_cache().lock().ok()?;
+    if cache.len() >= JSONL_USAGE_CACHE_CAPACITY {
+        cache.clear();
+    }
+    cache.insert(cache_key, entry.clone());
+    Some(entry)
+}
+
+fn store_jsonl_usage_detail(session_key: &str, entry: &CachedJsonlUsage) {
+    if let Ok(mut cache) = jsonl_usage_detail_by_session().lock() {
+        if cache.len() >= JSONL_USAGE_CACHE_CAPACITY {
+            cache.clear();
+        }
+        cache.insert(session_key.to_string(), entry.clone());
+    }
+}
+
+fn jsonl_usage_detail_for_session(session_key: &str) -> Option<CachedJsonlUsage> {
+    jsonl_usage_detail_by_session()
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(session_key).cloned())
+}
+
+fn sorted_top_tools(tool_counts: &HashMap<String, u32>) -> Vec<(String, u32)> {
+    let mut items: Vec<(String, u32)> = tool_counts
+        .iter()
+        .map(|(name, count)| (name.clone(), *count))
+        .collect();
+    items.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    items.truncate(5);
+    items
+}
+
+fn push_usage_model(models: &mut Vec<String>, model: &str) {
+    let model = model.trim();
+    if model.is_empty() {
+        return;
+    }
+    if !models.iter().any(|existing| existing == model) {
+        models.push(model.to_string());
+    }
+}
+
+fn jsonl_duration_ms(first_ms: Option<u64>, last_ms: Option<u64>) -> Option<u64> {
+    match (first_ms, last_ms) {
+        (Some(first), Some(last)) if last >= first => Some(last - first),
+        _ => None,
+    }
+}
+
+fn empty_usage_result() -> Option<(SessionUsage, Vec<(String, u32)>)> {
+    Some((SessionUsage::default(), Vec::new()))
+}
+
+fn jsonl_lines(text: &str) -> impl Iterator<Item = &str> {
+    text.lines().filter(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with('{')
+    })
+}
+
+fn value_as_u64(value: &Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| {
+            value
+                .as_f64()
+                .filter(|number| number.is_finite() && *number >= 0.0)
+                .map(|number| number as u64)
+        })
+}
+
+fn map_pointer<'a>(
+    request: &'a serde_json::Map<String, Value>,
+    keys: &[&str],
+) -> Option<&'a Value> {
+    let mut current = request.get(*keys.first()?)?;
+    for key in &keys[1..] {
+        current = current.get(*key)?;
+    }
+    Some(current)
+}
+
+fn count_value_u64(value: &Value, key: &str) -> u64 {
+    value.get(key).and_then(value_as_u64).unwrap_or(0)
+}
+
+fn codex_injected_user_text(text: &str) -> bool {
+    const PREFIXES: [&str; 8] = [
+        "<recommended_plugins>",
+        "<environment_context>",
+        "<environment",
+        "<in-app-browser-context",
+        "<user_instructions>",
+        "<turn_aborted",
+        "# AGENTS.md instructions",
+        "<user_instructions",
+    ];
+    const SUBSTRINGS: [&str; 1] = ["<!-- AUTO"];
+    let trimmed = text.trim_start();
+    PREFIXES.iter().any(|prefix| trimmed.starts_with(prefix))
+        || SUBSTRINGS.iter().any(|needle| trimmed.contains(needle))
+}
+
+fn parse_codex_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u32)>)> {
+    let mut usage = SessionUsage::default();
+    let mut total_input = 0_u64;
+    let mut total_output = 0_u64;
+    let mut have_totals = false;
+    let mut context_tokens: Option<u64> = None;
+    let mut user_turns = 0_u32;
+    let mut tool_calls = 0_u32;
+    let mut model_calls = 0_u32;
+    let mut tool_counts: HashMap<String, u32> = HashMap::new();
+    let mut first_ms: Option<u64> = None;
+    let mut last_ms: Option<u64> = None;
+
+    for line in jsonl_lines(text) {
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        if let Some(timestamp_ms) = value
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(iso_timestamp_ms)
+        {
+            first_ms = Some(first_ms.map_or(timestamp_ms, |current| current.min(timestamp_ms)));
+            last_ms = Some(last_ms.map_or(timestamp_ms, |current| current.max(timestamp_ms)));
+        }
+        let line_type = value.get("type").and_then(Value::as_str);
+        let payload = match value.get("payload") {
+            Some(payload) if !payload.is_null() => payload,
+            _ => continue,
+        };
+        let payload_type = payload.get("type").and_then(Value::as_str);
+        match (line_type, payload_type) {
+            (Some("event_msg"), Some("token_count")) => {
+                model_calls = model_calls.saturating_add(1);
+                if let Some(info) = payload.get("info") {
+                    if let Some(total) = info.get("total_token_usage") {
+                        // Codex 的 input_tokens 是毛口径，cached_input_tokens 是其子集
+                        // （total = input + output），只有 cache_write 在 input 之外。
+                        let input = count_value_u64(total, "input_tokens")
+                            .saturating_add(count_value_u64(total, "cache_write_input_tokens"));
+                        let output = count_value_u64(total, "output_tokens")
+                            .saturating_add(count_value_u64(total, "reasoning_output_tokens"));
+                        if input.saturating_add(output) > 0 {
+                            total_input = input;
+                            total_output = output;
+                            have_totals = true;
+                            usage.cached_input_tokens =
+                                Some(count_value_u64(total, "cached_input_tokens"));
+                        }
+                    }
+                    if let Some(last) = info.get("last_token_usage") {
+                        let input = count_value_u64(last, "input_tokens")
+                            .saturating_add(count_value_u64(last, "cache_write_input_tokens"));
+                        // 压缩摘要调用会产生全零 input 的 token_count 事件，
+                        // 它不代表真实上下文，取上下文时必须跳过。
+                        if input > 0 {
+                            context_tokens =
+                                Some(input.saturating_add(count_value_u64(last, "output_tokens")));
+                        }
+                    }
+                    let window = value_as_u64(info.get("model_context_window").unwrap_or(&Value::Null))
+                        .unwrap_or(0);
+                    if window > 0 {
+                        usage.context_window_tokens = Some(window);
+                    }
+                }
+            }
+            (Some("response_item"), Some("function_call")) | (Some("response_item"), Some("custom_tool_call")) => {
+                tool_calls = tool_calls.saturating_add(1);
+                if let Some(name) = payload.get("name").and_then(Value::as_str) {
+                    if !name.is_empty() {
+                        *tool_counts.entry(name.to_string()).or_insert(0) += 1;
+                    }
+                }
+            }
+            (Some("response_item"), Some("message")) => {
+                if payload.get("role").and_then(Value::as_str) == Some("user") {
+                    if let Some(content) = payload.get("content").and_then(Value::as_array) {
+                        let text = content
+                            .iter()
+                            .filter(|item| item.get("type").and_then(Value::as_str) == Some("input_text"))
+                            .filter_map(|item| item.get("text").and_then(Value::as_str))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if !text.trim().is_empty() && !codex_injected_user_text(&text) {
+                            user_turns = user_turns.saturating_add(1);
+                        }
+                    }
+                }
+            }
+            (Some("turn_context"), _) => {
+                if let Some(model) = payload.get("model").and_then(Value::as_str) {
+                    push_usage_model(&mut usage.models, model);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if !have_totals && model_calls == 0 && tool_calls == 0 && user_turns == 0 {
+        return empty_usage_result();
+    }
+    usage.total_input_tokens = have_totals.then_some(total_input);
+    usage.total_output_tokens = have_totals.then_some(total_output);
+    usage.context_tokens = context_tokens;
+    usage.user_turns = Some(user_turns);
+    usage.tool_calls = Some(tool_calls);
+    usage.model_calls = Some(model_calls);
+    usage.duration_ms = jsonl_duration_ms(first_ms, last_ms);
+    Some((usage, sorted_top_tools(&tool_counts)))
+}
+
+fn claude_user_turn_text(value: &Value) -> Option<String> {
+    const NOISE_PREFIXES: [&str; 6] = [
+        "<task-notification>",
+        "This session is being continued",
+        "<local-command-stdout>",
+        "Caveat: ",
+        "<command-name>",
+        "<system-reminder>",
+    ];
+    // content 可能出现在顶层、message.content（真实会话常态）或 message 本身是字符串
+    let content = value
+        .pointer("/message/content")
+        .or_else(|| value.get("content"))
+        .or_else(|| value.get("message").filter(|message| message.is_string()))?;
+    let text = match content {
+        Value::String(text) => Some(text.clone()),
+        Value::Array(items) => {
+            let has_tool_result = items
+                .iter()
+                .any(|item| item.get("type").and_then(Value::as_str) == Some("tool_result"));
+            if has_tool_result {
+                return None;
+            }
+            let parts: Vec<&str> = items
+                .iter()
+                .filter(|item| item.get("type").and_then(Value::as_str) == Some("text"))
+                .filter_map(|item| item.get("text").and_then(Value::as_str))
+                .collect();
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join("\n"))
+            }
+        }
+        _ => None,
+    }?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() || NOISE_PREFIXES.iter().any(|prefix| trimmed.starts_with(prefix)) {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+fn parse_claude_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u32)>)> {
+    let mut usage = SessionUsage::default();
+    let mut seen_message_ids: HashSet<String> = HashSet::new();
+    let mut sum_input = 0_u64;
+    let mut sum_cache_creation = 0_u64;
+    let mut sum_cache_read = 0_u64;
+    let mut sum_output = 0_u64;
+    let mut context_tokens: Option<u64> = None;
+    let mut user_turns = 0_u32;
+    let mut tool_calls = 0_u32;
+    let mut model_calls = 0_u32;
+    let mut tool_counts: HashMap<String, u32> = HashMap::new();
+    let mut first_ms: Option<u64> = None;
+    let mut last_ms: Option<u64> = None;
+
+    for line in jsonl_lines(text) {
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        if let Some(timestamp_ms) = value
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(iso_timestamp_ms)
+        {
+            first_ms = Some(first_ms.map_or(timestamp_ms, |current| current.min(timestamp_ms)));
+            last_ms = Some(last_ms.map_or(timestamp_ms, |current| current.max(timestamp_ms)));
+        }
+        match value.get("type").and_then(Value::as_str) {
+            Some("assistant") => {
+                if value.get("isSidechain").and_then(Value::as_bool) == Some(true) {
+                    continue;
+                }
+                let Some(message) = value.get("message").filter(|message| !message.is_null())
+                else {
+                    continue;
+                };
+                if let Some(model) = message.get("model").and_then(Value::as_str) {
+                    push_usage_model(&mut usage.models, model);
+                }
+                // 同一次 API 调用按 content block 拆成多条记录，usage 完全相同，
+                // 必须按 message.id 去重，否则累计 token 会虚高约 2.75 倍。
+                let message_id = message.get("id").and_then(Value::as_str);
+                let is_new_call = match message_id {
+                    Some(id) => seen_message_ids.insert(id.to_string()),
+                    None => true,
+                };
+                if is_new_call {
+                    if let Some(usage_json) = message.get("usage").filter(|u| !u.is_null()) {
+                        let input = count_value_u64(usage_json, "input_tokens");
+                        let cache_creation =
+                            count_value_u64(usage_json, "cache_creation_input_tokens");
+                        let cache_read = count_value_u64(usage_json, "cache_read_input_tokens");
+                        let output = count_value_u64(usage_json, "output_tokens");
+                        sum_input = sum_input.saturating_add(input);
+                        sum_cache_creation = sum_cache_creation.saturating_add(cache_creation);
+                        sum_cache_read = sum_cache_read.saturating_add(cache_read);
+                        sum_output = sum_output.saturating_add(output);
+                        context_tokens = Some(
+                            input
+                                .saturating_add(cache_creation)
+                                .saturating_add(cache_read),
+                        );
+                        model_calls = model_calls.saturating_add(1);
+                    }
+                }
+                if let Some(content) = message.get("content").and_then(Value::as_array) {
+                    for item in content {
+                        if item.get("type").and_then(Value::as_str) == Some("tool_use") {
+                            tool_calls = tool_calls.saturating_add(1);
+                            if let Some(name) = item.get("name").and_then(Value::as_str) {
+                                if !name.is_empty() {
+                                    *tool_counts.entry(name.to_string()).or_insert(0) += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Some("user") => {
+                if value.get("isSidechain").and_then(Value::as_bool) == Some(true)
+                    || value.get("isMeta").and_then(Value::as_bool) == Some(true)
+                    || value.get("isCompactSummary").and_then(Value::as_bool) == Some(true)
+                {
+                    continue;
+                }
+                if claude_user_turn_text(&value).is_some() {
+                    user_turns = user_turns.saturating_add(1);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    usage.total_input_tokens = Some(
+        sum_input
+            .saturating_add(sum_cache_creation)
+            .saturating_add(sum_cache_read),
+    );
+    usage.cached_input_tokens = Some(sum_cache_read);
+    usage.total_output_tokens = Some(sum_output);
+    usage.context_tokens = context_tokens;
+    usage.user_turns = Some(user_turns);
+    usage.tool_calls = Some(tool_calls);
+    usage.model_calls = Some(model_calls);
+    usage.duration_ms = jsonl_duration_ms(first_ms, last_ms);
+    if usage.is_empty() {
+        return empty_usage_result();
+    }
+    Some((usage, sorted_top_tools(&tool_counts)))
+}
+
+fn parse_copilot_chat_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u32)>)> {
+    let mut requests: BTreeMap<u64, serde_json::Map<String, Value>> = BTreeMap::new();
+    let mut saw_requests = false;
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with('{') {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+            continue;
+        };
+        let Some(kind) = value.get("kind").and_then(Value::as_u64) else {
+            continue;
+        };
+        let replace_requests = |items: &[Value],
+                                requests: &mut BTreeMap<u64, serde_json::Map<String, Value>>| {
+            requests.clear();
+            for (index, item) in items.iter().enumerate() {
+                if let Some(map) = item.as_object() {
+                    requests.insert(index as u64, map.clone());
+                }
+            }
+        };
+        match kind {
+            0 => {
+                if let Some(items) = value.pointer("/v/requests").and_then(Value::as_array) {
+                    saw_requests = true;
+                    replace_requests(items, &mut requests);
+                }
+            }
+            2 => {
+                let targets_requests = value
+                    .get("k")
+                    .and_then(Value::as_array)
+                    .and_then(|keys| keys.first())
+                    .and_then(Value::as_str)
+                    == Some("requests");
+                if targets_requests {
+                    if let Some(items) = value.get("v").and_then(Value::as_array) {
+                        saw_requests = true;
+                        replace_requests(items, &mut requests);
+                    }
+                }
+            }
+            1 => {
+                let Some(keys) = value.get("k").and_then(Value::as_array) else {
+                    continue;
+                };
+                if keys.first().and_then(Value::as_str) != Some("requests") || keys.len() != 3 {
+                    continue;
+                }
+                let (Some(index), Some(field)) = (
+                    keys.get(1).and_then(value_as_u64),
+                    keys.get(2).and_then(Value::as_str),
+                ) else {
+                    continue;
+                };
+                if let Some(item) = value.get("v") {
+                    requests
+                        .entry(index)
+                        .or_default()
+                        .insert(field.to_string(), item.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if !saw_requests && requests.is_empty() {
+        return None;
+    }
+
+    let mut usage = SessionUsage::default();
+    let mut sum_input = 0_u64;
+    let mut sum_output = 0_u64;
+    let mut credits_sum = 0_f64;
+    let mut has_credits = false;
+    let mut context_tokens: Option<u64> = None;
+    let mut user_turns = 0_u32;
+    let mut tool_calls = 0_u32;
+    let mut model_calls = 0_u32;
+    let mut tool_counts: HashMap<String, u32> = HashMap::new();
+    let mut first_ms: Option<u64> = None;
+    let mut last_ms: Option<u64> = None;
+
+    for request in requests.into_values() {
+        let timestamp_ms = request.get("timestamp").and_then(|value| value_as_u64(value));
+        let completed_ms = map_pointer(&request, &["modelState", "completedAt"])
+            .and_then(|value| value_as_u64(value));
+        for stamp in [timestamp_ms, completed_ms].into_iter().flatten() {
+            first_ms = Some(first_ms.map_or(stamp, |current| current.min(stamp)));
+            last_ms = Some(last_ms.map_or(stamp, |current| current.max(stamp)));
+        }
+        // promptTokens 是每轮的上下文快照：求和得到计费口径的毛输入，
+        // 最后一轮的值即当前上下文占用。
+        if let Some(prompt) = request.get("promptTokens").and_then(|value| value_as_u64(value)) {
+            sum_input = sum_input.saturating_add(prompt);
+            context_tokens = Some(prompt);
+        }
+        if let Some(completion) = request.get("completionTokens").and_then(|value| value_as_u64(value)) {
+            sum_output = sum_output.saturating_add(completion);
+        }
+        if let Some(credits) = request.get("copilotCredits").and_then(Value::as_f64) {
+            credits_sum += credits;
+            has_credits = true;
+        }
+        let is_system_initiated = request
+            .get("isSystemInitiated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let has_user_text = map_pointer(&request, &["message", "text"])
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty());
+        if !is_system_initiated && has_user_text {
+            user_turns = user_turns.saturating_add(1);
+        }
+        let mut round_count = 0_u32;
+        if let Some(rounds) = map_pointer(&request, &["result", "metadata", "toolCallRounds"])
+            .and_then(Value::as_array)
+        {
+            round_count = rounds.len() as u32;
+            for round in rounds {
+                if let Some(calls) = round.get("toolCalls").and_then(Value::as_array) {
+                    for call in calls {
+                        tool_calls = tool_calls.saturating_add(1);
+                        let name = ["toolName", "toolId", "name"]
+                            .iter()
+                            .find_map(|key| call.get(*key).and_then(Value::as_str));
+                        if let Some(name) = name.filter(|name| !name.is_empty()) {
+                            *tool_counts.entry(name.to_string()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+        }
+        let has_result = request
+            .get("result")
+            .map(|result| !result.is_null())
+            .unwrap_or(false);
+        if round_count > 0 {
+            model_calls = model_calls.saturating_add(round_count);
+        } else if has_result {
+            model_calls = model_calls.saturating_add(1);
+        }
+        if let Some(model) = request.get("modelId").and_then(Value::as_str) {
+            push_usage_model(&mut usage.models, model);
+        }
+        if let Some(model) = map_pointer(&request, &["result", "metadata", "resolvedModel"])
+            .and_then(Value::as_str)
+        {
+            push_usage_model(&mut usage.models, model);
+        }
+    }
+
+    usage.total_input_tokens = (sum_input > 0).then_some(sum_input);
+    usage.total_output_tokens = (sum_output > 0).then_some(sum_output);
+    usage.context_tokens = context_tokens;
+    usage.user_turns = Some(user_turns);
+    usage.tool_calls = Some(tool_calls);
+    usage.model_calls = Some(model_calls);
+    usage.copilot_credits = has_credits.then_some(credits_sum);
+    usage.duration_ms = jsonl_duration_ms(first_ms, last_ms);
+    if usage.is_empty() {
+        return empty_usage_result();
+    }
+    Some((usage, sorted_top_tools(&tool_counts)))
+}
+
+fn codex_rollout_file_index() -> Option<HashMap<String, PathBuf>> {
+    let now_ms = current_time_ms();
+    {
+        let cache = CODEX_ROLLOUT_INDEX_CACHE.get_or_init(|| Mutex::new(None)).lock().ok()?;
+        if let Some((captured_ms, index)) = cache.as_ref() {
+            if now_ms.saturating_sub(*captured_ms) <= CODEX_ROLLOUT_INDEX_TTL_MS {
+                return Some(index.clone());
+            }
+        }
+    }
+    let user_profile_path = env::var_os("USERPROFILE")?;
+    let sessions_root = PathBuf::from(user_profile_path)
+        .join(".codex")
+        .join("sessions");
+    let mut index: HashMap<String, PathBuf> = HashMap::new();
+    let mut pending_dirs = vec![sessions_root];
+    while let Some(directory_path) = pending_dirs.pop() {
+        for entry in read_directory(&directory_path) {
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                pending_dirs.push(entry_path);
+                continue;
+            }
+            if !has_extension(&entry_path, "jsonl") {
+                continue;
+            }
+            if let Some(session_id) = codex_session_id_from_path(&entry_path) {
+                if looks_like_uuid(&session_id) {
+                    index.insert(session_id, entry_path.clone());
+                }
+            }
+        }
+    }
+    let mut cache = CODEX_ROLLOUT_INDEX_CACHE.get_or_init(|| Mutex::new(None)).lock().ok()?;
+    if cache
+        .as_ref()
+        .is_some_and(|(_, index)| index.len() >= JSONL_USAGE_CACHE_CAPACITY)
+    {
+        *cache = None;
+    }
+    *cache = Some((now_ms, index.clone()));
+    Some(index)
+}
+
+fn codex_thread_usage(thread_id: &str) -> Option<CachedJsonlUsage> {
+    let index = codex_rollout_file_index()?;
+    let rollout_path = index.get(thread_id)?;
+    cached_jsonl_usage_for_path(rollout_path, parse_codex_usage)
+}
+
+
+fn opencode_usage_detail(session_id: &str) -> SessionUsageDetail {
+    let mut detail = SessionUsageDetail {
+        usage: None,
+        top_tools: Vec::new(),
+    };
+    let Some(db_path) = opencode_db_path() else {
+        return detail;
+    };
+    if !db_path.exists() {
+        return detail;
+    }
+    let Ok(connection) = Connection::open_with_flags(
+        &db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return detail;
+    };
+    let _ = connection.busy_timeout(Duration::from_millis(OPENCODE_SQLITE_BUSY_TIMEOUT_MS));
+    let _ = connection.pragma_update(None, "query_only", "ON");
+
+    let Ok(mut usage) = connection
+        .query_row(
+            "select coalesce(cost, 0), time_created, time_updated \
+             from session where id = ?1",
+            [session_id],
+            |row| {
+                let cost: Option<f64> = row.get(0)?;
+                let created: i64 = row.get(1)?;
+                let updated: i64 = row.get(2)?;
+                Ok((cost.unwrap_or(0.0), created, updated))
+            },
+        )
+        .map(|(cost, created, updated)| {
+            let mut usage = SessionUsage::default();
+            usage.cost_usd = (cost > 0.0).then_some(cost);
+            if updated > created && created > 0 {
+                usage.duration_ms = Some((updated - created) as u64);
+            }
+            usage
+        })
+    else {
+        return detail;
+    };
+
+    if let Ok((user_messages, assistant_messages)) = connection.query_row(
+        "select \
+            (select count(*) from message where session_id = ?1 and json_extract(data, '$.role') = 'user'), \
+            (select count(*) from message where session_id = ?1 and json_extract(data, '$.role') = 'assistant')",
+        [session_id],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0).unwrap_or(0),
+                row.get::<_, i64>(1).unwrap_or(0),
+            ))
+        },
+    ) {
+        usage.user_turns = Some(u32::try_from(user_messages.max(0)).unwrap_or(u32::MAX));
+        usage.model_calls = Some(u32::try_from(assistant_messages.max(0)).unwrap_or(u32::MAX));
+    }
+
+    if let Ok((context_total, model_id)) = connection.query_row(
+        "select json_extract(data, '$.tokens.total'), json_extract(data, '$.modelID') \
+         from message \
+         where session_id = ?1 \
+           and json_extract(data, '$.role') = 'assistant' \
+           and json_extract(data, '$.tokens.total') is not null \
+         order by time_created desc limit 1",
+        [session_id],
+        |row| {
+            Ok((
+                row.get::<_, Option<i64>>(0).unwrap_or(None).unwrap_or(0),
+                row.get::<_, Option<String>>(1)?,
+            ))
+        },
+    ) {
+        if context_total > 0 {
+            usage.context_tokens = Some(context_total as u64);
+        }
+        if let Some(model_id) = model_id {
+            usage.models = vec![model_id];
+        }
+    }
+
+    if let Ok(tool_total) = connection.query_row(
+        "select count(*) from part where session_id = ?1 and type = 'tool'",
+        [session_id],
+        |row| row.get::<_, i64>(0),
+    ) {
+        usage.tool_calls = Some(u32::try_from(tool_total.max(0)).unwrap_or(u32::MAX));
+        if let Ok(mut statement) = connection.prepare(
+            "select coalesce(json_extract(data, '$.tool'), json_extract(data, '$.toolName'), 'unknown') as tool_name, \
+                    count(*) \
+             from part \
+             where session_id = ?1 and type = 'tool' \
+             group by tool_name \
+             order by count(*) desc \
+             limit 5",
+        ) {
+            if let Ok(rows) = statement.query_map([session_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            }) {
+                detail.top_tools = rows
+                    .filter_map(Result::ok)
+                    .filter(|(name, _)| !name.is_empty() && name != "unknown")
+                    .map(|(name, count)| UsageToolCount {
+                        name,
+                        count: u32::try_from(count.max(0)).unwrap_or(u32::MAX),
+                    })
+                    .collect();
+            }
+        }
+    }
+
+    if !usage.is_empty() {
+        detail.usage = Some(usage);
+    }
+    detail
+}
+
+#[tauri::command]
+fn get_session_usage_detail(id: String) -> SessionUsageDetail {
+    let trimmed = id.trim();
+    if let Some(session_id) = trimmed.strip_prefix("zcode:") {
+        return zcode_usage_detail(session_id);
+    }
+    if let Some(session_id) = trimmed.strip_prefix("opencode:") {
+        return opencode_usage_detail(session_id);
+    }
+    if let Some(entry) = jsonl_usage_detail_for_session(trimmed) {
+        let usage = (!entry.usage.is_empty()).then_some(entry.usage);
+        return SessionUsageDetail {
+            usage,
+            top_tools: entry
+                .top_tools
+                .into_iter()
+                .map(|(name, count)| UsageToolCount { name, count })
+                .collect(),
+        };
+    }
+    SessionUsageDetail {
+        usage: None,
+        top_tools: Vec::new(),
+    }
 }
 
 #[tauri::command]
@@ -2555,6 +3422,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             scan_sessions,
+            get_session_usage_detail,
             get_performance_snapshot,
             open_session,
             launch_handoff,
@@ -2722,6 +3590,10 @@ fn read_codex_thread_with_summary(
         "codex",
         &[last_user_message.as_deref(), last_ai_message.as_deref()],
     );
+    let usage = codex_thread_usage(thread_id).map(|entry| {
+        store_jsonl_usage_detail(&format!("codex:{}", thread_id), &entry);
+        entry.usage
+    });
 
     Some(AgentSession {
         id: format!("codex:{}", thread_id),
@@ -2749,6 +3621,7 @@ fn read_codex_thread_with_summary(
         branch: None,
         todo_ids,
         plugin_workflow,
+        usage,
     })
 }
 
@@ -2816,6 +3689,11 @@ fn read_codex_jsonl_session(
         "codex",
         &[last_user_message.as_deref(), last_ai_message.as_deref()],
     );
+    let usage_entry = cached_jsonl_usage_for_path(session_path, parse_codex_usage);
+    let usage = usage_entry.as_ref().map(|entry| entry.usage.clone());
+    if let Some(entry) = &usage_entry {
+        store_jsonl_usage_detail(&format!("codex:{}", session_id), entry);
+    }
 
     Some(AgentSession {
         id: format!("codex:{}", session_id),
@@ -2843,6 +3721,7 @@ fn read_codex_jsonl_session(
         branch: None,
         todo_ids,
         plugin_workflow,
+        usage,
     })
 }
 
@@ -3295,7 +4174,9 @@ fn scan_opencode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> V
     let _ = connection.pragma_update(None, "temp_store", "MEMORY");
 
     let mut statement = match connection.prepare(
-        "select id, title, directory, path, time_created, time_updated, time_archived \
+        "select id, title, directory, path, time_created, time_updated, time_archived, \
+                coalesce(cost, 0), coalesce(tokens_input, 0), coalesce(tokens_output, 0), \
+                coalesce(tokens_cache_read, 0), coalesce(tokens_cache_write, 0) \
          from session \
          where (?2 = 0 or time_updated >= ?2 or time_created >= ?2) \
            and (?3 = 0 or time_archived is null) \
@@ -3324,6 +4205,11 @@ fn scan_opencode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> V
                 time_created: sqlite_millis_to_u64(row.get::<_, i64>(4)?),
                 time_updated: sqlite_millis_to_u64(row.get::<_, i64>(5)?),
                 time_archived: time_archived.map(sqlite_millis_to_u64),
+                cost: row.get::<_, Option<f64>>(7)?.unwrap_or(0.0),
+                tokens_input: row.get::<_, Option<i64>>(8)?.unwrap_or(0).max(0) as u64,
+                tokens_output: row.get::<_, Option<i64>>(9)?.unwrap_or(0).max(0) as u64,
+                tokens_cache_read: row.get::<_, Option<i64>>(10)?.unwrap_or(0).max(0) as u64,
+                tokens_cache_write: row.get::<_, Option<i64>>(11)?.unwrap_or(0).max(0) as u64,
             })
         },
     ) {
@@ -3578,6 +4464,21 @@ fn read_opencode_session_row(
         &[last_user_message.as_deref(), last_ai_message.as_deref()],
     );
 
+    // session 表的汇总列是现成的滚动合计；OpenCode 的 cacheRead 不含在 input 里，
+    // 毛输入要自己加回去。上下文/轮次/工具明细留给 get_session_usage_detail 懒加载。
+    let mut usage = SessionUsage::default();
+    if row.tokens_input > 0 || row.tokens_output > 0 || row.tokens_cache_read > 0 {
+        usage.total_input_tokens = Some(
+            row.tokens_input
+                .saturating_add(row.tokens_cache_read)
+                .saturating_add(row.tokens_cache_write),
+        );
+        usage.cached_input_tokens = Some(row.tokens_cache_read);
+        usage.total_output_tokens = Some(row.tokens_output);
+    }
+    usage.cost_usd = (row.cost > 0.0).then_some(row.cost);
+    let usage = (!usage.is_empty()).then_some(usage);
+
     Some(AgentSession {
         id: format!("opencode:{}", row.id),
         provider: "opencode".to_string(),
@@ -3604,6 +4505,7 @@ fn read_opencode_session_row(
         branch: None,
         todo_ids,
         plugin_workflow,
+        usage,
     })
 }
 
@@ -3766,6 +4668,11 @@ fn read_opencode_session_metadata(
             time_created: sqlite_millis_to_u64(row.get::<_, i64>(4)?),
             time_updated: sqlite_millis_to_u64(row.get::<_, i64>(5)?),
             time_archived: time_archived.map(sqlite_millis_to_u64),
+            cost: 0.0,
+            tokens_input: 0,
+            tokens_output: 0,
+            tokens_cache_read: 0,
+            tokens_cache_write: 0,
         })
     });
 
@@ -3793,6 +4700,11 @@ fn read_opencode_session_metadata(
             time_created: current_time_ms(),
             time_updated: current_time_ms(),
             time_archived: None,
+            cost: 0.0,
+            tokens_input: 0,
+            tokens_output: 0,
+            tokens_cache_read: 0,
+            tokens_cache_write: 0,
         }),
         Err(error) => Err(format!(
             "Failed to read OpenCode session metadata: {}",
@@ -4131,8 +5043,7 @@ fn scan_zcode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<
         Err(_) => return Vec::new(),
     };
 
-    let mut sessions = Vec::new();
-    let mut summary_fetch_budget = ZCODE_SUMMARY_FETCH_BUDGET.min(options.max_sessions);
+    let mut candidate_rows: Vec<ZcodeSessionRow> = Vec::new();
     for row in rows.filter_map(Result::ok) {
         if options.hide_archived && row.time_archived.is_some() {
             continue;
@@ -4144,8 +5055,22 @@ fn scan_zcode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<
         if !is_active_session(row_updated_ms, scan_time_ms, options) {
             continue;
         }
-        let summary = cached_or_read_zcode_session_summary(&connection, &row, &mut summary_fetch_budget);
-        if let Some(session) = read_zcode_session_row(&row, summary, scan_time_ms, options) {
+        candidate_rows.push(row);
+    }
+    let usage_by_session = zcode_usage_by_session(
+        &connection,
+        &candidate_rows
+            .iter()
+            .map(|row| row.id.clone())
+            .collect::<Vec<_>>(),
+    );
+
+    let mut sessions = Vec::new();
+    let mut summary_fetch_budget = ZCODE_SUMMARY_FETCH_BUDGET.min(options.max_sessions);
+    for row in &candidate_rows {
+        let summary = cached_or_read_zcode_session_summary(&connection, row, &mut summary_fetch_budget);
+        let usage = usage_by_session.get(&row.id).cloned();
+        if let Some(session) = read_zcode_session_row(row, summary, scan_time_ms, options, usage) {
             sessions.push(session);
             if sessions.len() >= options.max_sessions {
                 break;
@@ -4165,6 +5090,184 @@ fn zcode_db_path() -> Option<PathBuf> {
             .join("db")
             .join("db.sqlite")
     })
+}
+
+fn zcode_usage_by_session(
+    connection: &Connection,
+    session_ids: &[String],
+) -> HashMap<String, SessionUsage> {
+    let mut usage_by_session: HashMap<String, SessionUsage> = HashMap::new();
+    if session_ids.is_empty() {
+        return usage_by_session;
+    }
+    let Ok(ids_json) = serde_json::to_string(session_ids) else {
+        return usage_by_session;
+    };
+
+    // model_usage/tool_usage 是 ZCode 0.15.0+ 的观测表；旧库缺表时整体降级为无用量。
+    // input_tokens 是毛口径、已包含 cache_read，直接求和，不再叠加缓存列。
+    if let Ok(mut statement) = connection.prepare(
+        "select session_id, count(*), sum(input_tokens), sum(output_tokens), \
+                sum(cache_read_input_tokens), sum(duration_ms) \
+         from model_usage \
+         where session_id in (select value from json_each(?1)) \
+         group by session_id",
+    ) {
+        if let Ok(rows) = statement.query_map(rusqlite::params![ids_json], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+                row.get::<_, Option<i64>>(3)?,
+                row.get::<_, Option<i64>>(4)?,
+                row.get::<_, Option<i64>>(5)?,
+            ))
+        }) {
+            for (session_id, calls, input, output, cache_read, active_ms) in
+                rows.filter_map(Result::ok)
+            {
+                let entry = usage_by_session.entry(session_id).or_default();
+                entry.model_calls = Some(u32::try_from(calls.max(0)).unwrap_or(u32::MAX));
+                entry.total_input_tokens =
+                    input.filter(|value| *value > 0).map(|value| value as u64);
+                entry.total_output_tokens =
+                    output.filter(|value| *value > 0).map(|value| value as u64);
+                entry.cached_input_tokens = cache_read
+                    .filter(|value| *value > 0)
+                    .map(|value| value as u64);
+                entry.active_duration_ms = active_ms
+                    .filter(|value| *value > 0)
+                    .map(|value| value as u64);
+            }
+        }
+    }
+
+    if let Ok(mut statement) = connection.prepare(
+        "select session_id, count(*) \
+         from tool_usage \
+         where session_id in (select value from json_each(?1)) \
+         group by session_id",
+    ) {
+        if let Ok(rows) = statement.query_map(rusqlite::params![ids_json], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        }) {
+            for (session_id, calls) in rows.filter_map(Result::ok) {
+                let entry = usage_by_session.entry(session_id).or_default();
+                entry.tool_calls = Some(u32::try_from(calls.max(0)).unwrap_or(u32::MAX));
+            }
+        }
+    }
+
+    if let Ok(mut statement) = connection.prepare(
+        "select session_id, model_id \
+         from model_usage \
+         where session_id in (select value from json_each(?1)) \
+         group by session_id, model_id",
+    ) {
+        if let Ok(rows) = statement.query_map(rusqlite::params![ids_json], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        }) {
+            for (session_id, model_id) in rows.filter_map(Result::ok) {
+                if let Some(entry) = usage_by_session.get_mut(&session_id) {
+                    push_usage_model(&mut entry.models, &model_id);
+                }
+            }
+        }
+    }
+
+    // 用户轮次与当前上下文只能从 message JSON 拿；按时间升序扫一遍，
+    // 每个会话留下的就是最后一次 assistant 消息的值。
+    if let Ok(mut statement) = connection.prepare(
+        "select session_id, \
+                json_extract(data, '$.role'), \
+                json_extract(data, '$.tokens.input'), \
+                json_extract(data, '$.semantics.origin') \
+         from message \
+         where session_id in (select value from json_each(?1)) \
+         order by time_created asc",
+    ) {
+        if let Ok(rows) = statement.query_map(rusqlite::params![ids_json], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        }) {
+            for (session_id, role, context_input, origin) in rows.filter_map(Result::ok) {
+                let Some(entry) = usage_by_session.get_mut(&session_id) else {
+                    continue;
+                };
+                if role.as_deref() == Some("user") && origin.as_deref() == Some("real_user") {
+                    entry.user_turns = Some(entry.user_turns.unwrap_or(0).saturating_add(1));
+                }
+                // in-flight 消息 input=0，跳过，只认真实请求。
+                if role.as_deref() == Some("assistant") {
+                    if let Some(context) = context_input.filter(|value| *value > 0) {
+                        entry.context_tokens = Some(context as u64);
+                    }
+                }
+            }
+        }
+    }
+
+    usage_by_session.retain(|_, usage| !usage.is_empty());
+    usage_by_session
+}
+
+fn zcode_usage_detail(session_id: &str) -> SessionUsageDetail {
+    let mut detail = SessionUsageDetail {
+        usage: None,
+        top_tools: Vec::new(),
+    };
+    let Some(db_path) = zcode_db_path() else {
+        return detail;
+    };
+    let Ok(connection) = Connection::open_with_flags(
+        &db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return detail;
+    };
+    let _ = connection.busy_timeout(Duration::from_millis(ZCODE_SQLITE_BUSY_TIMEOUT_MS));
+    let _ = connection.pragma_update(None, "query_only", "ON");
+
+    let usage_map =
+        zcode_usage_by_session(&connection, &[session_id.to_string()]);
+    if let Some(mut usage) = usage_map.get(session_id).cloned() {
+        if let Ok(mut statement) = connection.prepare(
+            "select tool_name, count(*) \
+             from tool_usage \
+             where session_id = ?1 \
+             group by tool_name \
+             order by count(*) desc \
+             limit 5",
+        ) {
+            if let Ok(rows) = statement.query_map([session_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            }) {
+                detail.top_tools = rows
+                    .filter_map(Result::ok)
+                    .map(|(name, count)| UsageToolCount {
+                        name,
+                        count: u32::try_from(count.max(0)).unwrap_or(u32::MAX),
+                    })
+                    .collect();
+            }
+        }
+        if let Ok(row) = connection.query_row(
+            "select coalesce(sum(model_usage.duration_ms), 0) \
+             from model_usage where model_usage.session_id = ?1",
+            [session_id],
+            |row| row.get::<_, i64>(0),
+        ) {
+            if row > 0 {
+                usage.active_duration_ms = Some(row as u64);
+            }
+        }
+        detail.usage = Some(usage);
+    }
+    detail
 }
 
 fn cached_zcode_scan(
@@ -4385,6 +5488,7 @@ fn read_zcode_session_row(
     summary: ZcodeSessionSummary,
     scan_time_ms: u64,
     options: &ResolvedScanOptions,
+    usage: Option<SessionUsage>,
 ) -> Option<AgentSession> {
     let updated_ms = row
         .time_updated
@@ -4435,6 +5539,15 @@ fn read_zcode_session_row(
         "zcode",
         &[last_user_message.as_deref(), last_ai_message.as_deref()],
     );
+    let mut zcode_usage = usage;
+    if let Some(zcode_usage) = zcode_usage.as_mut() {
+        if zcode_usage.duration_ms.is_none() {
+            zcode_usage.duration_ms = row
+                .time_updated
+                .checked_sub(row.time_created)
+                .filter(|duration| *duration > 0);
+        }
+    }
 
     Some(AgentSession {
         id: format!("zcode:{}", row.id),
@@ -4462,6 +5575,7 @@ fn read_zcode_session_row(
         branch: None,
         todo_ids,
         plugin_workflow,
+        usage: zcode_usage,
     })
 }
 
@@ -5854,6 +6968,20 @@ fn scan_copilot_cli_sessions_from_connection(
                     "copilot",
                     &[last_user_message.as_deref(), last_ai_message.as_deref()],
                 );
+                // session-store.db 没有任何 token/模型字段，能给的只有轮次与时长。
+                let duration_ms = match (
+                    created_at.as_deref().and_then(iso_timestamp_ms),
+                    updated_at.as_deref().and_then(iso_timestamp_ms),
+                ) {
+                    (Some(created), Some(updated)) if updated >= created => Some(updated - created),
+                    _ => None,
+                };
+                let cli_usage = SessionUsage {
+                    user_turns: Some(u32::try_from(turn_count.max(0)).unwrap_or(u32::MAX)),
+                    duration_ms,
+                    ..SessionUsage::default()
+                };
+                let usage = (!cli_usage.is_empty()).then_some(cli_usage);
 
                 Some(AgentSession {
                     id: format!("copilot-cli:{}", session_id),
@@ -5886,6 +7014,7 @@ fn scan_copilot_cli_sessions_from_connection(
                     branch,
                     todo_ids: Vec::new(),
                     plugin_workflow,
+                    usage,
                 })
             },
         )
@@ -5977,6 +7106,11 @@ fn read_copilot_session(
         "copilot",
         &[last_user_message.as_deref(), last_ai_message.as_deref()],
     );
+    let usage_entry = cached_jsonl_usage_for_path(session_path, parse_copilot_chat_usage);
+    let usage = usage_entry.as_ref().map(|entry| entry.usage.clone());
+    if let Some(entry) = &usage_entry {
+        store_jsonl_usage_detail(&format!("copilot:{}", session_id), entry);
+    }
 
     Some(AgentSession {
         id: format!("copilot:{}", session_id),
@@ -6004,6 +7138,7 @@ fn read_copilot_session(
         branch: None,
         todo_ids,
         plugin_workflow,
+        usage,
     })
 }
 
@@ -6139,6 +7274,11 @@ fn read_claude_jsonl_session(
         "claude",
         &[last_user_message.as_deref(), last_ai_message.as_deref()],
     );
+    let usage_entry = cached_jsonl_usage_for_path(session_path, parse_claude_usage);
+    let usage = usage_entry.as_ref().map(|entry| entry.usage.clone());
+    if let Some(entry) = &usage_entry {
+        store_jsonl_usage_detail(&format!("claude:{}", session_id), entry);
+    }
 
     Some(AgentSession {
         id: format!("claude:{}", session_id),
@@ -6166,6 +7306,7 @@ fn read_claude_jsonl_session(
         branch,
         todo_ids,
         plugin_workflow,
+        usage,
     })
 }
 
@@ -7718,6 +8859,7 @@ fn read_claude_entry(
         branch,
         todo_ids,
         plugin_workflow,
+        usage: None,
     })
 }
 #[derive(Debug, Clone)]
@@ -10257,6 +11399,7 @@ mod tests {
                 branch: None,
                 todo_ids: Vec::new(),
                 plugin_workflow: None,
+                usage: None,
             }
         }
 
@@ -10315,6 +11458,7 @@ mod tests {
                 branch: None,
                 todo_ids: Vec::new(),
                 plugin_workflow: None,
+                usage: None,
             }
         }
 
@@ -10442,7 +11586,7 @@ mod tests {
             workspace_path_blacklist: None,
         }));
 
-        let session = read_zcode_session_row(&row, summary, scan_time_ms, &options).unwrap();
+        let session = read_zcode_session_row(&row, summary, scan_time_ms, &options, None).unwrap();
 
         assert_eq!(session.id, "zcode:sess_test");
         assert_eq!(session.provider, "zcode");
@@ -10479,7 +11623,7 @@ mod tests {
         };
 
         let session =
-            read_zcode_session_row(&row, stale_summary, scan_time_ms, &options).unwrap();
+            read_zcode_session_row(&row, stale_summary, scan_time_ms, &options, None).unwrap();
         assert_eq!(session.status, "idle");
         assert_eq!(session.updated_ms, scan_time_ms - 1_000);
 
@@ -10488,7 +11632,7 @@ mod tests {
             ..ZcodeSessionSummary::default()
         };
         let session =
-            read_zcode_session_row(&row, fresh_summary, scan_time_ms, &options).unwrap();
+            read_zcode_session_row(&row, fresh_summary, scan_time_ms, &options, None).unwrap();
         assert_eq!(session.status, "running");
     }
 
@@ -11014,6 +12158,11 @@ mod tests {
             time_created: 1000,
             time_updated: 2000,
             time_archived: None,
+            cost: 0.0,
+            tokens_input: 0,
+            tokens_output: 0,
+            tokens_cache_read: 0,
+            tokens_cache_write: 0,
         };
         let messages = vec![
             HandoffTranscriptMessage {
@@ -11077,6 +12226,11 @@ mod tests {
             time_created: scan_time_ms - 600_000,
             time_updated: scan_time_ms - 120_000,
             time_archived: None,
+            cost: 0.0,
+            tokens_input: 0,
+            tokens_output: 0,
+            tokens_cache_read: 0,
+            tokens_cache_write: 0,
         };
         let summary = OpenCodeSessionSummary {
             last_user_message: Some("Please wire OpenCode todo-awoc-abc123".to_string()),
@@ -11219,6 +12373,11 @@ mod tests {
             time_created: 900,
             time_updated: 1_000,
             time_archived: None,
+            cost: 0.0,
+            tokens_input: 0,
+            tokens_output: 0,
+            tokens_cache_read: 0,
+            tokens_cache_write: 0,
         };
 
         let mut no_budget = 0usize;
@@ -11868,5 +13027,412 @@ mod tests {
 
         assert!(pending_ask_ids.is_empty());
         assert_eq!(status_hint, Some(SessionStatusHint::Running));
+    }
+
+    #[test]
+    fn agent_session_usage_fields_serialize() {
+        let mut session = AgentSession {
+            id: "claude:usage-1".to_string(),
+            provider: "claude".to_string(),
+            provider_label: "C".to_string(),
+            title: "usage serialize".to_string(),
+            workspace: "demo".to_string(),
+            workspace_path: None,
+            workspace_key: "demo".to_string(),
+            workspace_name: "demo".to_string(),
+            workspace_label: "demo".to_string(),
+            workspace_group: String::new(),
+            workspace_discriminator: String::new(),
+            session_path: None,
+            session_resource: None,
+            status: "idle".to_string(),
+            time_label: "just now".to_string(),
+            updated_ms: 100,
+            message_count: 1,
+            last_user_message: None,
+            last_user_message_truncated: false,
+            last_ai_message: None,
+            last_ai_message_truncated: false,
+            last_ai_message_excerpt_kind: None,
+            branch: None,
+            todo_ids: Vec::new(),
+            plugin_workflow: None,
+            usage: None,
+        };
+        session.usage = Some(SessionUsage {
+            total_input_tokens: Some(330_699_045),
+            cached_input_tokens: Some(323_800_000),
+            total_output_tokens: Some(459_409),
+            context_tokens: Some(376_000),
+            context_window_tokens: Some(1_000_000),
+            user_turns: Some(8),
+            tool_calls: Some(887),
+            model_calls: Some(829),
+            models: vec!["GLM-5.3".to_string()],
+            duration_ms: Some(96_120_000),
+            active_duration_ms: Some(16_740_000),
+            cost_usd: None,
+            copilot_credits: None,
+        });
+
+        let serialized = serde_json::to_value(&session).unwrap();
+        let usage = serialized.get("usage").expect("usage must serialize");
+        assert_eq!(usage.get("totalInputTokens").and_then(Value::as_u64), Some(330_699_045));
+        assert_eq!(usage.get("cachedInputTokens").and_then(Value::as_u64), Some(323_800_000));
+        assert_eq!(usage.get("contextTokens").and_then(Value::as_u64), Some(376_000));
+        assert_eq!(usage.get("userTurns").and_then(Value::as_u64), Some(8));
+        assert_eq!(usage.get("toolCalls").and_then(Value::as_u64), Some(887));
+        assert_eq!(usage.get("modelCalls").and_then(Value::as_u64), Some(829));
+        assert_eq!(
+            usage.get("models").and_then(Value::as_array).map(Vec::len),
+            Some(1)
+        );
+        assert!(usage.get("costUsd").is_none());
+
+        session.usage = None;
+        let serialized = serde_json::to_value(&session).unwrap();
+        assert!(serialized.get("usage").is_none());
+    }
+
+    #[test]
+    fn parse_claude_usage_dedups_by_message_id_and_counts_turns_and_tools() {
+        let text = concat!(
+            r#"{"type":"assistant","timestamp":"2026-09-09T02:56:41.947Z","message":{"id":"msg_1","model":"claude-opus-5","usage":{"input_tokens":100,"cache_creation_input_tokens":10,"cache_read_input_tokens":1000,"output_tokens":50},"content":[{"type":"text","text":"hi"},{"type":"tool_use","id":"t1","name":"Bash","input":{}}]}}"#,
+            "\n",
+            // 同一次调用的第二个 content block：usage 与 id 相同，必须只计一次
+            r#"{"type":"assistant","timestamp":"2026-09-09T02:56:42.000Z","message":{"id":"msg_1","model":"claude-opus-5","usage":{"input_tokens":100,"cache_creation_input_tokens":10,"cache_read_input_tokens":1000,"output_tokens":50},"content":[{"type":"text","text":"part two"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","timestamp":"2026-09-09T02:57:00.000Z","message":{"id":"msg_2","model":"claude-sonnet-5","usage":{"input_tokens":200,"cache_creation_input_tokens":0,"cache_read_input_tokens":2100,"output_tokens":30},"content":[]}}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-09-09T02:56:30.000Z","message":{"role":"user","content":"请修复这个缺陷"}}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-09-09T02:56:45.000Z","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-09-09T02:56:50.000Z","isMeta":true,"content":"<system-reminder>noise</system-reminder>"}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-09-09T02:56:55.000Z","content":"<task-notification>background</task-notification>"}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-09-09T02:57:10.000Z","content":"再来一轮 todo-awzc-abc123"}"#,
+            "\n",
+        );
+
+        let (usage, top_tools) = parse_claude_usage(text).unwrap();
+
+        // 去重后两次调用：input 100+200、cache_read 1000+2100、output 50+30
+        assert_eq!(usage.total_input_tokens, Some(3410));
+        assert_eq!(usage.cached_input_tokens, Some(3100));
+        assert_eq!(usage.total_output_tokens, Some(80));
+        // 当前上下文取最后一次调用
+        assert_eq!(usage.context_tokens, Some(2300));
+        assert_eq!(usage.user_turns, Some(2));
+        assert_eq!(usage.tool_calls, Some(1));
+        assert_eq!(usage.model_calls, Some(2));
+        assert_eq!(usage.models, vec!["claude-opus-5", "claude-sonnet-5"]);
+        assert_eq!(usage.duration_ms, Some(40_000));
+        assert_eq!(top_tools.first().map(|(name, count)| (name.as_str(), *count)), Some(("Bash", 1)));
+    }
+
+    #[test]
+    fn parse_codex_usage_reads_totals_and_skips_zero_input_context() {
+        let text = concat!(
+            r#"{"timestamp":"2026-09-14T09:46:26.658Z","type":"session_meta","payload":{"cwd":"X:\\Demo"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-09-14T09:46:27.000Z","type":"turn_context","payload":{"model":"gpt-5.6-luna"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-09-14T09:46:28.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<user_instructions>injected</user_instructions>"}]}}"#,
+            "\n",
+            r#"{"timestamp":"2026-09-14T09:46:29.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"帮我统计用量"}]}}"#,
+            "\n",
+            r#"{"timestamp":"2026-09-14T09:46:30.000Z","type":"response_item","payload":{"type":"function_call","name":"exec","arguments":"{}"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-09-14T09:47:00.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"{}"}}"#,
+            "\n",
+            // 真实调用
+            r#"{"timestamp":"2026-09-14T09:47:05.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":42000,"cached_input_tokens":40000,"cache_write_input_tokens":0,"output_tokens":400,"reasoning_output_tokens":100,"total_tokens":42400},"last_token_usage":{"input_tokens":42000,"cached_input_tokens":40000,"cache_write_input_tokens":0,"output_tokens":400,"reasoning_output_tokens":100,"total_tokens":42400},"model_context_window":258400}}}"#,
+            "\n",
+            // 压缩摘要调用：total 继续累计，但 input 全零，不能当上下文
+            r#"{"timestamp":"2026-09-14T09:47:30.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":42000,"cached_input_tokens":40000,"cache_write_input_tokens":0,"output_tokens":600,"reasoning_output_tokens":100,"total_tokens":42600},"last_token_usage":{"input_tokens":0,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":200,"reasoning_output_tokens":0,"total_tokens":200},"model_context_window":258400}}}"#,
+            "\n",
+        );
+
+        let (usage, top_tools) = parse_codex_usage(text).unwrap();
+
+        // 累计值取最后一条 total_token_usage
+        assert_eq!(usage.total_input_tokens, Some(42000));
+        assert_eq!(usage.total_output_tokens, Some(700));
+        assert_eq!(usage.cached_input_tokens, Some(40000));
+        // 上下文跳过全零 input 事件，保留真实调用的 input+output
+        assert_eq!(usage.context_tokens, Some(42400));
+        assert_eq!(usage.context_window_tokens, Some(258400));
+        assert_eq!(usage.user_turns, Some(1));
+        assert_eq!(usage.tool_calls, Some(2));
+        assert_eq!(usage.model_calls, Some(2));
+        assert_eq!(usage.models, vec!["gpt-5.6-luna"]);
+        assert_eq!(usage.duration_ms, Some(63_342));
+        assert_eq!(top_tools.first().map(|(name, count)| (name.as_str(), *count)), Some(("exec", 2)));
+    }
+
+    #[test]
+    fn parse_copilot_chat_usage_aggregates_patch_log() {
+        let text = concat!(
+            r#"{"kind":0,"v":{"requests":[{"requestId":"r0","timestamp":1783931281722,"modelId":"copilot/gpt-5.6-sol","message":{"text":"第一轮提问"},"promptTokens":45106,"completionTokens":2101,"copilotCredits":48.15}]}}"#,
+            "\n",
+            r#"{"kind":1,"k":["requests",1,"message"],"v":{"text":"第二轮提问"}}"#,
+            "\n",
+            r#"{"kind":1,"k":["requests",1,"promptTokens"],"v":288461}"#,
+            "\n",
+            r#"{"kind":1,"k":["requests",1,"completionTokens"],"v":941}"#,
+            "\n",
+            r#"{"kind":1,"k":["requests",1,"modelId"],"v":"copilot/gpt-5.6-sol"}"#,
+            "\n",
+            r#"{"kind":1,"k":["requests",1,"result"],"v":{"metadata":{"resolvedModel":"gpt-5.6-sol","toolCallRounds":[{"toolCalls":[{"toolName":"grep_search"},{"toolName":"read_file"}]},{"toolCalls":[{"toolName":"run_in_terminal"}]}]}}}"#,
+            "\n",
+            // 系统发起的轮次不计用户输入
+            r#"{"kind":1,"k":["requests",2,"message"],"v":{"text":"自动跟进"}}"#,
+            "\n",
+            r#"{"kind":1,"k":["requests",2,"isSystemInitiated"],"v":true}"#,
+            "\n",
+            r#"{"kind":1,"k":["requests",2,"promptTokens"],"v":359622}"#,
+            "\n",
+            // 全量重写行覆盖 requests：必须以重写后的最终状态为准
+            r#"{"kind":2,"k":["requests"],"v":[{"requestId":"r0","timestamp":1783931281722,"modelId":"copilot/gpt-5.6-sol","message":{"text":"第一轮提问"},"promptTokens":45106,"completionTokens":2101,"copilotCredits":48.15,"modelState":{"completedAt":1783931330666}},{"requestId":"r1","timestamp":1783931400000,"modelId":"copilot/gpt-5.6-sol","message":{"text":"第二轮提问"},"promptTokens":288461,"completionTokens":941,"result":{"metadata":{"resolvedModel":"gpt-5.6-sol","toolCallRounds":[{"toolCalls":[{"toolName":"grep_search"}]}]}}}]}"#,
+            "\n",
+        );
+
+        let (usage, top_tools) = parse_copilot_chat_usage(text).unwrap();
+
+        // 以 kind:2 重写后的状态为准：45106 + 288461
+        assert_eq!(usage.total_input_tokens, Some(333567));
+        assert_eq!(usage.total_output_tokens, Some(3042));
+        // 最后一轮 promptTokens 即当前上下文
+        assert_eq!(usage.context_tokens, Some(288461));
+        assert_eq!(usage.user_turns, Some(2));
+        assert_eq!(usage.tool_calls, Some(1));
+        assert_eq!(usage.model_calls, Some(1));
+        assert_eq!(usage.copilot_credits, Some(48.15));
+        assert!(usage.duration_ms.is_some());
+        assert_eq!(
+            top_tools.first().map(|(name, count)| (name.as_str(), *count)),
+            Some(("grep_search", 1))
+        );
+    }
+
+    #[test]
+    fn parse_codex_usage_without_token_events_degrades_to_empty() {
+        let text = concat!(
+            r#"{"timestamp":"2026-09-14T09:46:26.658Z","type":"session_meta","payload":{"cwd":"X:\\Demo"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-09-14T09:46:27.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}}"#,
+            "\n",
+        );
+        let (usage, top_tools) = parse_codex_usage(text).unwrap();
+        assert_eq!(usage, SessionUsage::default());
+        assert!(top_tools.is_empty());
+    }
+
+    #[test]
+    fn jsonl_usage_cache_reuses_entry_for_unchanged_file() {
+        let temp_dir = env::temp_dir().join(format!(
+            "agentwatcher-usage-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&temp_dir).unwrap();
+        let file_path = temp_dir.join("claude-session.jsonl");
+        fs::write(&file_path, "{\"type\":\"user\",\"content\":\"hello\"}\n").unwrap();
+
+        reset_usage_scan_budget();
+        let compute_calls = std::cell::Cell::new(0_u32);
+        let first = cached_jsonl_usage_for_path(&file_path, |text| {
+            compute_calls.set(compute_calls.get() + 1);
+            let mut usage = SessionUsage::default();
+            usage.user_turns = Some(if text.contains("hello") { 1 } else { 99 });
+            Some((usage, Vec::new()))
+        })
+        .unwrap();
+        let second = cached_jsonl_usage_for_path(&file_path, |text| {
+            compute_calls.set(compute_calls.get() + 1);
+            let mut usage = SessionUsage::default();
+            usage.user_turns = Some(if text.contains("hello") { 1 } else { 99 });
+            Some((usage, Vec::new()))
+        })
+        .unwrap();
+
+        assert_eq!(compute_calls.get(), 1, "unchanged file must hit the cache");
+        assert_eq!(first.usage, second.usage);
+        assert_eq!(second.usage.user_turns, Some(1));
+
+        reset_usage_scan_budget();
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn usage_scan_budget_exhausts_within_one_scan() {
+        reset_usage_scan_budget();
+        for _ in 0..USAGE_AGGREGATION_BUDGET_PER_SCAN {
+            assert!(usage_scan_budget_try_consume());
+        }
+        assert!(!usage_scan_budget_try_consume());
+        reset_usage_scan_budget();
+        assert!(usage_scan_budget_try_consume());
+    }
+
+    #[test]
+    fn zcode_usage_by_session_aggregates_observation_tables() {
+        let connection = zcode_memory_connection();
+        connection
+            .execute(
+                "create table model_usage (
+                    id text primary key,
+                    session_id text not null,
+                    model_id text,
+                    input_tokens integer,
+                    output_tokens integer,
+                    cache_read_input_tokens integer,
+                    duration_ms integer
+                )",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "create table tool_usage (
+                    id text primary key,
+                    session_id text not null,
+                    tool_name text
+                )",
+                [],
+            )
+            .unwrap();
+        let insert_usage = |id: &str, input: i64, output: i64, cache_read: i64, duration: i64| {
+            connection
+                .execute(
+                    "insert into model_usage (id, session_id, model_id, input_tokens, output_tokens, cache_read_input_tokens, duration_ms) values (?1, 'sess_z', 'GLM-5.3', ?2, ?3, ?4, ?5)",
+                    rusqlite::params![id, input, output, cache_read, duration],
+                )
+                .unwrap();
+        };
+        insert_usage("mu1", 1000, 50, 900, 1200);
+        insert_usage("mu2", 2000, 80, 1900, 800);
+        connection
+            .execute(
+                "insert into tool_usage (id, session_id, tool_name) values ('t1', 'sess_z', 'Bash')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into tool_usage (id, session_id, tool_name) values ('t2', 'sess_z', 'Bash')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into tool_usage (id, session_id, tool_name) values ('t3', 'sess_z', 'Edit')",
+                [],
+            )
+            .unwrap();
+        insert_zcode_message(
+            &connection,
+            "m_user_real",
+            1,
+            json!({ "role": "user", "semantics": { "origin": "real_user" } }),
+        );
+        insert_zcode_message(
+            &connection,
+            "m_user_synthetic",
+            2,
+            json!({ "role": "user", "synthetic": true, "semantics": { "origin": "agent_runtime", "kind": "todo_reminder" } }),
+        );
+        insert_zcode_message(
+            &connection,
+            "m_assistant_old",
+            3,
+            json!({ "role": "assistant", "tokens": { "input": 2500 } }),
+        );
+        insert_zcode_message(
+            &connection,
+            "m_assistant_new",
+            4,
+            json!({ "role": "assistant", "tokens": { "input": 2900 } }),
+        );
+
+        let usage_map =
+            zcode_usage_by_session(&connection, &["sess_z".to_string()]);
+        let usage = usage_map.get("sess_z").unwrap();
+
+        // input_tokens 毛口径已含缓存读取：1000+2000
+        assert_eq!(usage.total_input_tokens, Some(3000));
+        assert_eq!(usage.cached_input_tokens, Some(2800));
+        assert_eq!(usage.total_output_tokens, Some(130));
+        assert_eq!(usage.model_calls, Some(2));
+        assert_eq!(usage.tool_calls, Some(3));
+        assert_eq!(usage.active_duration_ms, Some(2000));
+        assert_eq!(usage.user_turns, Some(1));
+        // 上下文取最后一次 assistant 的 tokens.input
+        assert_eq!(usage.context_tokens, Some(2900));
+        assert_eq!(usage.models, vec!["GLM-5.3"]);
+    }
+
+    #[test]
+    fn opencode_session_row_builds_usage_from_summary_columns() {
+        let scan_time_ms = 1_780_651_255_000;
+        let row = OpenCodeSessionRow {
+            id: "ses_oc".to_string(),
+            title: "重构 storage".to_string(),
+            directory: r"X:\Workspace\opencode".to_string(),
+            path: None,
+            time_created: scan_time_ms - 7_200_000,
+            time_updated: scan_time_ms - 60_000,
+            time_archived: None,
+            cost: 199.53,
+            tokens_input: 31_000_000,
+            tokens_output: 488_684,
+            tokens_cache_read: 28_900_000,
+            tokens_cache_write: 100_000,
+        };
+        let summary = OpenCodeSessionSummary::default();
+        let options = resolve_scan_options(None);
+
+        let session =
+            read_opencode_session_row(&row, summary, scan_time_ms, &options).unwrap();
+        let usage = session.usage.expect("opencode usage must be present");
+
+        // OpenCode 的 cacheRead 不含在 input 里，毛输入要加回去
+        assert_eq!(usage.total_input_tokens, Some(31_000_000 + 28_900_000 + 100_000));
+        assert_eq!(usage.cached_input_tokens, Some(28_900_000));
+        assert_eq!(usage.total_output_tokens, Some(488_684));
+        assert_eq!(usage.cost_usd, Some(199.53));
+        // 上下文/轮次/工具明细属于懒加载，scan 阶段为空
+        assert_eq!(usage.context_tokens, None);
+        assert_eq!(usage.user_turns, None);
+        assert_eq!(usage.tool_calls, None);
+    }
+
+    #[test]
+    fn get_session_usage_detail_serves_jsonl_and_missing_sessions() {
+        reset_usage_scan_budget();
+        let entry = CachedJsonlUsage {
+            size: 10,
+            modified_ms: 1,
+            usage: SessionUsage {
+                total_input_tokens: Some(42_000),
+                user_turns: Some(3),
+                ..SessionUsage::default()
+            },
+            top_tools: vec![("Bash".to_string(), 7)],
+        };
+        store_jsonl_usage_detail("claude:detail-test", &entry);
+
+        let detail = get_session_usage_detail("claude:detail-test".to_string());
+        assert_eq!(
+            detail.usage.as_ref().and_then(|usage| usage.total_input_tokens),
+            Some(42_000)
+        );
+        assert_eq!(detail.top_tools.first().map(|tool| tool.name.as_str()), Some("Bash"));
+
+        let missing = get_session_usage_detail("claude:missing".to_string());
+        assert!(missing.usage.is_none());
+        assert!(missing.top_tools.is_empty());
+        reset_usage_scan_budget();
     }
 }
