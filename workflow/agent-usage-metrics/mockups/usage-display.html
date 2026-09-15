@@ -1,0 +1,735 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentWatcher 会话用量展示 · 原型稿</title>
+<style>
+  /* ===== 以下取自 ui/index.html 真实样式（略作裁剪） ===== */
+  :root {
+    --surface: #202020;
+    --surface-2: #252526;
+    --surface-3: #2d2d30;
+    --border: #3c3c3c;
+    --text: #d4d4d4;
+    --muted: #9a9a9a;
+    --soft: #6f6f6f;
+    --accent: #0078d4;
+    --focus: #0e639c;
+    --waiting: #f14c4c;
+    --running: #3794ff;
+    --idle: #6a9955;
+    --card: #1f1f1f;
+    --font: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    --columns: 3;
+    --tile-padding: 8px;
+    --tile-title: 12px;
+    --tile-meta: 11px;
+    --tile-provider: 22px;
+  }
+  body[data-theme="light"] {
+    --surface: #f8f8f8;
+    --surface-2: #ffffff;
+    --surface-3: #eeeeee;
+    --border: #d0d0d0;
+    --text: #1f1f1f;
+    --muted: #616161;
+    --soft: #767676;
+    --card: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--surface);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 13px;
+  }
+
+  .lane-header {
+    position: sticky; top: 0; z-index: 2;
+    height: 28px; display: flex; align-items: center; justify-content: space-between;
+    margin: 0 -10px 8px; padding: 0 12px;
+    border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+    background: rgba(31, 31, 31, 0.96);
+    color: #dcdcdc; font-size: 11px; font-weight: 700; text-transform: uppercase;
+  }
+  body[data-theme="light"] .lane-header { background: rgba(248, 248, 248, 0.96); color: #1f1f1f; }
+  .lane-label { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+  .lane-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .lane.waiting .lane-label { color: #ffb7b7; }
+  .lane.running .lane-label { color: #b9dcff; }
+  .lane.idle .lane-label { color: #c5e8bb; }
+  .lane.waiting .lane-dot { color: var(--waiting); }
+  .lane.running .lane-dot { color: var(--running); }
+  .lane.idle .lane-dot { color: var(--idle); }
+  body[data-theme="light"] .lane.waiting .lane-label { color: #a4262c; }
+  body[data-theme="light"] .lane.running .lane-label { color: #005a9e; }
+  body[data-theme="light"] .lane.idle .lane-label { color: #3c6c1f; }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(var(--columns), minmax(0, 1fr));
+    gap: 7px;
+  }
+  .session-card {
+    position: relative; width: 100%; height: auto; aspect-ratio: 1 / 1;
+    min-width: 0; padding: var(--tile-padding); overflow: hidden;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--card); color: var(--text);
+    cursor: pointer; text-align: left; font-family: inherit;
+  }
+  .session-card:hover, .session-card:focus-visible { outline: 1px solid var(--focus); background: #262626; }
+  body[data-theme="light"] .session-card:hover { background: #f0f6fc; }
+  .session-card.waiting { border-color: rgba(241, 76, 76, 0.82); }
+  .session-card.running { border-color: rgba(55, 148, 255, 0.82); }
+  .session-card.idle { border-color: rgba(106, 153, 85, 0.62); opacity: 0.82; }
+  .session-card.selected { outline: 2px solid var(--focus); }
+
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: 7px; min-width: 0; }
+  .provider {
+    width: var(--tile-provider); height: var(--tile-provider);
+    display: grid; place-items: center; flex: 0 0 auto;
+    border: 1px solid var(--border); border-radius: 5px;
+    background: #2b2b2b; font-size: max(9px, calc(var(--tile-provider) * 0.45)); font-weight: 700;
+  }
+  .provider.gh { color: #4ec9b0; border-color: #4ec9b0; }
+  .provider.gh-cli { color: #4fb3d8; border-color: #4fb3d8; font-size: max(8px, calc(var(--tile-provider) * 0.34)); white-space: nowrap; }
+  .provider.cl { color: #ce9178; border-color: #ce9178; }
+  .provider.cx { color: #75beff; border-color: #75beff; }
+  .provider.oc { color: #d7ba7d; border-color: #d7ba7d; }
+  .provider.zc { color: #c586c0; border-color: #c586c0; }
+  body[data-theme="light"] .provider { background: #ffffff; }
+  body[data-theme="light"] .provider.gh { border-color: #0f8f7a; background: #eefaf7; color: #087568; }
+  body[data-theme="light"] .provider.gh-cli { border-color: #0b6f91; background: #eef8fc; color: #075d7a; }
+  body[data-theme="light"] .provider.cl { border-color: #ce7248; background: #fff3ed; color: #9a4d25; }
+  body[data-theme="light"] .provider.cx { border-color: #2d74c4; background: #edf5ff; color: #15599f; }
+  body[data-theme="light"] .provider.oc { border-color: #7a5f19; background: #fff8df; color: #6b4f00; }
+  body[data-theme="light"] .provider.zc { border-color: #8a3f86; background: #f9eef9; color: #71337a; }
+
+  .time {
+    min-width: 0; overflow: hidden; color: var(--muted);
+    font-size: max(9px, calc(var(--tile-meta) - 1px));
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  .workspace {
+    margin-top: 8px; overflow: hidden; color: #ffffff;
+    font-size: var(--tile-title); font-weight: 700;
+    line-height: calc(var(--tile-title) + 3px);
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  body[data-theme="light"] .workspace { color: #1f1f1f; }
+  .session-title {
+    display: -webkit-box;
+    height: calc((var(--tile-meta) + 4px) * 2);
+    margin-top: 3px; overflow: hidden; color: #c0c0c0;
+    font-size: var(--tile-meta); line-height: calc(var(--tile-meta) + 4px);
+    -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  }
+  body[data-theme="light"] .session-title, body[data-theme="light"] .card-foot { color: #616161; }
+  .card-foot {
+    position: absolute; left: var(--tile-padding); right: calc(var(--tile-padding) + 24px);
+    bottom: var(--tile-padding);
+    display: flex; align-items: center; justify-content: flex-start; gap: 6px;
+    color: var(--muted); font-size: max(9px, calc(var(--tile-meta) - 1px)); min-width: 0;
+  }
+  .card-foot span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* 密度档（阈值与隐藏规则照搬真实实现：compact 隐藏 foot，dense 隐藏标题，micro 只剩 provider） */
+  .watcher-window.compact-cards .session-card { padding: 7px; }
+  .watcher-window.compact-cards .card-foot, .watcher-window.compact-cards .card-usage { display: none; }
+  .watcher-window.compact-cards .session-title { display: block; height: 14px; overflow: hidden; font-size: 10px; line-height: 14px; text-overflow: ellipsis; white-space: nowrap; }
+  .watcher-window.dense-cards .session-title { display: none; }
+  .watcher-window.dense-cards .card-usage { display: none; }
+  .watcher-window.micro-cards .session-card { display: grid; place-items: center; padding: 5px; }
+  .watcher-window.micro-cards .card-usage { display: none; }
+  .watcher-window.micro-cards .workspace, .watcher-window.micro-cards .time { display: none; }
+
+  .session-preview {
+    position: sticky; top: 12px;
+    width: min(420px, 100%);
+    height: min(560px, calc(100vh - 24px));
+    display: flex; flex-direction: column; overflow: hidden;
+    border: 1px solid var(--border); border-radius: 7px;
+    background: var(--surface-2); color: var(--text);
+  }
+  body[data-theme="light"] .session-preview { border-color: #d0d0d0; background: #f8f8f8; color: #1f1f1f; }
+  .session-preview-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px; }
+  .session-preview-head {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px; align-items: start; min-width: 0; margin-bottom: 8px;
+  }
+  .session-preview-workspace, .session-preview-path, .session-preview-title {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .session-preview-workspace { color: var(--text); font-size: 13px; font-weight: 700; line-height: 18px; }
+  .session-preview-title { margin-top: 2px; color: var(--muted); font-size: 12px; line-height: 17px; }
+  .session-preview-path { margin-top: 1px; color: var(--soft); font-size: 11px; line-height: 15px; }
+  .session-preview-status {
+    max-width: 92px; overflow: hidden; padding: 3px 7px;
+    border: 1px solid currentColor; border-radius: 999px;
+    font-size: 11px; line-height: 14px; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .session-preview-status.waiting { color: var(--waiting); }
+  .session-preview-status.running { color: var(--running); }
+  .session-preview-status.idle { color: var(--idle); }
+  .session-preview-section + .session-preview-section { margin-top: 9px; }
+  .session-preview-label {
+    margin-bottom: 4px; color: var(--muted); font-size: 11px;
+    font-weight: 700; text-transform: uppercase;
+  }
+  .session-preview-text {
+    max-height: 92px; min-height: 40px; overflow: auto; padding: 8px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface); color: var(--text);
+    font-size: 12px; line-height: 17px; white-space: pre-wrap; word-break: break-word;
+  }
+  body[data-theme="light"] .session-preview-text { border-color: #d0d0d0; background: #f8f8f8; }
+
+  /* ===== 以下是本次提案的新样式（卡片用量行 + 预览用量区块） ===== */
+  .card-usage {
+    position: absolute;
+    left: var(--tile-padding); right: var(--tile-padding);
+    bottom: calc(var(--tile-padding) + 20px);
+    display: block; min-width: 0;
+    color: var(--muted); font-size: max(9px, calc(var(--tile-meta) - 1px));
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .card-usage b { color: var(--text); font-weight: 600; }
+  .card-usage .u-sep { color: var(--soft); }
+
+  .usage-hero {
+    display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+    padding: 7px 9px; margin-bottom: 8px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface);
+  }
+  body[data-theme="light"] .usage-hero { background: #ffffff; }
+  .usage-hero .hero-label { color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; }
+  .usage-hero .hero-value { color: var(--text); font-size: 19px; font-weight: 700; line-height: 1.1; }
+  .usage-hero .hero-sub { color: var(--soft); font-size: 11px; }
+  .usage-hero .hero-sub b { color: var(--muted); font-weight: 600; }
+  .usage-hero.missing .hero-value { color: var(--soft); font-size: 15px; }
+
+  .usage-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 7px 12px;
+  }
+  .usage-item { min-width: 0; }
+  .usage-item .u-label {
+    overflow: hidden; color: var(--muted); font-size: 10px; font-weight: 700;
+    text-transform: uppercase; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .usage-item .u-value { color: var(--text); font-size: 13px; font-weight: 600; line-height: 17px; }
+  .usage-item .u-value.missing { color: var(--soft); font-weight: 400; }
+  .usage-item .u-sub {
+    overflow: hidden; color: var(--soft); font-size: 10px;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* ===== 原型控制条（非产品部分） ===== */
+  .mock-bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+    padding: 10px 14px; margin-bottom: 12px;
+    border: 1px dashed var(--accent); border-radius: 8px;
+    background: var(--surface-3); font-size: 12px;
+  }
+  .mock-bar .group { display: inline-flex; align-items: center; gap: 6px; }
+  .mock-bar .cap { color: var(--soft); font-weight: 700; }
+  .mock-bar button {
+    padding: 3px 10px; border: 1px solid var(--border); border-radius: 5px;
+    background: var(--surface-2); color: var(--text);
+    font-family: inherit; font-size: 12px; cursor: pointer;
+  }
+  .mock-bar button.on { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+  .mock-bar input[type="range"] { width: 110px; }
+  .mock-bar .cols-val { min-width: 2ch; color: var(--muted); font-weight: 700; }
+  .mock-note { margin-top: 4px; color: var(--soft); font-size: 11px; }
+
+  .mock-stage { display: flex; gap: 14px; align-items: flex-start; padding: 0 12px 24px; }
+  .mock-main { flex: 1 1 auto; min-width: 0; }
+  .watcher-window { max-width: 900px; }
+  .session-scroll { padding: 10px; }
+  .preview-slot { flex: 0 0 420px; max-width: 420px; }
+  .preview-hint { margin: 6px 2px 0; color: var(--soft); font-size: 11px; }
+  @media (max-width: 1180px) { .mock-stage { flex-direction: column; } .preview-slot { max-width: 420px; } }
+</style>
+</head>
+<body data-theme="dark" data-lang="zh">
+
+<div class="mock-bar">
+  <span class="cap">原型控制条（非产品 UI）</span>
+  <span class="group"><span class="cap">主题</span>
+    <button id="btnThemeDark" class="on" onclick="setTheme('dark')">dark</button>
+    <button id="btnThemeLight" onclick="setTheme('light')">light</button>
+  </span>
+  <span class="group"><span class="cap">语言</span>
+    <button id="btnLangZh" class="on" onclick="setLang('zh')">中文</button>
+    <button id="btnLangEn" onclick="setLang('en')">English</button>
+  </span>
+  <span class="group"><span class="cap">每行卡片数</span>
+    <input type="range" id="colsRange" min="1" max="16" value="3" oninput="setColumns(this.value)">
+    <span class="cols-val" id="colsVal">3</span>
+    <span id="densityTag" style="color:var(--soft)"></span>
+  </span>
+  <span class="group"><span class="cap">拍板1 预览主数字</span>
+    <button id="btnHeroInput" class="on" onclick="setHero('totalInput')">累计毛输入</button>
+    <button id="btnHeroContext" onclick="setHero('context')">当前上下文</button>
+  </span>
+  <span class="group"><span class="cap">拍板2 卡片指标行</span>
+    <button id="btnRowA" class="on" onclick="setCardRow('A')">轮次+工具+token</button>
+    <button id="btnRowB" onclick="setCardRow('B')">上下文+轮次+工具</button>
+    <button id="btnRowC" onclick="setCardRow('C')">不显示</button>
+  </span>
+  <span class="group"><span class="cap">拍板3 成本行</span>
+    <button id="btnCostOn" class="on" onclick="setCost(true)">显示</button>
+    <button id="btnCostOff" onclick="setCost(false)">隐藏</button>
+  </span>
+  <span class="group"><span class="cap">拍板4 Copilot CLI 用量区块</span>
+    <button id="btnCliOn" class="on" onclick="setCliSection(true)">显示（缺项为 —）</button>
+    <button id="btnCliOff" onclick="setCliSection(false)">该源不显示</button>
+  </span>
+  <div class="mock-note">卡片与预览样式取自 ui/index.html 真实 CSS；数字取自 2026-09-15 研究记录的本机实测样本（ZCode sess_35d3ab34 / Codex 32.6MB 样本 / Claude 24MB 样本 / OpenCode ses_34d09a / Copilot 17eeb44d / Copilot CLI session-store）。点击卡片切换预览内容。</div>
+</div>
+
+<div class="mock-stage">
+  <div class="mock-main">
+    <div class="watcher-window" id="watcherWindow">
+      <div class="session-scroll" id="sessionScroll"></div>
+    </div>
+  </div>
+  <div class="preview-slot">
+    <aside class="session-preview" id="previewPanel"></aside>
+    <div class="preview-hint" id="previewHint"></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+/* ---------- 设置状态 ---------- */
+const state = {
+  lang: 'zh',
+  hero: 'totalInput',   // 拍板1
+  cardRow: 'A',         // 拍板2
+  showCost: true,       // 拍板3
+  cliSection: true,     // 拍板4
+  columns: 3,
+  selected: 'zcode-1',
+};
+
+/* ---------- 样本数据（实测口径） ---------- */
+const sessions = [
+  {
+    id: 'zcode-1', lane: 'running', provider: 'zc', providerLabel: 'ZC',
+    workspace: 'aes-workflow', title: '分析 ZCode 会话的 token 消耗与工具调用',
+    time: { zh: '5 分钟前', en: '5m ago' }, foot: 'feature/usage-observability',
+    lastUser: { zh: '那按你前面说的，todo 里进了长文本？全部拉出数据来', en: '那按你前面说的，todo 里进了长文本？全部拉出数据来' },
+    lastAi: { zh: '结论：不是 Todo 里进了超长文本。真正的问题是短 Todo 和固定提醒被重复写入、重复回放。5 个根会话共 1707 次工具调用……', en: '结论：不是 Todo 里进了超长文本。真正的问题是短 Todo 和固定提醒被重复写入、重复回放。5 个根会话共 1707 次工具调用……' },
+    usage: {
+      totalInput: 330699045, cachedInput: 323800000, totalOutput: 459409,
+      context: 376000, contextWindow: 1000000,
+      userTurns: 8, toolCalls: 887, modelCalls: 829,
+      models: ['GLM-5.3', 'GLM-5.3-Flash'],
+      spanMs: 26.7 * 3600e3, activeMs: 4.65 * 3600e3,
+      costUsd: null, credits: null,
+      topTools: [['Bash', 724], ['Edit', 64], ['Write', 48]],
+    },
+  },
+  {
+    id: 'codex-1', lane: 'running', provider: 'cx', providerLabel: 'CX',
+    workspace: 'aes-workflow', title: 'ZCode token 消耗归因分析',
+    time: { zh: '32 分钟前', en: '32m ago' }, foot: 'dev',
+    lastUser: { zh: '「Token 为什么会爆炸」有实锤的证据吗，给我原始文件的证明', en: '「Token 为什么会爆炸」有实锤的证据吗，给我原始文件的证明' },
+    lastAi: { zh: '有实锤。ZCode 的特殊问题是压缩触发太晚、隐藏 Todo 提醒污染历史、缺少桌面轮次预算，并把所有缓存输入按毛 Token 直接累计展示……', en: '有实锤。ZCode 的特殊问题是压缩触发太晚、隐藏 Todo 提醒污染历史、缺少桌面轮次预算，并把所有缓存输入按毛 Token 直接累计展示……' },
+    usage: {
+      totalInput: 98200000, cachedInput: 95800000, totalOutput: 514000,
+      context: 302000, contextWindow: 828400,
+      userTurns: 8, toolCalls: 378, modelCalls: 404,
+      models: ['gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-6-astra'],
+      spanMs: 7.2 * 3600e3, activeMs: null,
+      costUsd: null, credits: null,
+      topTools: [['exec', 345], ['wait', 27], ['spawn_agent', 6]],
+    },
+  },
+  {
+    id: 'claude-1', lane: 'waiting', provider: 'cl', providerLabel: 'C',
+    workspace: 'AesWorld (UE)', title: 'SubLevelComponent 快速 Rebase 的 UI 按钮',
+    time: { zh: '1 小时前', en: '1h ago' }, foot: 'main',
+    lastUser: { zh: '按钮放在细节面板的哪个分区？给我两个方案选', en: '按钮放在细节面板的哪个分区？给我两个方案选' },
+    lastAi: { zh: '我先按 UWF 主控流程固定这次目标，这一轮只产出方案与歧义清单。两个候选分区如下……', en: '我先按 UWF 主控流程固定这次目标，这一轮只产出方案与歧义清单。两个候选分区如下……' },
+    usage: {
+      totalInput: 41200000, cachedInput: 36700000, totalOutput: 1875661,
+      context: 698000, contextWindow: null,
+      userTurns: 60, toolCalls: 1302, modelCalls: 808,
+      models: ['claude-opus-5', 'claude-sonnet-5'],
+      spanMs: 51.5 * 3600e3, activeMs: null,
+      costUsd: null, credits: null,
+      topTools: [['Bash', 612], ['Grep', 221], ['Read', 189]],
+    },
+  },
+  {
+    id: 'opencode-1', lane: 'idle', provider: 'oc', providerLabel: 'OC',
+    workspace: 'opencode-sandbox', title: '重构 storage 层并补测试',
+    time: { zh: '3 小时前', en: '3h ago' }, foot: 'refactor/storage',
+    lastUser: { zh: '把 storage 层抽出来，测试补齐', en: '把 storage 层抽出来，测试补齐' },
+    lastAi: { zh: '已完成 6 个文件的抽取，新增 14 条测试全部通过。变更清单如下……', en: '已完成 6 个文件的抽取，新增 14 条测试全部通过。变更清单如下……' },
+    usage: {
+      totalInput: 31058788, cachedInput: 28900000, totalOutput: 488684,
+      context: 156000, contextWindow: null,
+      userTurns: 233, toolCalls: 1501, modelCalls: 1646,
+      models: ['anthropic/claude-sonnet-4.6'],
+      spanMs: 20.1 * 3600e3, activeMs: null,
+      costUsd: 199.53, credits: null,
+      topTools: [['bash', 588], ['read', 364], ['edit', 272]],
+    },
+  },
+  {
+    id: 'copilot-1', lane: 'idle', provider: 'gh', providerLabel: 'GH',
+    workspace: 'AesWorld (UE)', title: 'Rebase UI 按钮与关卡资产检查',
+    time: { zh: '昨天', en: 'yesterday' }, foot: 'feature/rebase-ui',
+    lastUser: { zh: 'AesWorld 的 SubLevelComponent 需要添加快速 Rebase 的 UI 按钮', en: 'AesWorld 的 SubLevelComponent 需要添加快速 Rebase 的 UI 按钮' },
+    lastAi: { zh: '已定位 SubLevelComponent.h 中的注册段落，接下来给出按钮挂载点的两个候选……', en: '已定位 SubLevelComponent.h 中的注册段落，接下来给出按钮挂载点的两个候选……' },
+    usage: {
+      totalInput: 12400000, cachedInput: 11300000, totalOutput: 86000,
+      context: 360000, contextWindow: null,
+      userTurns: 96, toolCalls: 3099, modelCalls: 1716,
+      models: ['gpt-5.6-sol'],
+      spanMs: 96 * 3600e3, activeMs: null,
+      costUsd: null, credits: 1204.7,
+      topTools: [['grep_search', 1180], ['run_in_terminal', 762], ['read_file', 588]],
+    },
+  },
+  {
+    id: 'copiloticli-1', lane: 'idle', provider: 'gh-cli', providerLabel: 'GH›',
+    workspace: 'AgentWatcher', title: 'copilot cli 会话',
+    time: { zh: '8 月 4 日', en: 'Aug 4' }, foot: 'dev',
+    lastUser: { zh: '帮我看看扫描目录的边界情况', en: '帮我看看扫描目录的边界情况' },
+    lastAi: { zh: '（该源不落 assistant 正文，仅有轮次记录）', en: '（该源不落 assistant 正文，仅有轮次记录）' },
+    usage: {
+      totalInput: null, cachedInput: null, totalOutput: null,
+      context: null, contextWindow: null,
+      userTurns: 41, toolCalls: null, modelCalls: null,
+      models: [],
+      spanMs: 4 * 24 * 3600e3, activeMs: null,
+      costUsd: null, credits: null,
+      topTools: [],
+    },
+  },
+  {
+    id: 'copilot-2', lane: 'waiting', provider: 'gh', providerLabel: 'GH',
+    workspace: 'AesWorld (UE)', title: '贴花工具的批量重定向问题',
+    time: { zh: '18 分钟前', en: '18m ago' }, foot: 'fix/decal-redirect',
+    lastUser: { zh: '要保留引用还是要重定向到新资产？二选一', en: '要保留引用还是要重定向到新资产？二选一' },
+    lastAi: { zh: '我先列出受影响的 14 处引用，再给两种方案的变更范围对比……', en: '我先列出受影响的 14 处引用，再给两种方案的变更范围对比……' },
+    usage: {
+      totalInput: 2860000, cachedInput: 2410000, totalOutput: 41200,
+      context: 122000, contextWindow: null,
+      userTurns: 11, toolCalls: 96, modelCalls: 138,
+      models: ['gpt-5.6-sol'],
+      spanMs: 2.4 * 3600e3, activeMs: null,
+      costUsd: null, credits: 86.4,
+      topTools: [['grep_search', 44], ['read_file', 31], ['run_in_terminal', 15]],
+    },
+  },
+  {
+    id: 'claude-2', lane: 'running', provider: 'cl', providerLabel: 'C',
+    workspace: 'aes-workflow', title: '给 record-shapes 补 wayfinder-ticket 骨架',
+    time: { zh: '刚才', en: 'just now' }, foot: 'docs/record-shapes',
+    lastUser: { zh: '把 ticket 骨架补进 record-shapes.md，别动协议正文', en: '把 ticket 骨架补进 record-shapes.md，别动协议正文' },
+    lastAi: { zh: '已核对 protocol.md 1.4 的字段清单，正在写入骨架示例，字段顺序照抄协议……', en: '已核对 protocol.md 1.4 的字段清单，正在写入骨架示例，字段顺序照抄协议……' },
+    usage: {
+      totalInput: 8640000, cachedInput: 8010000, totalOutput: 213000,
+      context: 214000, contextWindow: null,
+      userTurns: 14, toolCalls: 208, modelCalls: 176,
+      models: ['claude-sonnet-5'],
+      spanMs: 1.8 * 3600e3, activeMs: null,
+      costUsd: null, credits: null,
+      topTools: [['Read', 82], ['Edit', 61], ['Grep', 40]],
+    },
+  },
+  {
+    id: 'zcode-2', lane: 'idle', provider: 'zc', providerLabel: 'ZC',
+    workspace: 'AgentWatcher', title: 'ZCode provider 接入扫描与预览',
+    time: { zh: '昨天', en: 'yesterday' }, foot: 'feature/zcode-provider',
+    lastUser: { zh: '接完扫描和预览，跳转先不做', en: '接完扫描和预览，跳转先不做' },
+    lastAi: { zh: '扫描、悬浮预览、接续导出已接入；点击卡片返回明确提示，上游能力就绪后恢复 TUI 跳转……', en: '扫描、悬浮预览、接续导出已接入；点击卡片返回明确提示，上游能力就绪后恢复 TUI 跳转……' },
+    usage: {
+      totalInput: 48200000, cachedInput: 46900000, totalOutput: 612000,
+      context: 189000, contextWindow: 1000000,
+      userTurns: 17, toolCalls: 691, modelCalls: 677,
+      models: ['GLM-5.3'],
+      spanMs: 31.2 * 3600e3, activeMs: 3.9 * 3600e3,
+      costUsd: null, credits: null,
+      topTools: [['Bash', 509], ['Edit', 49], ['Read', 44]],
+    },
+  },
+];
+
+/* ---------- i18n ---------- */
+const i18n = {
+  zh: {
+    lanes: { waiting: '等回复', running: '跑着', idle: '闲着' },
+    statusText: { waiting: '等回复', running: '跑着', idle: '闲着' },
+    lastUser: '最后用户输入', lastAi: '最后 AI 回复', usage: '用量',
+    totalInput: '累计输入', totalOutput: '累计输出', context: '当前上下文',
+    userTurns: '对话轮次', toolCalls: '工具调用', modelCalls: '模型调用',
+    models: '模型', duration: '时长', cost: '成本',
+    cacheShare: p => `缓存 ${p}%`, contextOf: w => `/ ${(w / 1000).toFixed(0)}k 窗口`,
+    turnsUnit: '轮', toolsUnit: '工具', activeSpan: (a, s) => `${a} 活跃 · ${s} 跨度`,
+    spanOnly: s => `跨度 ${s}`, noData: '—', noDataNote: '该数据源不提供用量字段',
+    cardRow: (t, tools, tok) => `${t} 轮 · ${tools} 工具 · ${tok}`,
+    cardRowB: (ctx, t, tools) => `${ctx} 上下文 · ${t} 轮 · ${tools} 工具`,
+    hint: '点击左侧卡片切换预览内容',
+    modelsPlus: (list) => list.length <= 1 ? (list[0] || '—') : `${list[0]} +${list.length - 1}`,
+  },
+  en: {
+    lanes: { waiting: 'Waiting', running: 'Running', idle: 'Idle' },
+    statusText: { waiting: 'Waiting', running: 'Running', idle: 'Idle' },
+    lastUser: 'Last user', lastAi: 'Last AI', usage: 'Usage',
+    totalInput: 'Total input', totalOutput: 'Total output', context: 'Context',
+    userTurns: 'User turns', toolCalls: 'Tool calls', modelCalls: 'Model calls',
+    models: 'Model', duration: 'Duration', cost: 'Cost',
+    cacheShare: p => `cached ${p}%`, contextOf: w => `of ${(w / 1000).toFixed(0)}k window`,
+    turnsUnit: 'turns', toolsUnit: 'tools', activeSpan: (a, s) => `${a} active · ${s} span`,
+    spanOnly: s => `span ${s}`, noData: '—', noDataNote: 'No usage data from this source',
+    cardRow: (t, tools, tok) => `${t} turns · ${tools} tools · ${tok}`,
+    cardRowB: (ctx, t, tools) => `${ctx} ctx · ${t} turns · ${tools} tools`,
+    hint: 'Click a card to bind the preview',
+    modelsPlus: (list) => list.length <= 1 ? (list[0] || '—') : `${list[0]} +${list.length - 1}`,
+  },
+};
+const t = () => i18n[state.lang];
+
+/* ---------- 格式化 ---------- */
+function fmtTokens(n) {
+  if (n == null) return null;
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+  return String(n);
+}
+function fmtMs(ms) {
+  if (ms == null) return null;
+  const h = ms / 3600e3;
+  if (h >= 48) return (h / 24).toFixed(1) + 'd';
+  if (h >= 1) return h.toFixed(1) + 'h';
+  return (ms / 60e3).toFixed(0) + 'm';
+}
+
+/* ---------- 卡片 ---------- */
+function cardUsageHtml(s) {
+  if (state.cardRow === 'C') return '';
+  const L = t();
+  const u = s.usage || {};
+  const parts = [];
+  if (state.cardRow === 'A') {
+    if (u.userTurns != null) parts.push(`<b>${u.userTurns}</b> ${L.turnsUnit}`);
+    if (u.toolCalls != null) parts.push(`<b>${u.toolCalls}</b> ${L.toolsUnit}`);
+    const tok = fmtTokens(u.totalInput);
+    if (tok) parts.push(`<b>${tok}</b>`);
+  } else {
+    const ctx = fmtTokens(u.context);
+    if (ctx) parts.push(`<b>${ctx}</b> ${state.lang === 'zh' ? '上下文' : 'ctx'}`);
+    if (u.userTurns != null) parts.push(`<b>${u.userTurns}</b> ${L.turnsUnit}`);
+    if (u.toolCalls != null) parts.push(`<b>${u.toolCalls}</b> ${L.toolsUnit}`);
+  }
+  if (!parts.length) return '';
+  return `<div class="card-usage">${parts.join('<span class="u-sep"> · </span>')}</div>`;
+}
+
+function renderCards() {
+  const scroll = document.getElementById('sessionScroll');
+  const lanes = ['waiting', 'running', 'idle'];
+  scroll.innerHTML = lanes.map(lane => `
+    <section class="lane ${lane}" style="margin-bottom:14px">
+      <header class="lane-header">
+        <span class="lane-label"><span class="lane-dot"></span>${t().lanes[lane]}</span>
+        <span>${sessions.filter(s => s.lane === lane).length}</span>
+      </header>
+      <div class="cards" style="--columns:${state.columns}">
+        ${sessions.filter(s => s.lane === lane).map(s => `
+          <button type="button" class="session-card ${s.lane} ${state.selected === s.id ? 'selected' : ''}"
+                  data-id="${s.id}" onclick="selectSession('${s.id}')">
+            <div class="card-head">
+              <span class="provider ${s.provider}">${s.providerLabel}</span>
+              <span class="time">${s.time[state.lang]}</span>
+            </div>
+            <div class="workspace">${s.workspace}</div>
+            <div class="session-title">${s.title}</div>
+            ${cardUsageHtml(s)}
+            <div class="card-foot"><span>${s.foot}</span></div>
+          </button>`).join('')}
+      </div>
+    </section>`).join('');
+  requestAnimationFrame(syncDensity);
+}
+
+/* 密度档：按卡片实测宽度挂 class（阈值照搬真实实现） */
+function syncDensity() {
+  const win = document.getElementById('watcherWindow');
+  const first = win.querySelector('.session-card');
+  const tag = document.getElementById('densityTag');
+  if (!first) return;
+  const w = first.getBoundingClientRect().width;
+  win.classList.remove('compact-cards', 'dense-cards', 'micro-cards');
+  let label = '';
+  if (w < 60) { win.classList.add('compact-cards', 'dense-cards', 'micro-cards'); label = 'micro'; }
+  else if (w < 85) { win.classList.add('compact-cards', 'dense-cards'); label = 'dense'; }
+  else if (w < 110) { win.classList.add('compact-cards'); label = 'compact（隐藏用量行）'; }
+  tag.textContent = label ? `当前密度：${label}` : '';
+}
+
+/* ---------- 预览 ---------- */
+function usageItem(label, valueHtml, subHtml, missing) {
+  return `<div class="usage-item">
+    <div class="u-label">${label}</div>
+    <div class="u-value${missing ? ' missing' : ''}">${valueHtml}</div>
+    ${subHtml ? `<div class="u-sub">${subHtml}</div>` : ''}
+  </div>`;
+}
+
+function renderPreview() {
+  const s = sessions.find(x => x.id === state.selected) || sessions[0];
+  const L = t();
+  const u = s.usage || {};
+  const panel = document.getElementById('previewPanel');
+  const heroIsInput = state.hero === 'totalInput';
+
+  /* 拍板4：Copilot CLI 可选择不显示用量区块 */
+  const isCli = s.provider === 'gh-cli';
+  const hideSection = isCli && !state.cliSection;
+
+  let heroLabel, heroValue, heroSub, heroMissing = false;
+  if (heroIsInput) {
+    heroLabel = L.totalInput;
+    const v = fmtTokens(u.totalInput);
+    heroValue = v || L.noData; heroMissing = !v;
+    heroSub = (u.totalInput != null && u.cachedInput)
+      ? L.cacheShare(Math.round(u.cachedInput / u.totalInput * 100)) : '';
+  } else {
+    heroLabel = L.context;
+    const v = fmtTokens(u.context);
+    heroValue = v || L.noData; heroMissing = !v;
+    heroSub = v && u.contextWindow ? L.contextOf(u.contextWindow) : '';
+  }
+
+  const cachePct = (u.totalInput != null && u.cachedInput != null)
+    ? Math.round(u.cachedInput / u.totalInput * 100) : null;
+
+  const gridItems = [];
+  if (!heroIsInput) {
+    const v = fmtTokens(u.totalInput);
+    gridItems.push(usageItem(L.totalInput, v || L.noData,
+      cachePct != null ? L.cacheShare(cachePct) : '', !v));
+  } else {
+    const v = fmtTokens(u.context);
+    gridItems.push(usageItem(L.context, v || L.noData,
+      v && u.contextWindow ? L.contextOf(u.contextWindow) : '', !v));
+  }
+  gridItems.push(usageItem(L.totalOutput, fmtTokens(u.totalOutput) || L.noData, '', u.totalOutput == null));
+  gridItems.push(usageItem(L.userTurns,
+    u.userTurns != null ? `${u.userTurns} ${L.turnsUnit}` : L.noData, '', u.userTurns == null));
+  const toolsSub = (u.topTools || []).slice(0, 3).map(x => `${x[0]} ${x[1]}`).join(' · ');
+  gridItems.push(usageItem(L.toolCalls,
+    u.toolCalls != null ? `${u.toolCalls}` : L.noData, toolsSub, u.toolCalls == null));
+  gridItems.push(usageItem(L.modelCalls,
+    u.modelCalls != null ? `${u.modelCalls}` : L.noData, '', u.modelCalls == null));
+  gridItems.push(usageItem(L.models, L.modelsPlus(u.models || []), '', !(u.models || []).length));
+  const span = fmtMs(u.spanMs), act = fmtMs(u.activeMs);
+  const durHtml = (act && span) ? L.activeSpan(act, span) : (span ? L.spanOnly(span) : L.noData);
+  gridItems.push(usageItem(L.duration, durHtml, '', u.spanMs == null));
+  if (state.showCost) {
+    const costHtml = u.costUsd != null ? `$${u.costUsd.toFixed(2)}`
+      : (u.credits != null ? `${u.credits.toLocaleString()} credits` : L.noData);
+    gridItems.push(usageItem(L.cost, costHtml, '',
+      u.costUsd == null && u.credits == null));
+  }
+
+  const usageSection = hideSection ? '' : `
+    <section class="session-preview-section">
+      <div class="session-preview-label">${L.usage}</div>
+      <div class="usage-hero${heroMissing ? ' missing' : ''}">
+        <span class="hero-label">${heroLabel}</span>
+        <span class="hero-value">${heroValue}</span>
+        ${heroSub ? `<span class="hero-sub">${heroSub}</span>` : ''}
+      </div>
+      <div class="usage-grid">${gridItems.join('')}</div>
+      ${isCli ? `<div class="u-sub" style="margin-top:6px">${L.noDataNote}</div>` : ''}
+    </section>`;
+
+  panel.innerHTML = `
+    <div class="session-preview-body">
+      <div class="session-preview-head">
+        <div>
+          <div class="session-preview-workspace">${s.workspace}</div>
+          <div class="session-preview-title">${s.title}</div>
+          <div class="session-preview-path">${s.providerLabel} · ${s.foot}</div>
+        </div>
+        <span class="session-preview-status ${s.lane}">${L.statusText[s.lane]}</span>
+      </div>
+      <section class="session-preview-section">
+        <div class="session-preview-label">${L.lastUser}</div>
+        <div class="session-preview-text">${s.lastUser[state.lang]}</div>
+      </section>
+      <section class="session-preview-section">
+        <div class="session-preview-label">${L.lastAi}</div>
+        <div class="session-preview-text">${s.lastAi[state.lang]}</div>
+      </section>
+      ${usageSection}
+    </div>`;
+  document.getElementById('previewHint').textContent = L.hint;
+}
+
+/* ---------- 控制条 ---------- */
+function bindGroup(getter, setter, map) {
+  Object.keys(map).forEach(key => {
+    const btn = document.getElementById(map[key]);
+    btn.classList.toggle('on', getter() === key);
+  });
+}
+function setTheme(v) {
+  document.body.dataset.theme = v;
+  bindGroup(() => v, null, { dark: 'btnThemeDark', light: 'btnThemeLight' });
+}
+function setLang(v) {
+  state.lang = v;
+  document.body.dataset.lang = v;
+  bindGroup(() => v, null, { zh: 'btnLangZh', en: 'btnLangEn' });
+  renderCards(); renderPreview();
+}
+function setHero(v) {
+  state.hero = v;
+  bindGroup(() => v, null, { totalInput: 'btnHeroInput', context: 'btnHeroContext' });
+  renderPreview();
+}
+function setCardRow(v) {
+  state.cardRow = v;
+  bindGroup(() => v, null, { A: 'btnRowA', B: 'btnRowB', C: 'btnRowC' });
+  renderCards();
+}
+function setCost(v) {
+  state.showCost = v;
+  bindGroup(() => v, null, { true: 'btnCostOn', false: 'btnCostOff' });
+  renderPreview();
+}
+function setCliSection(v) {
+  state.cliSection = v;
+  bindGroup(() => v, null, { true: 'btnCliOn', false: 'btnCliOff' });
+  renderPreview();
+}
+function setColumns(v) {
+  state.columns = Number(v);
+  document.getElementById('colsVal').textContent = v;
+  renderCards();
+}
+function selectSession(id) {
+  state.selected = id;
+  renderCards(); renderPreview();
+}
+window.addEventListener('resize', () => requestAnimationFrame(syncDensity));
+
+renderCards();
+renderPreview();
+</script>
+</body>
+</html>

@@ -1,0 +1,183 @@
+{
+  "schema_version": 1,
+  "protocol": "1.3.0",
+  "generated_at": "2026-09-15T09:03:52Z",
+  "generated_by": {
+    "tool_revision": "awf-0.1.0"
+  },
+  "work_item": {
+    "id": "wi_01M2HX0EAATCGJZXB8KG6VNAXB",
+    "short_id": "4967qf3h",
+    "slug": "agent-usage-metrics",
+    "title": "会话卡片与悬浮预览展示用量指标",
+    "kind": "feature",
+    "status": "in_review",
+    "branch": "feature/agent-usage-metrics",
+    "home_repository": "https://github.com/pb763396199/AgentWatcher.git",
+    "contract_digest": "sha256:b1d0e0503375d88153a6711d42195454acdbf4b2117b2b4a4a6cca41a6fcc8d9",
+    "acceptance_ids": [
+      "AC-001",
+      "AC-002",
+      "AC-003",
+      "AC-004",
+      "AC-005"
+    ]
+  },
+  "artifacts": [
+    {
+      "artifact_id": "ar_01M2J40XKJ0004SY6GMZW2RKW6",
+      "type": "change-note",
+      "path": "change-note.md",
+      "outcome": "complete",
+      "freshness": "stale-subject",
+      "stage": 45,
+      "depends_on": [
+        "ar_01M2J1HY7000034P57XZ03CQ8W"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M2J4V005000BS0H7KT8XZR74",
+      "type": "delivery",
+      "path": "delivery.md",
+      "outcome": "ready_to_land",
+      "freshness": "fresh",
+      "stage": 80,
+      "depends_on": [
+        "ar_01M2J40XMD0000GC2DDBG67VQ0",
+        "ar_01M2J4TZXS000EDM8FRTSXSZB2"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M2HX0EKBWVB8P9ZMGGJMPG2T",
+      "type": "design",
+      "path": "design.md",
+      "outcome": "accepted",
+      "freshness": "fresh",
+      "stage": 20,
+      "depends_on": [
+        "ar_01M2HX0EEVEXZEF3NZYTJFG22H"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M2J40XMD0000GC2DDBG67VQ0",
+      "type": "implementation",
+      "path": "implementation.md",
+      "outcome": "complete",
+      "freshness": "stale-subject",
+      "stage": 50,
+      "depends_on": [
+        "ar_01M2J40XKJ0004SY6GMZW2RKW6",
+        "ar_01M2J1HY7000034P57XZ03CQ8W"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M2J40XPS000EAEWSJQ0YX8F7",
+      "type": "manual-test",
+      "path": "manual-test.md",
+      "outcome": "pending",
+      "freshness": "fresh",
+      "stage": 70,
+      "depends_on": [
+        "ar_01M2J40XMD0000GC2DDBG67VQ0"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M2J1HY7000034P57XZ03CQ8W",
+      "type": "plan",
+      "path": "plan.md",
+      "outcome": "ready",
+      "freshness": "fresh",
+      "stage": 30,
+      "depends_on": [
+        "ar_01M2HX0EKBWVB8P9ZMGGJMPG2T"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M2HX0EEVEXZEF3NZYTJFG22H",
+      "type": "research",
+      "path": "research/usage-data-research.md",
+      "outcome": "complete",
+      "freshness": "fresh",
+      "stage": 10,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_01M2J40XN7000EPB8WPV3KVFCK",
+      "type": "review",
+      "path": "reviews/code-review.md",
+      "outcome": "approved",
+      "freshness": "stale-subject",
+      "stage": 60,
+      "depends_on": [
+        "ar_01M2J40XMD0000GC2DDBG67VQ0"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M2J40XQH0008PPQ139448DKH",
+      "type": "summary",
+      "path": "summary.md",
+      "outcome": "complete",
+      "freshness": "stale-subject",
+      "stage": 55,
+      "depends_on": [
+        "ar_01M2J40XMD0000GC2DDBG67VQ0"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M2J40XP000017T6AHGGWA7RZ",
+      "type": "validation",
+      "path": "validation.md",
+      "outcome": "passed",
+      "freshness": "stale-subject",
+      "stage": 70,
+      "depends_on": [
+        "ar_01M2J40XMD0000GC2DDBG67VQ0"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M2J4TZXS000EDM8FRTSXSZB2",
+      "type": "summary",
+      "path": "work-item-summary.md",
+      "outcome": "complete",
+      "freshness": "stale-upstream",
+      "stage": 55,
+      "depends_on": [
+        "ar_01M2J40XQH0008PPQ139448DKH"
+      ]
+    }
+  ],
+  "wayfinder": null,
+  "manual_test": {
+    "passed": 5,
+    "open": 0,
+    "failed": 0
+  },
+  "stage": {
+    "reached": "delivery",
+    "reached_stage": 80,
+    "next_skill": "aes-retrospect",
+    "waiting_on": null
+  },
+  "next": "这些记录已经跟不上代码了，要重做：change-note, implementation, review, summary, validation",
+  "computed_from": {
+    "documents": {
+      "change-note.md": "sha256:556e8633039601053d8a4f5fb18e795d62711bd832821d387eb09ee6e0af736a",
+      "delivery.md": "sha256:76955fbb784a81a54aee9f7e358177ff2c6517326bb82e7657c2910fa0bc2ffa",
+      "design.md": "sha256:f4ba2e2de66950623e259a212f2db69c7683432080469c065edc5638a2985651",
+      "implementation.md": "sha256:0e7cae5cb63f64e5656a098f4e80005b50ff86cf5a02758ba9022098d105ebfb",
+      "manual-test.md": "sha256:703eebca94608355b8f4db17c3e6850211ea088765b85c69b7437c57df888995",
+      "plan.md": "sha256:bfd51817c35e3fe8c62d12eb4fcb3fc6a3c050a68930369d9ee6f76ea63b989e",
+      "research/usage-data-research.md": "sha256:38cde2a63b7167a062909990e45afe79f1fb4089bf2e4875b9f3565011efa826",
+      "reviews/code-review.md": "sha256:93af6b4644ee1ce3ab7b25d0a991231b83dddc16a362230d064cdd5857e605a6",
+      "summary.md": "sha256:24c5a5e7715ecf50fefc001307793fd13be981fec5de987ed910400284baeec2",
+      "validation.md": "sha256:28d7c8afcd2da15ca39598334a12ff87e924a5b81442254276d3ad7992a234b4",
+      "work-item-summary.md": "sha256:f9ee74a03450159787d7cf88b187641004df00b7d00ed49cd747b0feaccb91d9",
+      "work-item.md": "sha256:09ba71497b0fb8c758d708017a6a952db1c7b502e9812cdecb7257376024659f"
+    },
+    "change_set": {
+      "revision": "cd03bed8df4ab0cad1509f0a9ba7b97cb95a0b59",
+      "tree": "71f902930d26313687b228b90f1e390e5573740d",
+      "content_digest": "sha256:6b08feb574e44856d3679467dad5d72844094f6a8daecb80ab9fccfdc64c8366"
+    }
+  }
+}
