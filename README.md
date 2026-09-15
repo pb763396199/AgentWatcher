@@ -7,8 +7,9 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - Codex 桌面会话
 - OpenCode 会话
 - ZCode 会话
+- 会话用量展示（实验）：卡片紧凑用量行与悬浮预览「用量」区块，token/轮次/工具/模型/时长随扫描源能力而定，缺项显示 —。
 
-当前发布版本：v0.1.5。仓库使用 Tauri 2 作为桌面应用壳，前端入口 [ui/index.html](ui/index.html) 是唯一 UI 源文件。AgentWatcher 主仓库保持零插件可启动、构建和测试，外部插件通过独立 `*.awplugin` 描述文件发现和启用。
+当前发布版本：v0.1.6。仓库使用 Tauri 2 作为桌面应用壳，前端入口 [ui/index.html](ui/index.html) 是唯一 UI 源文件。AgentWatcher 主仓库保持零插件可启动、构建和测试，外部插件通过独立 `*.awplugin` 描述文件发现和启用。
 
 ## 当前 UI 入口
 
@@ -179,7 +180,7 @@ AgentWatcher 使用自带的 VS Code 连接组件实现精确 session 跳转和 
 
 ## Known Issues
 
-- Prompt handoff 的提示词插入目前整体仍依赖 clipboard 通道：Copilot、Copilot CLI 和 Claude 都由 VS Code 连接组件读取 clipboard 后，再通过各自的目标命令填入。非剪贴板 prompt 通道列入 Future，不作为本次 v0.1.5 发布阻断。
+- Prompt handoff 的提示词插入目前整体仍依赖 clipboard 通道：Copilot、Copilot CLI 和 Claude 都由 VS Code 连接组件读取 clipboard 后，再通过各自的目标命令填入。非剪贴板 prompt 通道列入 Future，不作为发布阻断。
 - 未来如果引入 prompt 临时文件，禁止写入项目目录，只允许写入 AgentWatcher 自身运行时临时目录或系统临时目录，例如 `%TEMP%\AgentWatcher\...`，并需要 token、TTL 和读取后清理。
 - 历史 VS Code 连接组件测试扩展可能残留在开发机上；当前发布只以稳定组件为准，install/update 会尝试清理旧 ID。
 

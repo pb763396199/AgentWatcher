@@ -178,3 +178,12 @@
 ## 已放弃路线
 
 - WPF 纯控件复刻 HTML UI：视觉对齐成本过高，已删除未提交的 WPF 临时项目。
+
+## v0.1.6 发布检查清单
+
+- [x] App 版本在 `package.json`、`Cargo.toml`、`tauri.conf.json` 中一致为 `0.1.6`；Bridge 保持 `0.1.12`。
+- [x] 会话用量展示功能随 agent-usage-metrics 任务合入 dev（cd03bed），评审/验收/人工核对记录齐全。
+- [x] CHANGELOG 与 README/AGENTS 口径同步，最终 zip SHA256 回填。
+- [x] 自动化全过（cargo test、clippy、Bridge 检查、路由测试、git diff --check）并完成 `npm run package:exe`。
+- [x] `AgentWatcher-v0.1.6-windows-x64.zip` 包含 `AgentWatcher.exe` 与 `agentwatcher-bridge-0.1.12.vsix`；VSIX 重复安装两次验证。
+- [x] GitHub Release 发布并回看 digest。

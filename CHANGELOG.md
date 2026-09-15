@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.1.6 - 2026-09-15
+
+- 会话用量展示（全部 provider）：悬浮预览新增「用量」区块——累计毛输入（带缓存占比）、累计输出、当前上下文（含窗口上限）、对话轮次、工具调用（含 top 工具排行）、模型调用、模型名、时长；数据源没有的指标显示 — 而不是 0（ZCode 订阅制成本、Copilot CLI 全部用量字段均如实标注）。
+- 卡片新增紧凑用量行（轮次 · 工具 · token），compact 及更小密度随分支名一起隐藏，中英文与明暗主题全量适配。
+- 采集实现：Claude 按 distinct `message.id` 去重聚合（不去重会虚高约 2.75 倍），Codex 读最后一条 `total_token_usage`（毛口径，cached 为子集；上下文跳过压缩后的全零事件），Copilot Chat 聚合补丁日志最终状态；三者带（路径、大小、修改时间）增量缓存与每扫描 10 文件的渐进预算。
+- ZCode 走 `model_usage`/`tool_usage` 观测表批量聚合（毛输入已含缓存读取，用户轮次按 `semantics.origin=real_user` 排除合成消息）；OpenCode 读 `session` 表汇总列（真实美元成本）并新增懒加载命令 `get_session_usage_detail` 查询上下文/轮次/工具明细，避免大库逐扫描聚合。
+- JSONL 累计值与调研期独立脚本交叉核对一致（Claude 808 次调用/1302 工具/1.88M 输出；ZCode sess_743d9fde 221.5M 毛输入/693 工具）。
+
+发布包：`AgentWatcher-v0.1.6-windows-x64.zip`
+
+SHA256：`43DD43B08BE7884DA836E927538C29E333297386A79134D2947CC3BA9D5A3E97`
+
+验证：`cargo test --manifest-path src-tauri/Cargo.toml`（91 通过、1 项外部插件握手按设计忽略）、`cargo clippy --all-targets -- -D warnings`、Bridge 语法与 handoff 路由测试、`npm run build:ui`、`git diff --check`、真实 Tauri 冒烟与 zcode-session 流程、真实壳端到端核验（68/68 会话带用量、预览懒加载合并 top 工具）、中英文×dark/light 人工核对、`npm run package:exe`、zip/manifest/15 尺寸图标检查、最终 VSIX 重复安装两次、发布目录 EXE 独立启动均通过。已知限制：`opencode-session` 流程在本机因 7 天活跃窗口内无 OpenCode 会话无法运行（环境性，SQL 直查证实扫描管线正常）。
+
+
 ## v0.1.5 - 2026-09-14
 
 - 接入 ZCode 作为第 6 个会话 provider（徽标 ZC）：从本机 `~\.zcode\cli\db\db.sqlite` 只读扫描，状态机（waiting=AskUserQuestion pending、running=内容时间戳新鲜度）、provider 筛选、设置开关、性能计数与悬浮预览全部可用；子 agent 会话（`task_type=subagent_child`）默认过滤。

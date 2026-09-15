@@ -1036,9 +1036,8 @@ static JSONL_USAGE_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlUsage>>> = O
 static JSONL_USAGE_DETAIL_BY_SESSION: OnceLock<Mutex<HashMap<String, CachedJsonlUsage>>> =
     OnceLock::new();
 static JSONL_USAGE_BUDGET_USED: AtomicUsize = AtomicUsize::new(0);
-static CODEX_ROLLOUT_INDEX_CACHE: OnceLock<
-    Mutex<Option<(u64, HashMap<String, PathBuf>)>>,
-> = OnceLock::new();
+type CodexRolloutIndexCache = Mutex<Option<(u64, HashMap<String, PathBuf>)>>;
+static CODEX_ROLLOUT_INDEX_CACHE: OnceLock<CodexRolloutIndexCache> = OnceLock::new();
 
 fn jsonl_usage_cache() -> &'static Mutex<HashMap<String, CachedJsonlUsage>> {
     JSONL_USAGE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -1546,20 +1545,20 @@ fn parse_copilot_chat_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u3
     let mut last_ms: Option<u64> = None;
 
     for request in requests.into_values() {
-        let timestamp_ms = request.get("timestamp").and_then(|value| value_as_u64(value));
+        let timestamp_ms = request.get("timestamp").and_then(value_as_u64);
         let completed_ms = map_pointer(&request, &["modelState", "completedAt"])
-            .and_then(|value| value_as_u64(value));
+            .and_then(value_as_u64);
         for stamp in [timestamp_ms, completed_ms].into_iter().flatten() {
             first_ms = Some(first_ms.map_or(stamp, |current| current.min(stamp)));
             last_ms = Some(last_ms.map_or(stamp, |current| current.max(stamp)));
         }
         // promptTokens 是每轮的上下文快照：求和得到计费口径的毛输入，
         // 最后一轮的值即当前上下文占用。
-        if let Some(prompt) = request.get("promptTokens").and_then(|value| value_as_u64(value)) {
+        if let Some(prompt) = request.get("promptTokens").and_then(value_as_u64) {
             sum_input = sum_input.saturating_add(prompt);
             context_tokens = Some(prompt);
         }
-        if let Some(completion) = request.get("completionTokens").and_then(|value| value_as_u64(value)) {
+        if let Some(completion) = request.get("completionTokens").and_then(value_as_u64) {
             sum_output = sum_output.saturating_add(completion);
         }
         if let Some(credits) = request.get("copilotCredits").and_then(Value::as_f64) {
@@ -1711,13 +1710,10 @@ fn opencode_usage_detail(session_id: &str) -> SessionUsageDetail {
                 Ok((cost.unwrap_or(0.0), created, updated))
             },
         )
-        .map(|(cost, created, updated)| {
-            let mut usage = SessionUsage::default();
-            usage.cost_usd = (cost > 0.0).then_some(cost);
-            if updated > created && created > 0 {
-                usage.duration_ms = Some((updated - created) as u64);
-            }
-            usage
+        .map(|(cost, created, updated)| SessionUsage {
+            cost_usd: (cost > 0.0).then_some(cost),
+            duration_ms: (updated > created && created > 0).then_some((updated - created) as u64),
+            ..SessionUsage::default()
         })
     else {
         return detail;
@@ -13244,15 +13240,19 @@ mod tests {
         let compute_calls = std::cell::Cell::new(0_u32);
         let first = cached_jsonl_usage_for_path(&file_path, |text| {
             compute_calls.set(compute_calls.get() + 1);
-            let mut usage = SessionUsage::default();
-            usage.user_turns = Some(if text.contains("hello") { 1 } else { 99 });
+            let usage = SessionUsage {
+                user_turns: Some(if text.contains("hello") { 1 } else { 99 }),
+                ..SessionUsage::default()
+            };
             Some((usage, Vec::new()))
         })
         .unwrap();
         let second = cached_jsonl_usage_for_path(&file_path, |text| {
             compute_calls.set(compute_calls.get() + 1);
-            let mut usage = SessionUsage::default();
-            usage.user_turns = Some(if text.contains("hello") { 1 } else { 99 });
+            let usage = SessionUsage {
+                user_turns: Some(if text.contains("hello") { 1 } else { 99 }),
+                ..SessionUsage::default()
+            };
             Some((usage, Vec::new()))
         })
         .unwrap();
