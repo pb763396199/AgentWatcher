@@ -13,7 +13,7 @@ dependencies:
   work_item_contract_digest: sha256:b1d0e0503375d88153a6711d42195454acdbf4b2117b2b4a4a6cca41a6fcc8d9
   artifacts:
     - artifact_id: ar_01M2J40XQH0008PPQ139448DKH
-      digest: sha256:64eb30e0c41ff47d39e9eb7fd5dc9d4a6da4d90a454a2f649c4c43687ed8f3bb
+      digest: sha256:0696a8f635093d7929f944a81e7d1b462065b629a5ece3926a0f71b68917930e
       locator: summary.md
   subject:
     kind: change_set

@@ -12,10 +12,10 @@ dependencies:
   work_item_contract_digest: sha256:b1d0e0503375d88153a6711d42195454acdbf4b2117b2b4a4a6cca41a6fcc8d9
   artifacts:
     - artifact_id: ar_01M2J40XMD0000GC2DDBG67VQ0
-      digest: sha256:6eb28967c0a9034692fa9e5ca97c7b5e022840760ab1595a503a6cb21ab9736d
+      digest: sha256:cfcad059c9729eae964c6e358765c45e839c85f6e1048026dafd1bcfb2934246
       locator: implementation.md
     - artifact_id: ar_01M2J4TZXS000EDM8FRTSXSZB2
-      digest: sha256:cdcc5ab3fb6770dfb6d1b7d41b21ec43c17d837c5114cdce51eeba86f014d9e8
+      digest: sha256:58e58b076b23521817d814f31f3a024bbb978b102161e70e6e0a15efcc107336
       locator: work-item-summary.md
   subject:
     kind: change_set
