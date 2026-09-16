@@ -11,7 +11,7 @@ use std::net::{Shutdown, TcpListener, TcpStream};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager};
@@ -95,20 +95,20 @@ fn legacy_bridge_extension_ids() -> Vec<String> {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSession {
-    id: String,
-    provider: String,
+    pub id: String,
+    pub provider: String,
     provider_label: String,
-    title: String,
-    workspace: String,
-    workspace_path: Option<String>,
+    pub title: String,
+    pub workspace: String,
+    pub workspace_path: Option<String>,
     workspace_key: String,
     workspace_name: String,
     workspace_label: String,
     workspace_group: String,
     workspace_discriminator: String,
-    session_path: Option<String>,
-    session_resource: Option<String>,
-    status: String,
+    pub session_path: Option<String>,
+    pub session_resource: Option<String>,
+    pub status: String,
     time_label: String,
     updated_ms: u64,
     message_count: u32,
@@ -117,7 +117,7 @@ pub struct AgentSession {
     last_ai_message: Option<String>,
     last_ai_message_truncated: bool,
     last_ai_message_excerpt_kind: Option<String>,
-    branch: Option<String>,
+    pub branch: Option<String>,
     todo_ids: Vec<String>,
     plugin_workflow: Option<PluginWorkflowSessionMarker>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -273,9 +273,9 @@ pub struct HandoffSourceContextRequest {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HandoffSourceContext {
-    provider: String,
+    pub provider: String,
     session_id: Option<String>,
-    primary_source_file: Option<String>,
+    pub primary_source_file: Option<String>,
     inline_summary: Option<String>,
     message_count: u32,
     warning: Option<String>,
@@ -6371,7 +6371,18 @@ where
     operation(&mut client)
 }
 
+/// 进程级开关：命令行模式禁止拉起常驻 Codex app-server。
+/// 关掉后 scan_codex_sessions 走本地会话文件兜底，进程退出不留后台服务。
+static CODEX_APP_SERVER_DISABLED: AtomicBool = AtomicBool::new(false);
+
+pub fn set_codex_app_server_disabled(disabled: bool) {
+    CODEX_APP_SERVER_DISABLED.store(disabled, Ordering::Relaxed);
+}
+
 fn ensure_codex_app_server() -> Result<u16, String> {
+    if CODEX_APP_SERVER_DISABLED.load(Ordering::Relaxed) {
+        return Err("Codex app-server is disabled for this process".to_string());
+    }
     let server_mutex = CODEX_APP_SERVER.get_or_init(|| Mutex::new(None));
     let mut server_guard = server_mutex
         .lock()
