@@ -94,7 +94,7 @@ fn legacy_bridge_extension_ids() -> Vec<String> {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct AgentSession {
+pub struct AgentSession {
     id: String,
     provider: String,
     provider_label: String,
@@ -170,7 +170,7 @@ struct UsageToolCount {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SessionUsageDetail {
+pub struct SessionUsageDetail {
     usage: Option<SessionUsage>,
     top_tools: Vec<UsageToolCount>,
 }
@@ -261,18 +261,18 @@ struct HandoffLaunchRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct HandoffSourceContextRequest {
-    id: Option<String>,
-    provider: Option<String>,
-    workspace_path: Option<String>,
-    session_path: Option<String>,
-    session_resource: Option<String>,
-    title: Option<String>,
+pub struct HandoffSourceContextRequest {
+    pub id: Option<String>,
+    pub provider: Option<String>,
+    pub workspace_path: Option<String>,
+    pub session_path: Option<String>,
+    pub session_resource: Option<String>,
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct HandoffSourceContext {
+pub struct HandoffSourceContext {
     provider: String,
     session_id: Option<String>,
     primary_source_file: Option<String>,
@@ -346,17 +346,17 @@ impl BridgeExtensionInventory {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ScanOptions {
-    max_sessions: Option<usize>,
-    active_window_days: Option<u64>,
-    hide_archived: Option<bool>,
-    include_copilot: Option<bool>,
-    include_copilot_cli: Option<bool>,
-    include_claude: Option<bool>,
-    include_codex: Option<bool>,
-    include_open_code: Option<bool>,
-    include_zcode: Option<bool>,
-    workspace_path_blacklist: Option<Vec<String>>,
+pub struct ScanOptions {
+    pub max_sessions: Option<usize>,
+    pub active_window_days: Option<u64>,
+    pub hide_archived: Option<bool>,
+    pub include_copilot: Option<bool>,
+    pub include_copilot_cli: Option<bool>,
+    pub include_claude: Option<bool>,
+    pub include_codex: Option<bool>,
+    pub include_open_code: Option<bool>,
+    pub include_zcode: Option<bool>,
+    pub workspace_path_blacklist: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -939,7 +939,7 @@ async fn scan_sessions(options: Option<ScanOptions>) -> Result<Vec<AgentSession>
         .map_err(|error| format!("session scan worker failed: {error}"))
 }
 
-fn scan_sessions_blocking(options: Option<ScanOptions>) -> Vec<AgentSession> {
+pub fn scan_sessions_blocking(options: Option<ScanOptions>) -> Vec<AgentSession> {
     let scan_started = Instant::now();
     let scan_time_ms = current_time_ms();
     let options = resolve_scan_options(options);
@@ -1796,6 +1796,10 @@ fn opencode_usage_detail(session_id: &str) -> SessionUsageDetail {
 
 #[tauri::command]
 fn get_session_usage_detail(id: String) -> SessionUsageDetail {
+    session_usage_detail(id)
+}
+
+pub fn session_usage_detail(id: String) -> SessionUsageDetail {
     let trimmed = id.trim();
     if let Some(session_id) = trimmed.strip_prefix("zcode:") {
         return zcode_usage_detail(session_id);
@@ -2332,7 +2336,7 @@ async fn prepare_handoff_source_context(
         .map_err(|error| format!("Failed to wait for handoff source context task: {}", error))?
 }
 
-fn prepare_handoff_source_context_blocking(
+pub fn prepare_handoff_source_context_blocking(
     request: HandoffSourceContextRequest,
 ) -> Result<HandoffSourceContext, String> {
     let provider = clean_option(request.provider.as_deref()).unwrap_or("unknown");
