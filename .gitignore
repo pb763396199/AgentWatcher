@@ -1,7 +1,7 @@
 .history/
 .vs/
 .vscode/
-bin/
+/bin/
 obj/
 TestResults/
 *.user
