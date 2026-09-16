@@ -220,6 +220,21 @@ try {
   rmSync(stagedExe, { force: true });
   console.log(`Wrote executable with embedded icon to ${outputExe}`);
 
+  // Copy the headless CLI binary (no icon embed; console tool).
+  // tauri build 只保证 default-run 主程序，这里显式补一条增量构建。
+  execSync('cargo build --release --manifest-path src-tauri/Cargo.toml --bin agentwatcher-cli', {
+    cwd: rootDir,
+    stdio: 'inherit'
+  });
+  const cliExePath = join(releaseDir, 'agentwatcher-cli.exe');
+  if (!existsSync(cliExePath)) {
+    throw new Error(`Built CLI executable not found at ${cliExePath}`);
+  }
+  const outputCliExe = join(outputDir, 'agentwatcher-cli.exe');
+  rmSync(outputCliExe, { force: true });
+  copyFileSync(cliExePath, outputCliExe);
+  console.log(`Wrote CLI executable to ${outputCliExe}`);
+
   // Copy bridge extension folder
   const bridgeSourceDir = join(rootDir, 'vscode-agentwatcher-bridge');
   const bridgeOutputDir = join(outputDir, 'vscode-agentwatcher-bridge');
@@ -265,6 +280,7 @@ try {
   console.log(`Output: ${outputDir}`);
   console.log(`Zip: ${releaseZip}`);
   console.log(`   - AgentWatcher.exe`);
+  console.log(`   - agentwatcher-cli.exe`);
   console.log(`   - vscode-agentwatcher-bridge/`);
   console.log(`   - vscode-agentwatcher-bridge/*.vsix`);
 
