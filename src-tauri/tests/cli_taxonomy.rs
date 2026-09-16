@@ -5,7 +5,7 @@
 mod cli;
 
 use clap::{CommandFactory, Parser};
-use cli::{Cli, Commands, HandoffAction, OutputFormat, SessionAction};
+use cli::{Cli, Commands, HandoffAction, OutputFormat, SessionAction, SkillAction};
 
 fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
     Cli::try_parse_from(std::iter::once("agentwatcher-cli").chain(args.iter().copied()))
@@ -112,6 +112,31 @@ fn format_is_global_and_defaults_to_json() {
     let parsed = parse(&["--format", "human", "session", "list"]).expect("global before subcommand");
     assert_eq!(parsed.format, OutputFormat::Human);
     assert!(parse(&["session", "list", "--format", "yaml"]).is_err());
+}
+
+#[test]
+fn skill_verbs_parse_with_optional_dir() {
+    let parsed = parse(&["skill", "install"]).expect("bare install parses");
+    let Commands::Skill {
+        action: SkillAction::Install { dir },
+    } = parsed.command
+    else {
+        panic!("expected skill install");
+    };
+    assert!(dir.is_none());
+
+    let parsed = parse(&["skill", "install", "--dir", "C:/tmp/skills"]).expect("--dir parses");
+    let Commands::Skill {
+        action: SkillAction::Install { dir },
+    } = parsed.command
+    else {
+        panic!("expected skill install");
+    };
+    assert_eq!(dir.as_deref(), Some("C:/tmp/skills"));
+
+    assert!(parse(&["skill", "list"]).is_ok());
+    assert!(parse(&["skill", "remove", "--dir", "X"]).is_ok());
+    assert!(parse(&["skill", "fly"]).is_err());
 }
 
 #[test]

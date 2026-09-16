@@ -1,9 +1,10 @@
 mod cli;
 mod commands;
 mod output;
+mod skill;
 
 use clap::Parser;
-use cli::{Cli, Commands, HandoffAction, SessionAction};
+use cli::{Cli, Commands, HandoffAction, SessionAction, SkillAction};
 
 fn main() {
     // headless 无副作用：不拉起常驻 Codex app-server（扫描走本地会话文件），
@@ -33,6 +34,11 @@ fn main() {
         },
         Commands::Handoff { action } => match action {
             HandoffAction::Export { id } => commands::handoff_export(&id),
+        },
+        Commands::Skill { action } => match action {
+            SkillAction::Install { dir } => skill::skill_install(dir.as_deref()),
+            SkillAction::List { dir } => skill::skill_list(dir.as_deref()),
+            SkillAction::Remove { dir } => skill::skill_remove(dir.as_deref()),
         },
     }
 }

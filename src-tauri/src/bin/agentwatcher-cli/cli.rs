@@ -36,6 +36,11 @@ pub enum Commands {
         #[command(subcommand)]
         action: HandoffAction,
     },
+    /// 管理 AgentWatcher 用法技能在各 AI 宿主的安装
+    Skill {
+        #[command(subcommand)]
+        action: SkillAction,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -79,5 +84,27 @@ pub enum HandoffAction {
     Export {
         /// 会话 ID，形如 zcode:abc123
         id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SkillAction {
+    /// 把 AgentWatcher 用法技能装进 AI 宿主技能目录，重复执行覆盖升级
+    Install {
+        /// 只装进这个目录（默认探测全部已安装宿主）
+        #[arg(long = "dir")]
+        dir: Option<String>,
+    },
+    /// 查看各宿主技能目录的安装状态
+    List {
+        /// 只看这个目录
+        #[arg(long = "dir")]
+        dir: Option<String>,
+    },
+    /// 从宿主技能目录移除 AgentWatcher 用法技能
+    Remove {
+        /// 只从这个目录移除
+        #[arg(long = "dir")]
+        dir: Option<String>,
     },
 }
