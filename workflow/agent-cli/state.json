@@ -1,0 +1,182 @@
+{
+  "schema_version": 1,
+  "protocol": "1.3.0",
+  "generated_at": "2026-09-16T07:19:46Z",
+  "generated_by": {
+    "tool_revision": "awf-0.1.0"
+  },
+  "work_item": {
+    "id": "wi_1QYBMJJZVNGF7XP88ZEEBHVMRT",
+    "short_id": "6bty2dav",
+    "slug": "agent-cli",
+    "title": "AgentWatcher AI 操作 CLI",
+    "kind": "feature",
+    "status": "in_review",
+    "branch": "feature/agent-cli",
+    "home_repository": "https://github.com/pb763396199/AgentWatcher.git",
+    "contract_digest": "sha256:32abb9b77345e1c4412d7442f9ae353d1bca154ec66037eeaf403b276872b2ea",
+    "acceptance_ids": [
+      "AC-001",
+      "AC-002",
+      "AC-003",
+      "AC-004",
+      "AC-005",
+      "AC-006",
+      "AC-007",
+      "AC-008"
+    ]
+  },
+  "artifacts": [
+    {
+      "artifact_id": "ar_6QZQXNZXZKAB0CDMCJKYF5N9EY",
+      "type": "change-note",
+      "path": "change-note.md",
+      "outcome": "complete",
+      "freshness": "fresh",
+      "stage": 45,
+      "depends_on": [
+        "ar_27YPYVZFZXMGQYQDTCJTED297J"
+      ]
+    },
+    {
+      "artifact_id": "ar_5XZVQQZFQS3WGYJAT1NDMFNKYT",
+      "type": "delivery",
+      "path": "delivery.md",
+      "outcome": "ready_to_land",
+      "freshness": "fresh",
+      "stage": 80,
+      "depends_on": [
+        "ar_69Y6NNZY913M9KY5TSBJDZNB46",
+        "ar_29WBZKFYZZPJXMYSQ8VF3JQ70E"
+      ]
+    },
+    {
+      "artifact_id": "ar_35YPMQD4YZVPHVKV26G13Q0D5T",
+      "type": "design",
+      "path": "design.md",
+      "outcome": "accepted",
+      "freshness": "fresh",
+      "stage": 20,
+      "depends_on": [
+        "ar_6NMBYQFZVZY8AXPPP9GA39CPMA",
+        "ar_4FPTMQVXYVBPRZ28NJ33D9EJ5B"
+      ]
+    },
+    {
+      "artifact_id": "ar_17QYMV7XZVJT2YMZ97TDYEPB8T",
+      "type": "implementation",
+      "path": "implementation.md",
+      "outcome": "complete",
+      "freshness": "fresh",
+      "stage": 50,
+      "depends_on": [
+        "ar_6QZQXNZXZKAB0CDMCJKYF5N9EY"
+      ]
+    },
+    {
+      "artifact_id": "ar_3SYTMKZFXE1PBNKXFCEE2TTV0G",
+      "type": "manual-test",
+      "path": "manual-test.md",
+      "outcome": "pending",
+      "freshness": "fresh",
+      "stage": 70,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_27YPYVZFZXMGQYQDTCJTED297J",
+      "type": "plan",
+      "path": "plan.md",
+      "outcome": "ready",
+      "freshness": "fresh",
+      "stage": 30,
+      "depends_on": [
+        "ar_35YPMQD4YZVPHVKV26G13Q0D5T"
+      ]
+    },
+    {
+      "artifact_id": "ar_6NMBYQFZVZY8AXPPP9GA39CPMA",
+      "type": "research",
+      "path": "research/interview-research.md",
+      "outcome": "complete",
+      "freshness": "fresh",
+      "stage": 10,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_4FPTMQVXYVBPRZ28NJ33D9EJ5B",
+      "type": "research",
+      "path": "research/udf-cli-architecture-research.md",
+      "outcome": "complete",
+      "freshness": "fresh",
+      "stage": 10,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_69Y6NNZY913M9KY5TSBJDZNB46",
+      "type": "review",
+      "path": "reviews/code-review.md",
+      "outcome": "approved",
+      "freshness": "fresh",
+      "stage": 60,
+      "depends_on": [
+        "ar_17QYMV7XZVJT2YMZ97TDYEPB8T"
+      ]
+    },
+    {
+      "artifact_id": "ar_5QMVXKFENY8J7Z4AWTTG48KKPM",
+      "type": "summary",
+      "path": "summary.md",
+      "outcome": "complete",
+      "freshness": "fresh",
+      "stage": 55,
+      "depends_on": [
+        "ar_17QYMV7XZVJT2YMZ97TDYEPB8T"
+      ]
+    },
+    {
+      "artifact_id": "ar_29WBZKFYZZPJXMYSQ8VF3JQ70E",
+      "type": "validation",
+      "path": "validation.md",
+      "outcome": "passed",
+      "freshness": "fresh",
+      "stage": 70,
+      "depends_on": [
+        "ar_17QYMV7XZVJT2YMZ97TDYEPB8T"
+      ]
+    }
+  ],
+  "wayfinder": null,
+  "manual_test": {
+    "passed": 0,
+    "open": 12,
+    "failed": 0
+  },
+  "stage": {
+    "reached": "delivery",
+    "reached_stage": 80,
+    "next_skill": "aes-retrospect",
+    "waiting_on": "human"
+  },
+  "next": "等人测：人工核对还有 12 条没测",
+  "computed_from": {
+    "documents": {
+      "change-note.md": "sha256:f04b21b030fd132246fbf4181f3b29ca74af241aa41b4c2d0d6f9ab3c645b4ac",
+      "delivery.md": "sha256:c64c37089ebad637e64118da7454cf666318c99e55af54a1416e430414e03c5f",
+      "design.md": "sha256:04fd87280523db792d92d9832f44f5f2237e226d5a871b51b9ee8ede5c1232f2",
+      "implementation.md": "sha256:9cf2ebf0d03ab33c9e0af863910a35f11e89a9399990154d807d3ed631a5bf08",
+      "manual-test.md": "sha256:ee3b45de5e76c8087f1539cdcbac6abffec23c3358db671bb36500110d2b0567",
+      "plan.md": "sha256:1df1c904f4102364cd724c77901eb57a970a0dde7bd4d9b189c294b10c225e94",
+      "research/interview-research.md": "sha256:f873e541fb0510ae7c701b1ea7ce353a055593a821a71cf01252c8b121a1e427",
+      "research/udf-cli-architecture-research.md": "sha256:762b561a5c1a25e8c1bde7de3f7147dbdc486ea82a1ab54fae86039d8ee467ee",
+      "reviews/code-review.md": "sha256:d33ce517aeb10907c7bc217e0212c57518cd8e117542fac8a60f832000740a46",
+      "summary.md": "sha256:25af705ba69cf78553868bf74c06a27cb69d6153bd9604235e576e24d9d0eae9",
+      "validation.md": "sha256:c95afd12fe70430c86454ab166f2cb0fd4f481fbfc10da40c7fb50e83d79aa72",
+      "work-item.md": "sha256:e31f67ef95e391ac15dcdb47f45799a3b892f2cce65eaf4d55eff359250b6318"
+    },
+    "change_set": {
+      "revision": "de5a9813378a676dde2ffd2ad67c8ad5d995eda4",
+      "tree": "598fe1d1a4da0bb3667ef0b1a50ad98502bb91bb",
+      "content_digest": "sha256:71cae4bb63af7db87e355b64ce3d0fa1f62d65a7781abd21f5d487949f26a920"
+    }
+  }
+}
