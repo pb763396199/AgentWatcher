@@ -28,16 +28,18 @@ AgentWatcher 是一个 Windows 桌面小工具，用 Tauri 2 写的。它盯着�
 - `npm run test:tauri:smoke` —— 真实 Tauri 桌面壳冒烟测试。脚本优先附着 `.tmp/tauri-dev-runtime.json` 里的 `npm run dev` CDP 运行时；如果没有可用 dev，才自己启动测试用真实 Tauri 壳。它会确认 `window.__TAURI_INTERNALS__ === true`，再做真实点击、窗口发现、console/pageerror 采集和截图。改 UI/窗口/交互时优先跑这个，不要用 `dev:ui` 的浏览器 mock 当验收。
 - `npm run test:tauri:flow -- 任务面板` / `性能面板` / `接续面板` / `opencode-session` / `zcode-session` —— 只跑指定真实交互流程。也接受英文别名 `agent-task`、`performance`、`handoff`、`opencode`、`zcode`。默认优先测当前 `npm run dev`；需要隔离临时窗口时才加 `--isolated-runtime`。
 - `npm run build` —— `tauri build`，跑 Rust + 打包。生成的 exe 在 `src-tauri/target/release/agentwatcher.exe`。
+- `cargo build --manifest-path src-tauri/Cargo.toml --bin agentwatcher-cli` —— 单独构建 AI 命令行二进制（见「AI 操作 CLI」一节）。
 - `npm run generate:icons` —— 重新生成 `src-tauri/icons/icon.ico` 和 `icon-runtime-256.rgba`。**只能在 Windows 上跑**，里面调了 `pwsh` 用 .NET 的 `System.Drawing` 画 Segoe UI 字体。其他系统会报错。
-- `npm run package:exe` —— 完整发布流水线：编译、用 `rcedit` 把图标塞进 exe、复制 `vscode-agentwatcher-bridge/`、用 `npx @vscode/vsce` 打 VSIX、最后输出 `artifacts/AgentWatcher/AgentWatcher.exe` + `vscode-agentwatcher-bridge/agentwatcher-bridge-0.1.12.vsix`，再压成 `artifacts/AgentWatcher-v<版本>-windows-x64.zip`。跑这个前会先把老的 `artifacts/AgentWatcher-v*-windows-x64{,.zip}` 清掉。
-- Rust 单元测试：`cargo test --manifest-path src-tauri/Cargo.toml`（测试代码就在 `src-tauri/src/lib.rs` 文件最末尾）。
+- `npm run package:exe` —— 完整发布流水线：编译、用 `rcedit` 把图标塞进 exe、增量构建并复制 `agentwatcher-cli.exe`、复制 `vscode-agentwatcher-bridge/`、用 `npx @vscode/vsce` 打 VSIX、最后输出 `artifacts/AgentWatcher/AgentWatcher.exe` + `agentwatcher-cli.exe` + `vscode-agentwatcher-bridge/agentwatcher-bridge-0.1.12.vsix`，再压成 `artifacts/AgentWatcher-v<版本>-windows-x64.zip`。跑这个前会先把老的 `artifacts/AgentWatcher-v*-windows-x64{,.zip}` 清掉。
+- Rust 单元测试：`cargo test --manifest-path src-tauri/Cargo.toml`（测试代码就在 `src-tauri/src/lib.rs` 文件最末尾，CLI 相关的还有 `src-tauri/tests/cli_taxonomy.rs` 和 `src-tauri/tests/cli_contract.rs`）。
 - Bridge 语法检查：`node --check vscode-agentwatcher-bridge\extension.js`。
 - Bridge 路由测试：`node .tmp\bridge-handoff-routing-test.cjs`。
 
 ## 目录结构
 
-- `src-tauri/src/lib.rs` —— 唯一的 Rust 文件，4678 行左右。`pub fn run()` 是 Tauri 的入口，所有 `#[tauri::command]` 都注册在文件末尾。所有 session 解析、状态机、bridge 版本管理、handoff 确认逻辑全在这里。
-- `src-tauri/src/main.rs` —— 5 行，就一句 `agentwatcher_lib::run()`。
+- `src-tauri/src/lib.rs` —— GUI 宿主的主 Rust 文件（一万三千行级别，行数会持续变化，别写死口径）。`pub fn run()` 是 Tauri 的入口，所有 `#[tauri::command]` 都注册在文件里。所有 session 解析、状态机、bridge 版本管理、handoff 确认逻辑全在这里。另有三个供 CLI 复用的 pub 入口：`scan_sessions_blocking`、`session_usage_detail`、`prepare_handoff_source_context_blocking`。
+- `src-tauri/src/bin/agentwatcher-cli/` —— AI 命令行二进制（`main.rs` 分发、`cli.rs` 纯 clap 定义、`commands.rs` 命令编排、`output.rs` 信封输出）。改这里要跑 `cargo test --manifest-path src-tauri/Cargo.toml --test cli_taxonomy --test cli_contract`。
+- `src-tauri/src/main.rs` —— 几行，就一句 `agentwatcher_lib::run()`。
 - `src-tauri/capabilities/{default,session-preview,handoff-panel,performance-panel,todo-panel}.json` —— Tauri 2 的权限文件，对应五个窗口：`main`（主窗口）、`session-preview`（悬浮预览）、`handoff-panel`（接续对话框）、`performance-panel`（性能诊断窗口）、`todo-panel`（todo 面板）。
 - `ui/index.html` —— 整个前端就这一个文件，5280 行左右，纯 HTML+CSS+JS，没有任何框架。Tauri 接口是动态 import 的，只有检测到 `window.__TAURI_INTERNALS__` 才加载。
 - `vscode-agentwatcher-bridge/` —— VS Code 扩展本体。`extension.js` 是 CommonJS 模块，用 `require('vscode')`，没有 TypeScript。Bridge 自己有个版本号（`0.1.12`），跟 App 版本号没关系，最后会打成 VSIX 跟 `AgentWatcher.exe` 放一起发布。
@@ -47,7 +49,7 @@ AgentWatcher 是一个 Windows 桌面小工具，用 Tauri 2 写的。它盯着�
 
 ## Tauri 命令（前端 → Rust）
 
-命令都注册在 `src-tauri/src/lib.rs:4643`。前端用 `@tauri-apps/api/core` 里的 `invoke('name', { ... })` 调。事件名：`agentwatcher-sessions-changed`（被监控的 JSONL 文件变了之后 250 ms 防抖发一次，被监控的目录在 `session_watch_roots()` 里）。
+命令都注册在 `src-tauri/src/lib.rs`（generate_handler 列表）。前端用 `@tauri-apps/api/core` 里的 `invoke('name', { ... })` 调。事件名：`agentwatcher-sessions-changed`（被监控的 JSONL 文件变了之后 250 ms 防抖发一次，被监控的目录在 `session_watch_roots()` 里）。
 
 - `scan_sessions({ options?: ScanOptions })` → `AgentSession[]`。`ScanOptions` 字段：`maxSessions`、`activeWindowDays`（夹在 1 到 30 之间）、`hideArchived`、`includeCopilot`、`includeCopilotCli`、`includeClaude`、`includeCodex`、`includeOpenCode`、`includeZcode`、`workspacePathBlacklist`。默认最大 80 个（按 provider 各自配额）、活跃窗口 7 天、include 全部默认 `true`。每个会话带 `usage` 字段（可选，`null` 时整体省略）：累计毛输入/缓存读取/输出 token、当前上下文（含窗口上限）、用户轮次、工具调用数、模型调用数、模型名、时长，OpenCode 另有美元成本、Copilot Chat 另有 credits；数据源没有的项为 `null`。另有一个懒加载命令 `get_session_usage_detail({ id })` 返回 `{ usage, topTools }`（OpenCode/ZCode 走 SQL，其余源取聚合缓存）。
 - `open_session({ id?, provider?, workspacePath?, sessionResource? })` → 先试 bridge 的 `vscode://…/open?resource=…&target=editor`，不行再试 `vscode://file<path>?session=…` 深链接，最后兜底用 `code --agents <path>`。每一步失败都会降级。provider 为 `codex` / `opencode` / `zcode` 时走各自专属分支不走 bridge。**ZCode 分支：跳转暂不实现（用户拍板）**——官方无会话级深链（feedback#465 待响应）、桌面发行版不含 `@zcode/tui`（3.11.2 与 3.12.1 均已解包验证）、独立 CLI 未公开分发（npm/npmmirror/CDN 均无）。点击卡片返回明确的「not supported yet」提示；扫描、悬浮预览、接续上下文导出不受影响。上游能力就绪后按 git 历史里的 TUI 实现恢复即可。
@@ -57,6 +59,16 @@ AgentWatcher 是一个 Windows 桌面小工具，用 Tauri 2 写的。它盯着�
 - `set_window_always_on_top({ alwaysOnTop })` → 调 `window.setAlways_on_top`，Windows 下还会再调一次 `SetWindowPos(HWND_TOPMOST|HWND_NOTOPMOST)` 作用到根窗口上。光靠 Tauri 2 的 flag 在无边框小窗上不靠谱，必须多这一步。
 
 VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `code` / `code.cmd` / `code.exe`，然后 `%LOCALAPPDATA%\Programs\Microsoft VS Code\bin\code.cmd` → `…\Code.exe` → `C:\Program Files\Microsoft VS Code\bin\code.cmd` → `…\Code.exe` → x86 版本。
+
+## AI 操作 CLI（agentwatcher-cli）
+
+独立 headless 二进制（`src-tauri/src/bin/agentwatcher-cli/`），给 AI 助手和终端用的查询入口。不启动 GUI、不连 GUI 进程，直接复用 lib crate 的扫描逻辑读数据源。
+
+- 命令面两个大类四个动词：`session list`（元数据列表，筛选参数同 GUI）、`session show <id>`（详情，默认悬浮预览级）、`session usage <id>`（用量明细）、`handoff export <id>`（导出接续上下文，落盘同 GUI）。会话 ID 是 `provider:自然键` 的确定性拼接，跨次调用稳定。
+- 输出契约：全局 `--format json|human`（默认 json）。json 模式一条命令只往 stdout 写一个信封 `{ command, ok, data, error, messages }`（camelCase），失败也走信封；退出码 0 成功 / 1 命令失败（含 ID 不存在）/ 2 用法错误。空结果、未安装 provider 都不是失败。
+- 内容分级（隐私边界，任务 agent-cli 拍板）：list 只给卡片级元数据，不含对话文本；show 默认到悬浮预览级；`--content` 才给正文——OpenCode/ZCode 给 transcript 导出路径，其余给最后输入输出节选加原始文件路径。改这条分级必须同步改契约测试里「列表不得含 lastUserMessage/lastAiMessage」的断言。
+- 无副作用：CLI 进程启动时调 `set_codex_app_server_disabled(true)`，Codex 会话走本地文件扫描（`~/.codex/sessions`），不拉起常驻 app-server；并清掉自身 stdio 句柄的继承标志（Windows `SetHandleInformation`），防止任何子进程攥住 stdout 管道导致调用方读不到 EOF——这是扫描拉起 codex app-server 时踩过的真实坑（cmd.exe→node→codex 链继承管道写端）。
+- 测试：`src-tauri/tests/cli_taxonomy.rs` 锁命令解析（动词、必填参数、全局参数、帮助文本），`src-tauri/tests/cli_contract.rs` 起真实二进制锁信封契约（五键、错误码、退出码、human 不吐信封、列表无正文键）。改 CLI 必跑这两个。
 
 ## 不能随便改的标识符
 
@@ -112,7 +124,8 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 
 ## 怎么测
 
-- Rust 单元测试在 `lib.rs:4333-4636`，覆盖了 Bridge 版本管理、状态转换、transcript 覆盖、工作区身份（UGA 分支、通用插件根、路径归一化）和预览文本提取。跑：`cargo test --manifest-path src-tauri/Cargo.toml`。
+- Rust 单元测试在 `lib.rs` 文件末尾，覆盖了 Bridge 版本管理、状态转换、transcript 覆盖、工作区身份（UGA 分支、通用插件根、路径归一化）和预览文本提取。跑：`cargo test --manifest-path src-tauri/Cargo.toml`。
+- CLI 分类学与契约测试：`cargo test --manifest-path src-tauri/Cargo.toml --test cli_taxonomy --test cli_contract`。改 `src-tauri/src/bin/agentwatcher-cli/` 或三个 pub 扫描入口时必跑。
 - 真实 Tauri UI 冒烟测试：`npm run test:tauri:smoke`。它会优先附着 `npm run dev` 写出的 `.tmp/tauri-dev-runtime.json`，用 Playwright 通过 WebView2 CDP 操作真实桌面窗口，覆盖主窗口、AgentTask 切换、性能诊断窗口和接续面板识别；如果没有 dev，脚本会自己启动真实 Tauri 壳。
 - 指定真实 UI 流程：`npm run test:tauri:flow -- 任务面板`、`npm run test:tauri:flow -- 性能面板`、`npm run test:tauri:flow -- 接续面板`、`npm run test:tauri:flow -- opencode-session`、`npm run test:tauri:flow -- zcode-session`。改 OpenCode/ZCode provider、卡片打开、handoff/AgentTask 派发目标时，必须跑对应 provider 的 session 流程，不能退回“手动点一下”。
 - `.tmp/bridge-handoff-routing-test.cjs` 是 Node 写的测试，伪造 `vscode` 模块，验证 Bridge 命令路由（`agents` / `code-chat` / `claude-panel` 三种），包括 `claude-vscode.editor.open` 走剪贴板那条路径和 `safe1` 风格的兜底。它还顺带测了 `AGENTWATCHER_TARGET_BOUND_SENTINEL` 这个 Copilot 目标的正常路径。

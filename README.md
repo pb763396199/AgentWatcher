@@ -58,6 +58,7 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - **Codex 会话接入**：接入 Codex 桌面会话，支持与 Copilot、Claude 一起显示状态与跳转
 - **OpenCode 会话接入**：读取本机 OpenCode 数据库，支持状态、预览、打开和 handoff
 - **ZCode 会话接入**：读取本机 ZCode 会话库，支持状态、预览和作为接续来源导出上下文（跳转暂不实现）
+- **AI 命令行**：随发布包附带 `agentwatcher-cli.exe`，AI 助手和终端用户不启动 GUI 即可查询会话、用量并导出接续上下文，输出机器可解析的 JSON 信封（详见下文「AI 命令行」一节）
 - **独立 Copilot CLI provider**：独立筛选、配额和标识，不与 VS Code Copilot 合并
 - **VS Code 连接组件**：首次启动自动安装连接组件，实现精确 session 跳转、handoff 路由和 ack 成功确认
 - **AgentTask / Todo**：新增 AgentTask 与 Todo 面板入口，任务状态与会话状态联动
@@ -96,6 +97,7 @@ npm run package:exe
 ```
 artifacts/AgentWatcher/
   AgentWatcher.exe
+  agentwatcher-cli.exe
   vscode-agentwatcher-bridge/
     package.json
     agentwatcher-bridge-0.1.12.vsix
@@ -120,6 +122,47 @@ npm run dev:ui
 ```
 
 然后访问 `http://127.0.0.1:1420`。
+
+## AI 命令行（agentwatcher-cli）
+
+`agentwatcher-cli.exe` 是给 AI 助手（以及终端用户）的无界面查询入口：不启动 GUI 桌面进程，直接读取本机会话数据源，输出机器可解析的结构化文档。发布包自带，开发时用 `cargo build --manifest-path src-tauri/Cargo.toml --bin agentwatcher-cli` 构建。
+
+### 命令一览
+
+| 命令 | 做什么 |
+| --- | --- |
+| `agentwatcher-cli session list [--provider <名>...] [--status waiting\|running\|idle] [--workspace <路径>] [--limit <n>] [--active-days <n>]` | 列出会话元数据：状态、标题、工作区、provider、时间、用量。筛选参数与 GUI 设置一致 |
+| `agentwatcher-cli session show <id> [--content]` | 查看单个会话详情（同悬浮预览级）；`--content` 才带正文内容 |
+| `agentwatcher-cli session usage <id>` | 查看用量明细：token、上下文、轮次、工具调用、模型、成本、topTools |
+| `agentwatcher-cli handoff export <id>` | 导出源会话上下文 Markdown，落盘位置与 GUI 接续面板一致 |
+
+会话 ID 来自 `session list` 的输出，形如 `opencode:abc123`，跨次调用稳定。
+
+### 输出契约
+
+全局参数 `--format json|human`（默认 json）。json 模式下一条命令只向 stdout 输出一个信封文档，失败也走信封：
+
+```json
+{
+  "command": "session list",
+  "ok": true,
+  "data": { "sessions": [], "total": 0 },
+  "error": null,
+  "messages": []
+}
+```
+
+- 字段名 camelCase；`error` 形如 `{ "code": "session_not_found", "message": "..." }`。
+- 退出码：成功 0；命令失败（含 ID 不存在）1；用法错误 2。
+- 空结果和未安装的 provider 都不是失败（`ok: true`、零会话）。
+
+### 内容分级（隐私边界）
+
+`session list` 只给卡片级元数据，不含对话文本。`session show` 默认到悬浮预览级（摘要、最后用户输入）。`--content` 给到 AgentWatcher 已有的最深内容视图：OpenCode / ZCode 返回完整 transcript Markdown 的导出路径（复用接续导出链路），其余 provider 返回最后输入输出节选加原始会话文件路径。
+
+### 无副作用承诺
+
+CLI 进程不启动任何常驻后台服务：Codex 会话走本地会话文件扫描（`~/.codex/sessions`），不拉起 Codex app-server；执行结束进程即退出，不驻留。
 
 ## VS Code 连接组件
 
