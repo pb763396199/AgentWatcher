@@ -9,7 +9,7 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - ZCode 会话
 - 会话用量展示（实验）：卡片紧凑用量行与悬浮预览「用量」区块，token/轮次/工具/模型/时长随扫描源能力而定，缺项显示 —。
 
-当前发布版本：v0.1.6。仓库使用 Tauri 2 作为桌面应用壳，前端入口 [ui/index.html](ui/index.html) 是唯一 UI 源文件。AgentWatcher 主仓库保持零插件可启动、构建和测试，外部插件通过独立 `*.awplugin` 描述文件发现和启用。
+当前发布版本：v0.1.7。仓库使用 Tauri 2 作为桌面应用壳，前端入口 [ui/index.html](ui/index.html) 是唯一 UI 源文件。AgentWatcher 主仓库保持零插件可启动、构建和测试，外部插件通过独立 `*.awplugin` 描述文件发现和启用。
 
 ## 当前 UI 入口
 

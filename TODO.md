@@ -187,3 +187,13 @@
 - [x] 自动化全过（cargo test、clippy、Bridge 检查、路由测试、git diff --check）并完成 `npm run package:exe`。
 - [x] `AgentWatcher-v0.1.6-windows-x64.zip` 包含 `AgentWatcher.exe` 与 `agentwatcher-bridge-0.1.12.vsix`；VSIX 重复安装两次验证。
 - [x] GitHub Release 发布并回看 digest。
+
+## v0.1.7 发布检查清单
+
+- [x] App 版本在 `package.json`、`Cargo.toml`、`tauri.conf.json` 中一致为 `0.1.7`；Bridge 保持 `0.1.12`。
+- [x] v0.1.7 范围 = agent-cli 相关已合入 commit（cc9aa64..0536266）+ Codex resume 去重与活跃时长（0bcbc20）。
+- [x] CHANGELOG 与 README/AGENTS 口径同步，最终 zip SHA256 回填。
+- [x] 自动化全过（cargo test 98+8+8、clippy -D warnings、Bridge 检查、路由测试、git diff --check、真实 Tauri 冒烟）并完成 `npm run package:exe`。
+- [x] CLI 30 天全量 133 会话与 GUI 当前 79 会话断言「活跃 <= 跨度」无违规。
+- [x] `AgentWatcher-v0.1.7-windows-x64.zip` 包含 `AgentWatcher.exe`、`agentwatcher-cli.exe` 与 `agentwatcher-bridge-0.1.12.vsix`。
+- [x] GitHub Release 发布并回看 digest。

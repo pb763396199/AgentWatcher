@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.1.7 - 2026-09-18
+
+- 新增 AI 操作 CLI `agentwatcher-cli.exe`（随发布包分发）：`session list/show/usage`、`handoff export`、`skill install/list/remove` 六个命令大类，JSON 信封输出契约（`{command, ok, data, error, messages}`，退出码 0/1/2），内容分级与 GUI 隐私边界一致（list 无正文，show 默认悬浮预览级，`--content` 才给正文）；无副作用扫描（不拉起 Codex app-server、清理 stdio 句柄继承），用法技能可一键装进本机 AI 宿主。
+- 修复 Codex resume 后的重复会话卡片：resume 会在 `~/.codex/sessions` 另开一个文件名带 `_<新uuid>` 后缀的 rollout 片段（`session_meta` 仍写原 thread id），app-server `thread/list` 对同 id 各返回一条；现在按 id 去重保留 updatedAt 最新的一条，消除「同一会话两张卡」。
+- 用量沿 rollout 片段链聚合：轮次/工具/模型调用/时长跨片段求和，token 等累计口径取最新片段——resume 后的会话不再丢失或重复计用量。
+- 会话用量新增活跃时长（`activeDurationMs`，预览显示「X 活跃 · Y 跨度」）：Codex/Claude/Copilot Chat 按内容时间戳以 5 分钟空闲阈值聚类；OpenCode 走 message 表 SQL 同口径；ZCode 用 `model_usage` 调用区间并集（并行调用不重复计墙钟，保证活跃 ≤ 跨度）；Copilot CLI 数据源无用量如实标注。
+
+发布包：`AgentWatcher-v0.1.7-windows-x64.zip`
+
+SHA256：`D862A17B56BE07A8B9358B3A274459FD0292F9B35287ABA57DB6ED4921F2BF36`
+
+验证：`cargo test --manifest-path src-tauri/Cargo.toml`（98 通过、1 项外部插件握手按设计忽略；CLI 分类 8 + 契约 8）、`cargo clippy --all-targets -- -D warnings`、Bridge 语法与 handoff 路由测试、`git diff --check`、真实 Tauri 冒烟通过；CLI 30 天全量 133 会话与 GUI 当前 79 会话断言「活跃 ≤ 跨度」零违规；`npm run package:exe`、zip 内容与 15 尺寸图标检查、最终 VSIX 重复安装两次（仅稳定 ID `agentwatcher.agentwatcher-vscode-session-bridge@0.1.12`）、发布目录 EXE 与 CLI 独立启动均通过。已知限制：OpenCode 的活跃时长已在明细数据中计算但预览界面暂不合并显示（维持「跨度 only」）；本机 7 天窗口内无 OpenCode/Copilot 用量样本，二者用量口径以单测与 SQL 直查验证。
+
+
 ## v0.1.6 - 2026-09-15
 
 - 会话用量展示（全部 provider）：悬浮预览新增「用量」区块——累计毛输入（带缓存占比）、累计输出、当前上下文（含窗口上限）、对话轮次、工具调用（含 top 工具排行）、模型调用、模型名、时长；数据源没有的指标显示 — 而不是 0（ZCode 订阅制成本、Copilot CLI 全部用量字段均如实标注）。
