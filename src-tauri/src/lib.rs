@@ -1036,7 +1036,7 @@ static JSONL_USAGE_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlUsage>>> = O
 static JSONL_USAGE_DETAIL_BY_SESSION: OnceLock<Mutex<HashMap<String, CachedJsonlUsage>>> =
     OnceLock::new();
 static JSONL_USAGE_BUDGET_USED: AtomicUsize = AtomicUsize::new(0);
-type CodexRolloutIndexCache = Mutex<Option<(u64, HashMap<String, PathBuf>)>>;
+type CodexRolloutIndexCache = Mutex<Option<(u64, HashMap<String, Vec<PathBuf>>)>>;
 static CODEX_ROLLOUT_INDEX_CACHE: OnceLock<CodexRolloutIndexCache> = OnceLock::new();
 
 fn jsonl_usage_cache() -> &'static Mutex<HashMap<String, CachedJsonlUsage>> {
@@ -1138,6 +1138,33 @@ fn jsonl_duration_ms(first_ms: Option<u64>, last_ms: Option<u64>) -> Option<u64>
     }
 }
 
+/// 活跃时长的空闲阈值：相邻内容事件间隔超过它算一段空闲，不计入活跃。
+/// 取 5 分钟，落在状态机的文件窗口（3 分钟）与内容窗口（10 分钟）之间。
+const USAGE_ACTIVE_GAP_THRESHOLD_MS: u64 = 5 * 60 * 1000;
+
+/// 活跃时长 = Σ 活动段跨度：把内容时间戳按空闲阈值切成连续段，
+/// 每段取首尾差求和。总跨度减去超过阈值的空闲间隔即得此值。
+fn active_duration_ms_from_timestamps(timestamps: &[u64]) -> Option<u64> {
+    if timestamps.is_empty() {
+        return None;
+    }
+    let mut sorted = timestamps.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let mut active_ms = 0_u64;
+    let mut burst_start = sorted[0];
+    let mut previous = sorted[0];
+    for &stamp in &sorted[1..] {
+        if stamp.saturating_sub(previous) > USAGE_ACTIVE_GAP_THRESHOLD_MS {
+            active_ms = active_ms.saturating_add(previous - burst_start);
+            burst_start = stamp;
+        }
+        previous = stamp;
+    }
+    active_ms = active_ms.saturating_add(previous - burst_start);
+    Some(active_ms)
+}
+
 fn empty_usage_result() -> Option<(SessionUsage, Vec<(String, u32)>)> {
     Some((SessionUsage::default(), Vec::new()))
 }
@@ -1204,6 +1231,7 @@ fn parse_codex_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u32)>)> {
     let mut tool_counts: HashMap<String, u32> = HashMap::new();
     let mut first_ms: Option<u64> = None;
     let mut last_ms: Option<u64> = None;
+    let mut activity_timestamps: Vec<u64> = Vec::new();
 
     for line in jsonl_lines(text) {
         let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
@@ -1216,6 +1244,7 @@ fn parse_codex_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u32)>)> {
         {
             first_ms = Some(first_ms.map_or(timestamp_ms, |current| current.min(timestamp_ms)));
             last_ms = Some(last_ms.map_or(timestamp_ms, |current| current.max(timestamp_ms)));
+            activity_timestamps.push(timestamp_ms);
         }
         let line_type = value.get("type").and_then(Value::as_str);
         let payload = match value.get("payload") {
@@ -1301,6 +1330,7 @@ fn parse_codex_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u32)>)> {
     usage.tool_calls = Some(tool_calls);
     usage.model_calls = Some(model_calls);
     usage.duration_ms = jsonl_duration_ms(first_ms, last_ms);
+    usage.active_duration_ms = active_duration_ms_from_timestamps(&activity_timestamps);
     Some((usage, sorted_top_tools(&tool_counts)))
 }
 
@@ -1361,6 +1391,7 @@ fn parse_claude_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u32)>)> 
     let mut tool_counts: HashMap<String, u32> = HashMap::new();
     let mut first_ms: Option<u64> = None;
     let mut last_ms: Option<u64> = None;
+    let mut activity_timestamps: Vec<u64> = Vec::new();
 
     for line in jsonl_lines(text) {
         let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
@@ -1373,6 +1404,7 @@ fn parse_claude_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u32)>)> 
         {
             first_ms = Some(first_ms.map_or(timestamp_ms, |current| current.min(timestamp_ms)));
             last_ms = Some(last_ms.map_or(timestamp_ms, |current| current.max(timestamp_ms)));
+            activity_timestamps.push(timestamp_ms);
         }
         match value.get("type").and_then(Value::as_str) {
             Some("assistant") => {
@@ -1452,6 +1484,7 @@ fn parse_claude_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u32)>)> 
     usage.tool_calls = Some(tool_calls);
     usage.model_calls = Some(model_calls);
     usage.duration_ms = jsonl_duration_ms(first_ms, last_ms);
+    usage.active_duration_ms = active_duration_ms_from_timestamps(&activity_timestamps);
     if usage.is_empty() {
         return empty_usage_result();
     }
@@ -1543,6 +1576,7 @@ fn parse_copilot_chat_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u3
     let mut tool_counts: HashMap<String, u32> = HashMap::new();
     let mut first_ms: Option<u64> = None;
     let mut last_ms: Option<u64> = None;
+    let mut activity_timestamps: Vec<u64> = Vec::new();
 
     for request in requests.into_values() {
         let timestamp_ms = request.get("timestamp").and_then(value_as_u64);
@@ -1551,6 +1585,7 @@ fn parse_copilot_chat_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u3
         for stamp in [timestamp_ms, completed_ms].into_iter().flatten() {
             first_ms = Some(first_ms.map_or(stamp, |current| current.min(stamp)));
             last_ms = Some(last_ms.map_or(stamp, |current| current.max(stamp)));
+            activity_timestamps.push(stamp);
         }
         // promptTokens 是每轮的上下文快照：求和得到计费口径的毛输入，
         // 最后一轮的值即当前上下文占用。
@@ -1621,13 +1656,14 @@ fn parse_copilot_chat_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u3
     usage.model_calls = Some(model_calls);
     usage.copilot_credits = has_credits.then_some(credits_sum);
     usage.duration_ms = jsonl_duration_ms(first_ms, last_ms);
+    usage.active_duration_ms = active_duration_ms_from_timestamps(&activity_timestamps);
     if usage.is_empty() {
         return empty_usage_result();
     }
     Some((usage, sorted_top_tools(&tool_counts)))
 }
 
-fn codex_rollout_file_index() -> Option<HashMap<String, PathBuf>> {
+fn codex_rollout_file_index() -> Option<HashMap<String, Vec<PathBuf>>> {
     let now_ms = current_time_ms();
     {
         let cache = CODEX_ROLLOUT_INDEX_CACHE.get_or_init(|| Mutex::new(None)).lock().ok()?;
@@ -1641,25 +1677,7 @@ fn codex_rollout_file_index() -> Option<HashMap<String, PathBuf>> {
     let sessions_root = PathBuf::from(user_profile_path)
         .join(".codex")
         .join("sessions");
-    let mut index: HashMap<String, PathBuf> = HashMap::new();
-    let mut pending_dirs = vec![sessions_root];
-    while let Some(directory_path) = pending_dirs.pop() {
-        for entry in read_directory(&directory_path) {
-            let entry_path = entry.path();
-            if entry_path.is_dir() {
-                pending_dirs.push(entry_path);
-                continue;
-            }
-            if !has_extension(&entry_path, "jsonl") {
-                continue;
-            }
-            if let Some(session_id) = codex_session_id_from_path(&entry_path) {
-                if looks_like_uuid(&session_id) {
-                    index.insert(session_id, entry_path.clone());
-                }
-            }
-        }
-    }
+    let index = build_codex_rollout_index(&sessions_root);
     let mut cache = CODEX_ROLLOUT_INDEX_CACHE.get_or_init(|| Mutex::new(None)).lock().ok()?;
     if cache
         .as_ref()
@@ -1671,10 +1689,173 @@ fn codex_rollout_file_index() -> Option<HashMap<String, PathBuf>> {
     Some(index)
 }
 
+/// 同一个 thread id 可能对应多个 rollout 文件（resume/fork 副本文件名是
+/// `<原名>_<新uuid>.jsonl`，session_meta 仍写原 thread id）。索引每个 id
+/// 指向它的全部片段文件，按修改时间从旧到新排序，usage 沿链条聚合。
+fn build_codex_rollout_index(sessions_root: &Path) -> HashMap<String, Vec<PathBuf>> {
+    let mut segments_by_id: HashMap<String, Vec<(PathBuf, u64)>> = HashMap::new();
+    let mut pending_dirs = vec![sessions_root.to_path_buf()];
+    while let Some(directory_path) = pending_dirs.pop() {
+        for entry in read_directory(&directory_path) {
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                pending_dirs.push(entry_path);
+                continue;
+            }
+            if !has_extension(&entry_path, "jsonl") {
+                continue;
+            }
+            let modified_ms = dir_entry_modified_ms(&entry);
+            for session_id in codex_rollout_session_id_candidates(&entry_path) {
+                segments_by_id
+                    .entry(session_id)
+                    .or_default()
+                    .push((entry_path.clone(), modified_ms));
+            }
+        }
+    }
+    segments_by_id
+        .into_iter()
+        .map(|(session_id, mut segments)| {
+            segments.sort_by_key(|(_, modified_ms)| *modified_ms);
+            (
+                session_id,
+                segments
+                    .into_iter()
+                    .map(|(path, _)| path)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect()
+}
+
+/// rollout 文件名里的 uuid 索引键：普通文件只有尾部一个 uuid；resume 副本
+/// `<时间戳>-<原uuid>_<新uuid>.jsonl`（可连续叠加）按顺序返回链条上每个 uuid。
+fn codex_rollout_session_id_candidates(session_path: &Path) -> Vec<String> {
+    let Some(file_name) = file_stem(session_path) else {
+        return Vec::new();
+    };
+    let mut candidates = Vec::new();
+    for segment in file_name.split('_') {
+        if let Some(session_id) = codex_uuid_tail(segment) {
+            if !candidates.contains(&session_id) {
+                candidates.push(session_id);
+            }
+        }
+    }
+    candidates
+}
+
+fn codex_uuid_tail(text: &str) -> Option<String> {
+    let index = text.char_indices().rev().nth(35).map(|(index, _)| index)?;
+    let uuid_tail = &text[index..];
+    looks_like_uuid(uuid_tail).then(|| uuid_tail.to_string())
+}
+
 fn codex_thread_usage(thread_id: &str) -> Option<CachedJsonlUsage> {
     let index = codex_rollout_file_index()?;
-    let rollout_path = index.get(thread_id)?;
-    cached_jsonl_usage_for_path(rollout_path, parse_codex_usage)
+    let chain_paths = index.get(thread_id)?;
+    let mut merged: Option<CachedJsonlUsage> = None;
+    for rollout_path in chain_paths {
+        let Some(entry) = cached_jsonl_usage_for_path(rollout_path, parse_codex_usage) else {
+            continue;
+        };
+        merged = Some(match merged {
+            None => entry,
+            Some(previous) => merge_codex_usage_segments(previous, entry),
+        });
+    }
+    merged
+}
+
+/// resume 链条上每个 rollout 片段只记自己那段的事件，token 总量是累计口径。
+/// 合并规则：事件计数（轮次/工具/模型调用/时长）求和；token、上下文等
+/// 累计字段取最新片段（其缺席时回退旧片段）；模型名与 top 工具合并。
+fn merge_codex_usage_segments(
+    older: CachedJsonlUsage,
+    newer: CachedJsonlUsage,
+) -> CachedJsonlUsage {
+    let mut usage = newer.usage.clone();
+    usage.user_turns = sum_optional_counts(older.usage.user_turns, usage.user_turns);
+    usage.tool_calls = sum_optional_counts(older.usage.tool_calls, usage.tool_calls);
+    usage.model_calls = sum_optional_counts(older.usage.model_calls, usage.model_calls);
+    usage.duration_ms = sum_optional_u64(older.usage.duration_ms, usage.duration_ms);
+    usage.active_duration_ms =
+        sum_optional_u64(older.usage.active_duration_ms, usage.active_duration_ms);
+    usage.total_input_tokens = newer.usage.total_input_tokens.or(older.usage.total_input_tokens);
+    usage.total_output_tokens =
+        newer.usage.total_output_tokens.or(older.usage.total_output_tokens);
+    usage.cached_input_tokens =
+        newer.usage.cached_input_tokens.or(older.usage.cached_input_tokens);
+    usage.context_tokens = newer.usage.context_tokens.or(older.usage.context_tokens);
+    usage.context_window_tokens = newer
+        .usage
+        .context_window_tokens
+        .or(older.usage.context_window_tokens);
+    for model in older.usage.models {
+        if !usage.models.contains(&model) {
+            usage.models.push(model);
+        }
+    }
+
+    let mut tool_counts: HashMap<String, u32> = HashMap::new();
+    for (name, count) in older.top_tools.iter().chain(newer.top_tools.iter()) {
+        *tool_counts.entry(name.clone()).or_insert(0) += *count;
+    }
+
+    CachedJsonlUsage {
+        size: newer.size,
+        modified_ms: newer.modified_ms,
+        usage,
+        top_tools: sorted_top_tools(&tool_counts),
+    }
+}
+
+fn sum_optional_counts(older: Option<u32>, newer: Option<u32>) -> Option<u32> {
+    match (older, newer) {
+        (None, None) => None,
+        (older_count, newer_count) => Some(older_count.unwrap_or(0).saturating_add(newer_count.unwrap_or(0))),
+    }
+}
+
+fn sum_optional_u64(older: Option<u64>, newer: Option<u64>) -> Option<u64> {
+    match (older, newer) {
+        (None, None) => None,
+        (older_value, newer_value) => Some(
+            older_value
+                .unwrap_or(0)
+                .saturating_add(newer_value.unwrap_or(0)),
+        ),
+    }
+}
+
+/// 调用区间的并集总时长：按起点排序后合并重叠区间再求和。
+/// 并行调用（如 ZCode 的辅助请求、子代理）区间重叠，直接对 duration_ms 求和
+/// 会把同一段墙钟加多次，得到「活跃 > 跨度」的矛盾结果；并集才是真实忙时。
+fn unioned_interval_ms(intervals: &[(u64, u64)]) -> u64 {
+    let mut sorted = intervals.to_vec();
+    sorted.sort();
+    let mut total_ms = 0_u64;
+    let mut current: Option<(u64, u64)> = None;
+    for (start_ms, end_ms) in sorted {
+        if end_ms <= start_ms {
+            continue;
+        }
+        match current {
+            Some((merged_start, merged_end)) if start_ms <= merged_end => {
+                current = Some((merged_start, merged_end.max(end_ms)));
+            }
+            Some((merged_start, merged_end)) => {
+                total_ms = total_ms.saturating_add(merged_end - merged_start);
+                current = Some((start_ms, end_ms));
+            }
+            None => current = Some((start_ms, end_ms)),
+        }
+    }
+    if let Some((merged_start, merged_end)) = current {
+        total_ms = total_ms.saturating_add(merged_end - merged_start);
+    }
+    total_ms
 }
 
 
@@ -1755,6 +1936,22 @@ fn opencode_usage_detail(session_id: &str) -> SessionUsageDetail {
         }
         if let Some(model_id) = model_id {
             usage.models = vec![model_id];
+        }
+    }
+
+    // OpenCode 没有 per-call 时长表，活跃时长用消息时间戳按空闲阈值聚类得出。
+    if let Ok(mut statement) = connection.prepare(
+        "select time_created from message \
+         where session_id = ?1 and time_created > 0 \
+         order by time_created",
+    ) {
+        if let Ok(rows) = statement.query_map([session_id], |row| row.get::<_, i64>(0)) {
+            let timestamps: Vec<u64> = rows
+                .filter_map(Result::ok)
+                .filter(|value| *value > 0)
+                .map(|value| value as u64)
+                .collect();
+            usage.active_duration_ms = active_duration_ms_from_timestamps(&timestamps);
         }
     }
 
@@ -3185,10 +3382,11 @@ fn scan_codex_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<
         let Some(thread_items) = response.get("data").and_then(Value::as_array) else {
             return Ok(Vec::new());
         };
+        let thread_items = dedup_codex_thread_items(thread_items.clone(), scan_time_ms);
 
         let mut scanned_threads = Vec::with_capacity(thread_items.len());
         let mut turn_fetch_budget = codex_scan_turn_fetch_budget(options);
-        for thread_json in thread_items {
+        for thread_json in &thread_items {
             let Some(thread_id) = clean_option(string_at(thread_json, &["/id", "/sessionId"]))
             else {
                 continue;
@@ -3243,6 +3441,39 @@ fn scan_codex_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<
     }
 
     sessions
+}
+
+/// Codex app-server 的 thread/list 按 rollout 文件索引：resume/fork 会另开一个
+/// rollout 副本文件，session_meta 里保留原 thread id，于是同 id 会出现两条条目。
+/// 这里按 id 去重，保留 updatedAt 最新的一条；时间相同则保留先出现的一条。
+fn dedup_codex_thread_items(thread_items: Vec<Value>, scan_time_ms: u64) -> Vec<Value> {
+    let mut newest_updated_by_id: HashMap<String, u64> = HashMap::new();
+    for thread_json in &thread_items {
+        let Some(thread_id) = clean_option(string_at(thread_json, &["/id", "/sessionId"])) else {
+            continue;
+        };
+        let updated_ms = codex_thread_updated_ms(thread_json, scan_time_ms);
+        newest_updated_by_id
+            .entry(thread_id.to_string())
+            .and_modify(|kept| *kept = (*kept).max(updated_ms))
+            .or_insert(updated_ms);
+    }
+
+    let mut emitted_ids: HashSet<String> = HashSet::new();
+    thread_items
+        .into_iter()
+        .filter(|thread_json| {
+            let Some(thread_id) = clean_option(string_at(thread_json, &["/id", "/sessionId"]))
+            else {
+                return false;
+            };
+            let updated_ms = codex_thread_updated_ms(thread_json, scan_time_ms);
+            if newest_updated_by_id.get(thread_id) != Some(&updated_ms) {
+                return false;
+            }
+            emitted_ids.insert(thread_id.to_string())
+        })
+        .collect()
 }
 
 fn scan_codex_file_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<AgentSession> {
@@ -3689,7 +3920,8 @@ fn read_codex_jsonl_session(
         "codex",
         &[last_user_message.as_deref(), last_ai_message.as_deref()],
     );
-    let usage_entry = cached_jsonl_usage_for_path(session_path, parse_codex_usage);
+    let usage_entry = codex_thread_usage(&session_id)
+        .or_else(|| cached_jsonl_usage_for_path(session_path, parse_codex_usage));
     let usage = usage_entry.as_ref().map(|entry| entry.usage.clone());
     if let Some(entry) = &usage_entry {
         store_jsonl_usage_detail(&format!("codex:{}", session_id), entry);
@@ -3867,16 +4099,10 @@ fn read_codex_file_session_summary(
 
 fn codex_session_id_from_path(session_path: &Path) -> Option<String> {
     let file_name = file_stem(session_path)?;
-    let uuid_tail = file_name
-        .char_indices()
-        .rev()
-        .nth(35)
-        .map(|(index, _)| &file_name[index..])?;
-    if looks_like_uuid(uuid_tail) {
-        Some(uuid_tail.to_string())
-    } else {
-        Some(clean_label(&file_name, 96))
+    if file_name.chars().count() < 36 {
+        return None;
     }
+    codex_uuid_tail(&file_name).or_else(|| Some(clean_label(&file_name, 96)))
 }
 
 fn looks_like_uuid(text: &str) -> bool {
@@ -5108,7 +5334,7 @@ fn zcode_usage_by_session(
     // input_tokens 是毛口径、已包含 cache_read，直接求和，不再叠加缓存列。
     if let Ok(mut statement) = connection.prepare(
         "select session_id, count(*), sum(input_tokens), sum(output_tokens), \
-                sum(cache_read_input_tokens), sum(duration_ms) \
+                sum(cache_read_input_tokens) \
          from model_usage \
          where session_id in (select value from json_each(?1)) \
          group by session_id",
@@ -5120,12 +5346,9 @@ fn zcode_usage_by_session(
                 row.get::<_, Option<i64>>(2)?,
                 row.get::<_, Option<i64>>(3)?,
                 row.get::<_, Option<i64>>(4)?,
-                row.get::<_, Option<i64>>(5)?,
             ))
         }) {
-            for (session_id, calls, input, output, cache_read, active_ms) in
-                rows.filter_map(Result::ok)
-            {
+            for (session_id, calls, input, output, cache_read) in rows.filter_map(Result::ok) {
                 let entry = usage_by_session.entry(session_id).or_default();
                 entry.model_calls = Some(u32::try_from(calls.max(0)).unwrap_or(u32::MAX));
                 entry.total_input_tokens =
@@ -5135,9 +5358,52 @@ fn zcode_usage_by_session(
                 entry.cached_input_tokens = cache_read
                     .filter(|value| *value > 0)
                     .map(|value| value as u64);
-                entry.active_duration_ms = active_ms
-                    .filter(|value| *value > 0)
-                    .map(|value| value as u64);
+            }
+        }
+    }
+
+    // 活跃时长用调用区间并集：并行调用对 duration_ms 求和会超过墙钟跨度。
+    // 行按 started_at/completed_at 落区间，缺 completed_at 时退回 started_at+duration_ms。
+    if let Ok(mut statement) = connection.prepare(
+        "select session_id, started_at, completed_at, duration_ms \
+         from model_usage \
+         where session_id in (select value from json_each(?1)) \
+           and started_at > 0",
+    ) {
+        if let Ok(rows) = statement.query_map(rusqlite::params![ids_json], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<i64>>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+                row.get::<_, Option<i64>>(3)?,
+            ))
+        }) {
+            let mut intervals_by_session: HashMap<String, Vec<(u64, u64)>> = HashMap::new();
+            for (session_id, started_at, completed_at, duration_ms) in rows.filter_map(Result::ok)
+            {
+                let Some(start_ms) = started_at.filter(|value| *value > 0) else {
+                    continue;
+                };
+                let start_ms = start_ms as u64;
+                let end_ms = completed_at
+                    .filter(|value| *value > start_ms as i64)
+                    .map(|value| value as u64)
+                    .unwrap_or_else(|| {
+                        start_ms.saturating_add(duration_ms.unwrap_or(0).max(0) as u64)
+                    });
+                intervals_by_session
+                    .entry(session_id)
+                    .or_default()
+                    .push((start_ms, end_ms));
+            }
+            for (session_id, intervals) in intervals_by_session {
+                let union_ms = unioned_interval_ms(&intervals);
+                if union_ms > 0 {
+                    usage_by_session
+                        .entry(session_id)
+                        .or_default()
+                        .active_duration_ms = Some(union_ms);
+                }
             }
         }
     }
@@ -5255,14 +5521,34 @@ fn zcode_usage_detail(session_id: &str) -> SessionUsageDetail {
                     .collect();
             }
         }
-        if let Ok(row) = connection.query_row(
-            "select coalesce(sum(model_usage.duration_ms), 0) \
-             from model_usage where model_usage.session_id = ?1",
-            [session_id],
-            |row| row.get::<_, i64>(0),
+        if let Ok(mut statement) = connection.prepare(
+            "select started_at, completed_at, duration_ms \
+             from model_usage where session_id = ?1 and started_at > 0",
         ) {
-            if row > 0 {
-                usage.active_duration_ms = Some(row as u64);
+            if let Ok(rows) = statement.query_map([session_id], |row| {
+                Ok((
+                    row.get::<_, Option<i64>>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                ))
+            }) {
+                let intervals: Vec<(u64, u64)> = rows
+                    .filter_map(Result::ok)
+                    .filter_map(|(started_at, completed_at, duration_ms)| {
+                        let start_ms = started_at.filter(|value| *value > 0)? as u64;
+                        let end_ms = completed_at
+                            .filter(|value| *value > start_ms as i64)
+                            .map(|value| value as u64)
+                            .unwrap_or_else(|| {
+                                start_ms.saturating_add(duration_ms.unwrap_or(0).max(0) as u64)
+                            });
+                        Some((start_ms, end_ms))
+                    })
+                    .collect();
+                let union_ms = unioned_interval_ms(&intervals);
+                if union_ms > 0 {
+                    usage.active_duration_ms = Some(union_ms);
+                }
             }
         }
         detail.usage = Some(usage);
@@ -11919,6 +12205,208 @@ mod tests {
     }
 
     #[test]
+    fn codex_dedup_thread_items_keeps_newest_duplicate() {
+        let scan_time_ms = 1_800_000_000_000u64;
+        let thread_items = vec![
+            json!({
+                "id": "thread-dup",
+                "updatedAt": 1_799_000_200,
+                "path": r"C:\codex\rollout-original.jsonl"
+            }),
+            json!({
+                "id": "thread-other",
+                "updatedAt": 1_799_000_150
+            }),
+            json!({
+                "id": "thread-dup",
+                "updatedAt": 1_799_000_100,
+                "path": r"C:\codex\rollout-resume-copy.jsonl"
+            }),
+        ];
+
+        let deduped = dedup_codex_thread_items(thread_items, scan_time_ms);
+
+        assert_eq!(deduped.len(), 2);
+        assert_eq!(
+            deduped[0].pointer("/id").and_then(Value::as_str),
+            Some("thread-dup")
+        );
+        assert_eq!(
+            deduped[0].pointer("/updatedAt").and_then(Value::as_u64),
+            Some(1_799_000_200)
+        );
+        assert_eq!(
+            deduped[1].pointer("/id").and_then(Value::as_str),
+            Some("thread-other")
+        );
+    }
+
+    #[test]
+    fn codex_dedup_thread_items_keeps_first_on_timestamp_tie() {
+        let scan_time_ms = 1_800_000_000_000u64;
+        let thread_items = vec![
+            json!({ "id": "thread-dup", "updatedAt": 1_799_000_100, "name": "first" }),
+            json!({ "id": "thread-dup", "updatedAt": 1_799_000_100, "name": "second" }),
+        ];
+
+        let deduped = dedup_codex_thread_items(thread_items, scan_time_ms);
+
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(
+            deduped[0].pointer("/name").and_then(Value::as_str),
+            Some("first")
+        );
+    }
+
+    #[test]
+    fn codex_rollout_index_prefers_resumed_rollout_for_origin_thread() {
+        let origin_id = "019ef3a3-cb3d-7632-beb5-f023ed79ab1e";
+        let resume_id = "019ef4b4-1111-7222-8333-444455556666";
+        let temp_dir =
+            env::temp_dir().join(format!("agentwatcher-codex-index-{}", current_time_ms()));
+        let day_dir = temp_dir.join("2026").join("06").join("23");
+        fs::create_dir_all(&day_dir).unwrap();
+        let original_path =
+            day_dir.join(format!("rollout-2026-06-23T16-41-04-{}.jsonl", origin_id));
+        let resumed_path = day_dir.join(format!(
+            "rollout-2026-06-24T09-00-00-{}_{}.jsonl",
+            origin_id, resume_id
+        ));
+        fs::write(&original_path, "{}\n").unwrap();
+        fs::write(&resumed_path, "{}\n").unwrap();
+        let older = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let newer = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_600);
+        fs::File::options()
+            .write(true)
+            .open(&original_path)
+            .unwrap()
+            .set_modified(older)
+            .unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&resumed_path)
+            .unwrap()
+            .set_modified(newer)
+            .unwrap();
+
+        let index = build_codex_rollout_index(&temp_dir);
+
+        assert_eq!(index.len(), 2);
+        let original_text = path_to_string(&original_path);
+        let resumed_text = path_to_string(&resumed_path);
+        assert_eq!(
+            index
+                .get(origin_id)
+                .map(|paths| paths.iter().map(|path| path_to_string(path)).collect::<Vec<_>>()),
+            Some(vec![original_text.clone(), resumed_text.clone()])
+        );
+        assert_eq!(
+            index
+                .get(resume_id)
+                .map(|paths| paths.iter().map(|path| path_to_string(path)).collect::<Vec<_>>()),
+            Some(vec![resumed_text.clone()])
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn codex_rollout_session_id_candidates_span_resume_chain() {
+        let origin_id = "019ef3a3-cb3d-7632-beb5-f023ed79ab1e";
+        let first_resume_id = "019ef4b4-1111-7222-8333-444455556666";
+        let second_resume_id = "019ef5c5-2222-8333-9444-555566667777";
+        let single_file_name = format!("C:\\codex\\rollout-2026-06-23T16-41-04-{}.jsonl", origin_id);
+        let single_path = Path::new(&single_file_name);
+        let chained_file_name = format!(
+            "C:\\codex\\rollout-2026-06-25T09-00-00-{}_{}_{}.jsonl",
+            origin_id, first_resume_id, second_resume_id
+        );
+        let chained_path = Path::new(&chained_file_name);
+
+        assert_eq!(
+            codex_rollout_session_id_candidates(single_path),
+            vec![origin_id.to_string()]
+        );
+        assert_eq!(
+            codex_rollout_session_id_candidates(chained_path),
+            vec![
+                origin_id.to_string(),
+                first_resume_id.to_string(),
+                second_resume_id.to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn codex_usage_merge_sums_segment_counts_and_keeps_newest_totals() {
+        let older = CachedJsonlUsage {
+            size: 100,
+            modified_ms: 1_000,
+            usage: SessionUsage {
+                total_input_tokens: Some(74_600_000),
+                cached_input_tokens: Some(50_000_000),
+                total_output_tokens: Some(300_000),
+                context_tokens: Some(120_000),
+                context_window_tokens: Some(400_000),
+                user_turns: Some(15),
+                tool_calls: Some(357),
+                model_calls: Some(360),
+                models: vec!["gpt-5.6-sol".to_string()],
+                duration_ms: Some(4_000_000),
+                active_duration_ms: Some(3_200_000),
+                cost_usd: None,
+                copilot_credits: None,
+            },
+            top_tools: vec![("shell".to_string(), 200), ("read".to_string(), 157)],
+        };
+        let newer = CachedJsonlUsage {
+            size: 120,
+            modified_ms: 2_000,
+            usage: SessionUsage {
+                total_input_tokens: Some(76_900_000),
+                cached_input_tokens: Some(52_000_000),
+                total_output_tokens: Some(333_184),
+                context_tokens: Some(130_000),
+                context_window_tokens: Some(400_000),
+                user_turns: Some(1),
+                tool_calls: Some(16),
+                model_calls: Some(16),
+                models: vec!["gpt-5.6-luna".to_string()],
+                duration_ms: Some(600_000),
+                active_duration_ms: Some(500_000),
+                cost_usd: None,
+                copilot_credits: None,
+            },
+            top_tools: vec![("shell".to_string(), 10), ("blender".to_string(), 6)],
+        };
+
+        let merged = merge_codex_usage_segments(older, newer);
+
+        assert_eq!(merged.usage.total_input_tokens, Some(76_900_000));
+        assert_eq!(merged.usage.total_output_tokens, Some(333_184));
+        assert_eq!(merged.usage.cached_input_tokens, Some(52_000_000));
+        assert_eq!(merged.usage.context_tokens, Some(130_000));
+        assert_eq!(merged.usage.user_turns, Some(16));
+        assert_eq!(merged.usage.tool_calls, Some(373));
+        assert_eq!(merged.usage.model_calls, Some(376));
+        assert_eq!(merged.usage.duration_ms, Some(4_600_000));
+        assert_eq!(merged.usage.active_duration_ms, Some(3_700_000));
+        assert_eq!(
+            merged.usage.models,
+            vec!["gpt-5.6-luna".to_string(), "gpt-5.6-sol".to_string()]
+        );
+        assert_eq!(
+            merged
+                .top_tools
+                .iter()
+                .map(|(name, count)| (name.as_str(), *count))
+                .collect::<Vec<_>>(),
+            vec![("shell", 210), ("read", 157), ("blender", 6)]
+        );
+        assert_eq!(merged.modified_ms, 2_000);
+    }
+
+    #[test]
     fn codex_jsonl_session_fallback_reads_local_file_summary() {
         let session_id = "019ef3a3-cb3d-7632-beb5-f023ed79ab1e";
         let temp_dir =
@@ -13140,6 +13628,8 @@ mod tests {
         assert_eq!(usage.model_calls, Some(2));
         assert_eq!(usage.models, vec!["claude-opus-5", "claude-sonnet-5"]);
         assert_eq!(usage.duration_ms, Some(40_000));
+        // fixture 内没有超过 5 分钟的空闲，活跃时长等于总跨度
+        assert_eq!(usage.active_duration_ms, Some(40_000));
         assert_eq!(top_tools.first().map(|(name, count)| (name.as_str(), *count)), Some(("Bash", 1)));
     }
 
@@ -13180,6 +13670,8 @@ mod tests {
         assert_eq!(usage.model_calls, Some(2));
         assert_eq!(usage.models, vec!["gpt-5.6-luna"]);
         assert_eq!(usage.duration_ms, Some(63_342));
+        // fixture 内没有超过 5 分钟的空闲，活跃时长等于总跨度
+        assert_eq!(usage.active_duration_ms, Some(63_342));
         assert_eq!(top_tools.first().map(|(name, count)| (name.as_str(), *count)), Some(("exec", 2)));
     }
 
@@ -13222,10 +13714,54 @@ mod tests {
         assert_eq!(usage.model_calls, Some(1));
         assert_eq!(usage.copilot_credits, Some(48.15));
         assert!(usage.duration_ms.is_some());
+        // 重写后两轮相隔不到 5 分钟，属同一活动段：活跃 = r1.timestamp - r0.timestamp
+        assert_eq!(usage.active_duration_ms, Some(118_278));
         assert_eq!(
             top_tools.first().map(|(name, count)| (name.as_str(), *count)),
             Some(("grep_search", 1))
         );
+    }
+
+    #[test]
+    fn active_duration_clusters_idle_gaps_with_threshold() {
+        let minute = 60_000_u64;
+        // 段一 0→1min；空闲 5.5min；段二 6.5→8min；空闲 12min；段三 20min 单点（跨度 0）
+        let stamps = vec![0, minute, minute * 13 / 2, minute * 8, minute * 20];
+        assert_eq!(
+            active_duration_ms_from_timestamps(&stamps),
+            Some(minute + minute * 3 / 2)
+        );
+        // 乱序与重复不影响结果
+        let shuffled = vec![minute * 20, 0, minute, 0, minute * 8, minute * 13 / 2];
+        assert_eq!(
+            active_duration_ms_from_timestamps(&shuffled),
+            Some(minute + minute * 3 / 2)
+        );
+        // 间隔恰好等于阈值不算空闲
+        assert_eq!(
+            active_duration_ms_from_timestamps(&[0, USAGE_ACTIVE_GAP_THRESHOLD_MS]),
+            Some(USAGE_ACTIVE_GAP_THRESHOLD_MS)
+        );
+        // 单点、空集的边界
+        assert_eq!(active_duration_ms_from_timestamps(&[minute]), Some(0));
+        assert_eq!(active_duration_ms_from_timestamps(&[]), None);
+    }
+
+    #[test]
+    fn unioned_interval_merges_overlaps_and_never_double_counts() {
+        // 部分重叠：[0,10]+[5,15] = 15，不是 10+10=20
+        assert_eq!(unioned_interval_ms(&[(0, 10), (5, 15)]), 15);
+        // 包含：[0,20]+[5,10] = 20
+        assert_eq!(unioned_interval_ms(&[(0, 20), (5, 10)]), 20);
+        // 相邻（端点相接）合并成一段：[0,10]+[10,20] = 20
+        assert_eq!(unioned_interval_ms(&[(0, 10), (10, 20)]), 20);
+        // 相离区间求和：[0,10]+[100,130] = 40
+        assert_eq!(unioned_interval_ms(&[(0, 10), (100, 130)]), 40);
+        // 乱序输入结果不变：[0,15] 并 [100,130] = 45
+        assert_eq!(unioned_interval_ms(&[(100, 130), (0, 10), (5, 15)]), 45);
+        // 非法区间（end<=start）被忽略
+        assert_eq!(unioned_interval_ms(&[(10, 0), (5, 5)]), 0);
+        assert_eq!(unioned_interval_ms(&[]), 0);
     }
 
     #[test]
@@ -13303,7 +13839,9 @@ mod tests {
                     input_tokens integer,
                     output_tokens integer,
                     cache_read_input_tokens integer,
-                    duration_ms integer
+                    duration_ms integer,
+                    started_at integer,
+                    completed_at integer
                 )",
                 [],
             )
@@ -13318,16 +13856,23 @@ mod tests {
                 [],
             )
             .unwrap();
-        let insert_usage = |id: &str, input: i64, output: i64, cache_read: i64, duration: i64| {
+        let insert_usage = |id: &str,
+                            input: i64,
+                            output: i64,
+                            cache_read: i64,
+                            duration: i64,
+                            started_at: i64,
+                            completed_at: i64| {
             connection
                 .execute(
-                    "insert into model_usage (id, session_id, model_id, input_tokens, output_tokens, cache_read_input_tokens, duration_ms) values (?1, 'sess_z', 'GLM-5.3', ?2, ?3, ?4, ?5)",
-                    rusqlite::params![id, input, output, cache_read, duration],
+                    "insert into model_usage (id, session_id, model_id, input_tokens, output_tokens, cache_read_input_tokens, duration_ms, started_at, completed_at) values (?1, 'sess_z', 'GLM-5.3', ?2, ?3, ?4, ?5, ?6, ?7)",
+                    rusqlite::params![id, input, output, cache_read, duration, started_at, completed_at],
                 )
                 .unwrap();
         };
-        insert_usage("mu1", 1000, 50, 900, 1200);
-        insert_usage("mu2", 2000, 80, 1900, 800);
+        // 两次并行调用：区间重叠，duration_ms 求和 2000ms 会超过墙钟，并集只能是 1300ms
+        insert_usage("mu1", 1000, 50, 900, 1200, 100_000, 101_200);
+        insert_usage("mu2", 2000, 80, 1900, 800, 100_500, 101_300);
         connection
             .execute(
                 "insert into tool_usage (id, session_id, tool_name) values ('t1', 'sess_z', 'Bash')",
@@ -13381,7 +13926,8 @@ mod tests {
         assert_eq!(usage.total_output_tokens, Some(130));
         assert_eq!(usage.model_calls, Some(2));
         assert_eq!(usage.tool_calls, Some(3));
-        assert_eq!(usage.active_duration_ms, Some(2000));
+        // 并行调用取区间并集（100_000→101_300），不是 duration_ms 求和（2000）
+        assert_eq!(usage.active_duration_ms, Some(1300));
         assert_eq!(usage.user_turns, Some(1));
         // 上下文取最后一次 assistant 的 tokens.input
         assert_eq!(usage.context_tokens, Some(2900));
