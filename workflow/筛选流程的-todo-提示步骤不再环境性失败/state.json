@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "protocol": "1.3.0",
+  "generated_at": "2026-10-14T04:28:41Z",
+  "generated_by": {
+    "tool_revision": "awf-0.1.0"
+  },
+  "work_item": {
+    "id": "wi_77YFYYVQZY8GK3E1MTD92WWA8C",
+    "short_id": "h08wqkvh",
+    "slug": "筛选流程的-todo-提示步骤不再环境性失败",
+    "title": "筛选流程的 todo 提示步骤不再环境性失败",
+    "kind": "fix",
+    "status": "done",
+    "branch": "feature/筛选流程的-todo-提示步骤不再环境性失败",
+    "home_repository": "https://github.com/pb763396199/AgentWatcher.git",
+    "contract_digest": "sha256:06f63b44517ea6510f127e36e20657c711aef48cc68924a0441ad36040fbbaf3",
+    "acceptance_ids": [
+      "AC-001",
+      "AC-002",
+      "AC-003"
+    ]
+  },
+  "artifacts": [
+    {
+      "artifact_id": "ar_01M4WAGJSB0003YG2DCG9QS412",
+      "type": "build",
+      "path": "builds/1.md",
+      "outcome": "complete",
+      "freshness": "fresh",
+      "stage": null,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_01M4WAP3D30007NZ3TB90BD98B",
+      "type": "delivery",
+      "path": "delivery.md",
+      "outcome": "delivered",
+      "freshness": "fresh",
+      "stage": 80,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_01M4WAGJVG000B9KXGJ2N72A7E",
+      "type": "review",
+      "path": "evidence/code-review.md",
+      "outcome": "approved",
+      "freshness": "fresh",
+      "stage": 60,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_01M4WAGJXN000FY15SKKE1PSB9",
+      "type": "validation",
+      "path": "evidence/validation.md",
+      "outcome": "passed",
+      "freshness": "fresh",
+      "stage": 70,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_01M4WAGJZJ00029BSATV1G4J9R",
+      "type": "manual-test",
+      "path": "manual-test.md",
+      "outcome": "passed",
+      "freshness": "fresh",
+      "stage": 70,
+      "depends_on": []
+    }
+  ],
+  "wayfinder": null,
+  "manual_test": {
+    "passed": 0,
+    "open": 0,
+    "failed": 0
+  },
+  "stage": {
+    "reached": "delivery",
+    "reached_stage": 80,
+    "next_skill": "aes-retrospect",
+    "waiting_on": null
+  },
+  "next": "已收口",
+  "computed_from": {
+    "documents": {
+      "builds/1.md": "sha256:f7f380164eb3625fdf5e9e5f3d24ee8a8cf3dea832ccb7cc4020eb85817194fc",
+      "delivery.md": "sha256:dfdbdd9315baeac9dcc6e200f776c1f6fe75037fd51e522de03dabdc62c9d4df",
+      "evidence/code-review.md": "sha256:1de75af712a32e51100f2cb13e67b5c1b301165438b171e69f1d06889d493307",
+      "evidence/validation.md": "sha256:1e1703dbd50ed7388944d95820e7fdd0e33af98634766b5bef9076bd5e2c231b",
+      "manual-test.md": "sha256:31927a106f7e6352f40fe8be143d3b110728305663904916006e5e0cbcbe9988",
+      "work-item.md": "sha256:8c43bee685446e285793da903d619daf903b50295bb699c92e5140802ed8e4db"
+    },
+    "change_set": {
+      "revision": "d2853cce982cc68eb97b9fad1fa3724b6ecefcf9",
+      "tree": "8fe528bd580f2b8fce7660ad07b65eb33f9287fa",
+      "content_digest": "sha256:daabbf3774daaee1536007d8e21c7eb9faff453c6211b23bdaf178d5efff322a"
+    }
+  }
+}
