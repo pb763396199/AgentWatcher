@@ -13879,7 +13879,8 @@
       if (selectedProviderFilter !== 'all' && cardProvider(card) !== selectedProviderFilter) return false;
       const query = normalizedSessionSearchQuery();
       if (!query) return true;
-      return (card.dataset.sessionTitle || cardText(card, '.session-title') || '').toLowerCase().includes(query);
+      if ((card.dataset.sessionTitle || cardText(card, '.session-title') || '').toLowerCase().includes(query)) return true;
+      return String(card.dataset.sessionId || '').toLowerCase().includes(query);
     }
 
     function cardMatchesAllFilters(card, status = activeStatus()) {

@@ -929,6 +929,37 @@ async function runFilteringFlow() {
   }
 
   await resetMainFilters(page);
+
+  // ID 片段搜索：不带 provider 前缀的自然键片段、大写输入也要命中
+  let idSearchResult = { 跳过: '当前真实数据没有带会话 ID 的卡片。' };
+  const idBaseline = await collectFilteringSnapshot(page);
+  const idCard = idBaseline.cards.find(card => String(card.id || '').length >= 8);
+  if (idCard) {
+    const idQuery = String(idCard.id).split(':').pop().slice(-12).toUpperCase();
+    await page.locator('#sessionSearch').fill(idQuery);
+    await page.waitForFunction((query) => {
+      const normalizedQuery = String(query).toLowerCase();
+      const visible = Array.from(document.querySelectorAll('.lane .session-card:not([hidden])'));
+      return visible.length > 0
+        && visible.every(card => ((card.dataset.sessionId || '').toLowerCase()).includes(normalizedQuery)
+          || ((card.dataset.sessionTitle || card.querySelector('.session-title')?.textContent || '').toLowerCase()).includes(normalizedQuery));
+    }, idQuery, { timeout: 10000 });
+    const afterIdSearch = await collectFilteringSnapshot(page);
+    const expectedIdTotal = idBaseline.cards
+      .filter(card => String(card.id || '').toLowerCase().includes(idQuery.toLowerCase())
+        || card.title.toLowerCase().includes(idQuery.toLowerCase()))
+      .length;
+    if (afterIdSearch.sessionTotal !== expectedIdTotal) {
+      throw new Error(`ID 搜索计数不一致：expected ${expectedIdTotal}, actual ${afterIdSearch.sessionTotal}`);
+    }
+    await page.locator('#sessionSearch').fill('');
+    await page.waitForFunction(() => !document.querySelector('#sessionSearch')?.value, null, { timeout: 10000 });
+    idSearchResult = {
+      query: idQuery,
+      total: afterIdSearch.sessionTotal,
+    };
+  }
+
   const todoScope = await verifyTodoWorkspaceScope(page);
   const screenshot = await saveScreenshot(page, 'filtering-main-panel.png');
 
@@ -940,6 +971,7 @@ async function runFilteringFlow() {
     },
     布局: layout,
     Provider与搜索: providerResult,
+    ID搜索: idSearchResult,
     Todo按Workspace过滤: todoScope,
     截图: screenshot,
   };
@@ -1414,6 +1446,7 @@ async function collectFilteringSnapshot(page) {
     const cards = Array.from(document.querySelectorAll('.lane .session-card')).map(card => ({
       provider: card.dataset.provider || '',
       status: card.dataset.status || '',
+      id: card.dataset.sessionId || '',
       title: (card.dataset.sessionTitle || card.querySelector('.session-title')?.textContent || '').trim(),
       workspaceKey: card.dataset.workspaceKey || '',
       workspaceLabel: card.dataset.workspaceLabel || card.dataset.workspace || '',
