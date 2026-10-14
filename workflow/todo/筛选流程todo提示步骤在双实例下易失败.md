@@ -3,9 +3,11 @@ schema_version: 1
 protocol: 1.3.0
 record: todo
 id: td_01M4W42Z1X000DYX8T06W7358D
-status: open
+status: done
 created_at: 2026-10-14
 importance: normal
+closed_at: 2026-10-14
+outcome: 已由任务 h08wqkvh 修复：根因是 resetMainFilters 的 fill 聚焦搜索框触发应用输入守卫无限推迟 todo 渲染，并非双实例覆写 todo 文件；测试末尾归还焦点后单实例与双实例各三轮全绿
 ---
 
 # 筛选流程的 todo 提示步骤在双实例环境下易失败
