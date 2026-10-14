@@ -1403,6 +1403,13 @@ async function resetMainFilters(page) {
       && /全部提供方|All providers/i.test(provider)
       && /全部工作区|All workspaces/i.test(workspace);
   }, null, { timeout: 10000 });
+
+  // .fill('') 会把焦点留在搜索框上；应用在有文本输入框聚焦时会无限推迟
+  // todo 渲染（shouldDeferInputInterruptions），重载后的 nudge 就永远不出现。
+  // 主动把焦点还给 body，让被推迟的渲染立即刷出来。
+  await page.evaluate(() => {
+    if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+  });
 }
 
 async function selectProviderFilter(page, provider) {
@@ -1525,6 +1532,69 @@ async function measurePopoverWidth(page, buttonSelector, popoverSelector) {
   return width;
 }
 
+async function collectTodoNudgeDiagnostics(page, fixture) {
+  const diag = {};
+  try {
+    diag.file = (() => {
+      if (!fixture?.path || !fs.existsSync(fixture.path)) return { exists: false };
+      const text = fs.readFileSync(fixture.path, 'utf8');
+      return {
+        exists: true,
+        hasFixtureTask: text.includes(String(fixture.taskId || 'realtest-filtering-ready-')),
+        size: text.length,
+        mtimeMs: Math.round(fs.statSync(fixture.path).mtimeMs),
+      };
+    })();
+  } catch (error) {
+    diag.file = { error: errorMessage(error) };
+  }
+  try {
+    diag.page = await page.evaluate((targetKey) => {
+      const nudge = document.querySelector('#todoNudge');
+      const targetCards = Array.from(document.querySelectorAll(`.lane .session-card[data-workspace-key="${CSS.escape(targetKey || '')}"]`));
+      const readyLikeCards = Array.from(document.querySelectorAll('.lane .session-card')).filter(card => ['waiting', 'running'].includes(card.dataset.status || ''));
+      return {
+        bodyClasses: document.body.className,
+        agentTaskMode: document.body.classList.contains('is-agent-task-mode'),
+        nudgeHidden: nudge?.hidden ?? 'missing',
+        nudgeTitle: document.querySelector('#todoNudgeTitle')?.textContent || '',
+        nudgeTask: document.querySelector('#todoNudgeTask')?.textContent || '',
+        nudgeWorkspaceKey: document.querySelector('#todoNudgeOpen')?.dataset.workspaceKey || '',
+        targetKey,
+        targetCardCount: targetCards.length,
+        targetCardStatuses: targetCards.map(card => card.dataset.status || ''),
+        activeCardWorkspaces: [...new Set(readyLikeCards.map(card => card.dataset.workspaceKey || ''))].slice(0, 8),
+      };
+    }, fixture?.targetKey || '');
+  } catch (error) {
+    diag.page = { error: errorMessage(error) };
+  }
+  try {
+    diag.rustTodoState = await page.evaluate(async (targetKey) => {
+      try {
+        const state = await window.__TAURI_INTERNALS__.invoke('get_todo_state');
+        const workspaces = state?.workspaces || {};
+        const summary = {};
+        Object.entries(workspaces).forEach(([key, ws]) => {
+          const ready = (ws?.tasks || []).filter(task => task?.status === 'ready').map(task => String(task.title || '').slice(0, 40));
+          if (ready.length) summary[key] = ready;
+        });
+        return { ok: true, workspaceCount: Object.keys(workspaces).length, readyByWorkspace: summary, hasTargetKey: targetKey in workspaces };
+      } catch (error) {
+        return { ok: false, error: String(error) };
+      }
+    }, fixture?.targetKey || '').catch(error => ({ error: errorMessage(error) }));
+  } catch (error) {
+    diag.rustTodoState = { error: errorMessage(error) };
+  }
+  try {
+    diag.todoToggleHasReady = await page.evaluate(() => document.querySelector('#todoToggle')?.classList.contains('has-ready') ?? null).catch(() => null);
+  } catch (error) {
+    diag.todoToggleHasReady = null;
+  }
+  return diag;
+}
+
 async function verifyTodoWorkspaceScope(page) {
   await resetMainFilters(page);
   await waitForReadyTodoNudge(page);
@@ -1546,8 +1616,9 @@ async function verifyTodoWorkspaceScope(page) {
   }
 
   if (allWorkspaceTodo.hidden || !allWorkspaceTodo.workspaceKey) {
+    const diag = await collectTodoNudgeDiagnostics(page, fixture);
     if (fixture) restoreTodoScopeFixture(fixture);
-    throw new Error('临时 todo fixture 写入后仍未显示 ready nudge。');
+    throw new Error(`临时 todo fixture 写入后仍未显示 ready nudge。诊断：${JSON.stringify(diag)}`);
   }
 
   try {
