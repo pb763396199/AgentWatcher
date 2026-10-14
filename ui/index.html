@@ -2280,7 +2280,7 @@
       padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px;
       background: var(--surface-2); color: var(--muted); font-size: 11.5px;
     }
-    .analytics-chart-panel { border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); overflow: hidden; }
+    .analytics-chart-panel { border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); overflow: hidden; min-width: 0; }
     .analytics-panel-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px 6px; }
     .analytics-panel-head strong { font-size: 13px; }
     .analytics-note { font-size: 11px; color: var(--muted); }
@@ -2318,11 +2318,12 @@
     .analytics-bd-row .x { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted); }
     .analytics-tool-row { display: grid; grid-template-columns: minmax(60px, 96px) 1fr 52px; align-items: center; gap: 8px; font-size: 11.5px; margin-top: 5px; }
     .analytics-tool-row .tn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .analytics-tool-track { height: 8px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
-    .analytics-tool-fill { height: 100%; background: var(--accent); }
+    .analytics-tool-track { display: block; height: 8px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
+    .analytics-tool-fill { display: block; height: 100%; background: var(--accent); }
     .analytics-tool-row .tc { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
     .analytics-bd-note { margin-top: 8px; font-size: 11px; color: var(--soft); }
     .analytics-empty { padding: 28px 12px; text-align: center; color: var(--muted); font-size: 12px; }
+    .analytics-chartbox svg { display: block; }
     .analytics-chartbox svg text { font-size: 11px; }
     .usage-analyze-btn {
       margin-top: 8px; padding: 3px 12px; border: 1px solid var(--border); border-radius: 5px;
@@ -13592,13 +13593,20 @@
 
     function analyticsSpan() {
       const lifecycle = analyticsState.lifecycle;
-      const stamps = [];
-      (lifecycle?.calls || []).forEach(call => stamps.push(Number(call.tMs) || 0));
-      (lifecycle?.turnTimestamps || []).forEach(stamp => stamps.push(Number(stamp) || 0));
-      (lifecycle?.toolTimestamps || []).forEach(stamp => stamps.push(Number(stamp) || 0));
-      const positive = stamps.filter(stamp => stamp > 0);
-      if (!positive.length) return null;
-      return { start: Math.min(...positive), end: Math.max(...positive) };
+      let minMs = Infinity;
+      let maxMs = 0;
+      const track = stamp => {
+        const value = Number(stamp) || 0;
+        if (value > 0) {
+          if (value < minMs) minMs = value;
+          if (value > maxMs) maxMs = value;
+        }
+      };
+      (lifecycle?.calls || []).forEach(call => track(call.tMs));
+      (lifecycle?.turnTimestamps || []).forEach(track);
+      (lifecycle?.toolTimestamps || []).forEach(track);
+      if (minMs === Infinity || maxMs <= 0) return null;
+      return { start: minMs, end: maxMs };
     }
 
     function analyticsBuckets() {
@@ -13766,7 +13774,12 @@
         return;
       }
       const values = calls.map(call => Number(call.contextTokens));
-      const minV = Math.min(...values), maxV = Math.max(...values);
+      let minV = Infinity;
+      let maxV = 0;
+      values.forEach(value => {
+        if (value < minV) minV = value;
+        if (value > maxV) maxV = value;
+      });
       const range = maxV - minV || maxV || 1;
       const domLow = Math.max(0, minV - range * 0.25);
       const domHigh = maxV + range * 0.15;
@@ -14189,18 +14202,35 @@
           try { await tauriWindow?.close(); } catch (closeError) { /* last resort ignore */ }
         }
       });
-      document.getElementById('analyticsTitlebar')?.addEventListener('pointerdown', () => {
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && isAnalyticsWindow) {
+          document.getElementById('analyticsClose')?.click();
+        }
+      });
+      // 标题栏拖拽要避开按钮：startDragging 会进入系统移动循环，
+      // 吞掉真实鼠标在按钮上的 click（与 startWindowDrag 的守卫同口径）
+      document.getElementById('analyticsTitlebar')?.addEventListener('pointerdown', event => {
+        if (event.button !== 0 || event.target.closest('button')) return;
         if (tauriWindow) tauriWindow.startDragging().catch(() => {});
       });
-      if (window.ResizeObserver) {
-        new ResizeObserver(() => {
+      let analyticsResizeRedrawFrame = 0;
+      const scheduleAnalyticsResizeRedraw = () => {
+        if (analyticsResizeRedrawFrame) return;
+        // 等 layout 结算后再量宽：ResizeObserver 回调里立即可能有中间态尺寸
+        analyticsResizeRedrawFrame = window.requestAnimationFrame(() => {
+          analyticsResizeRedrawFrame = 0;
           if (!analyticsState.lifecycle) return;
           drawAnalyticsUsageChart();
           drawAnalyticsContextChart();
           drawAnalyticsRhythmChart();
           analyticsWireHover();
-        }).observe(document.getElementById('analyticsBody') || document.body);
+        });
+      };
+      if (window.ResizeObserver) {
+        new ResizeObserver(scheduleAnalyticsResizeRedraw)
+          .observe(document.getElementById('analyticsBody') || document.body);
       }
+      window.addEventListener('resize', scheduleAnalyticsResizeRedraw);
       tauriEmitTo?.('main', 'agentwatcher-analytics-ready', {}).catch(() => {});
     }
 
