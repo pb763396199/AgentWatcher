@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "protocol": "1.3.0",
+  "generated_at": "2026-10-14T02:57:10Z",
+  "generated_by": {
+    "tool_revision": "awf-0.1.0"
+  },
+  "work_item": {
+    "id": "wi_19X7WBYXTZK9DH6X1KT55XHK7N",
+    "short_id": "nf31t3pn",
+    "slug": "主窗口搜索栏支持用会话-ID-过滤卡片",
+    "title": "主窗口搜索栏支持用会话 ID 过滤卡片",
+    "kind": "feature",
+    "status": "in_review",
+    "branch": "feature/主窗口搜索栏支持用会话-ID-过滤卡片",
+    "home_repository": "https://github.com/pb763396199/AgentWatcher.git",
+    "contract_digest": "sha256:98aa641eac6856359c6ac518be14749ff547a9c78327586b62d542ed67347bc4",
+    "acceptance_ids": [
+      "AC-001",
+      "AC-002"
+    ]
+  },
+  "artifacts": [
+    {
+      "artifact_id": "ar_01M4W46NJZ000AGQEH4CE25E6R",
+      "type": "build",
+      "path": "builds/1.md",
+      "outcome": "complete",
+      "freshness": "fresh",
+      "stage": null,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_01M4W5DCG10001VTKSS3BNA5PM",
+      "type": "delivery",
+      "path": "delivery.md",
+      "outcome": "ready_to_land",
+      "freshness": "fresh",
+      "stage": 80,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_01M4W42YY30004EJB7N5SN5TKA",
+      "type": "review",
+      "path": "evidence/code-review.md",
+      "outcome": "approved",
+      "freshness": "fresh",
+      "stage": 60,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_01M4W5DCD1000BT77NQTBSE9GH",
+      "type": "validation",
+      "path": "evidence/validation-v2.md",
+      "outcome": "passed",
+      "freshness": "fresh",
+      "stage": 70,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_01M4W42Z010005EAGXTMHSX5HC",
+      "type": "validation",
+      "path": "evidence/validation.md",
+      "outcome": "partial",
+      "freshness": "superseded",
+      "stage": 70,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_01M4W49RND000DVSABWVTVFB7M",
+      "type": "manual-test",
+      "path": "manual-test.md",
+      "outcome": "pending",
+      "freshness": "fresh",
+      "stage": 70,
+      "depends_on": []
+    }
+  ],
+  "wayfinder": null,
+  "manual_test": {
+    "passed": 0,
+    "open": 3,
+    "failed": 0
+  },
+  "stage": {
+    "reached": "delivery",
+    "reached_stage": 80,
+    "next_skill": "aes-retrospect",
+    "waiting_on": "human"
+  },
+  "next": "等人测：人工核对还有 3 条没测",
+  "computed_from": {
+    "documents": {
+      "builds/1.md": "sha256:06a511533e732e2c5e22782a7c221216af1cb642956e0b4ccb1512b0d1578328",
+      "delivery.md": "sha256:21d3bae95ab7aebc6bef632db316b43dea0515c9230e8159ab31cea2f45a4b75",
+      "evidence/code-review.md": "sha256:e9452c5a82effef84406b5ebc220b3858c0fb7819cb8e17bf1a6151c8780db56",
+      "evidence/validation-v2.md": "sha256:b03146339f5da9e653161707f7ff74801eee3478748e5b54179362d97023b038",
+      "evidence/validation.md": "sha256:cfbe7016af912897a960e2cd62863099748b132d776f34aa25ca3e685d4c77ab",
+      "manual-test.md": "sha256:0cd6a64e8232130bbe2cb94ef810980199b28189297551339d576b2dce626c20",
+      "work-item.md": "sha256:f04149c5d7c6c46eadfb09d3d9d70dcc5662107675829cafab1f0104db859c90"
+    },
+    "change_set": {
+      "revision": "5387854c43d6ef7fa6d99aed8f41f9c1bdf1cf7b",
+      "tree": "1be344420348b99fcf78008c99a53aaf7a530862",
+      "content_digest": "sha256:0b63e5e2aa15d4bd47b4d597c44230fee2e3da48086c8fb73d79ac532ce6e4b9"
+    }
+  }
+}

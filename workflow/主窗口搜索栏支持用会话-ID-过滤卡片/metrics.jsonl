@@ -1,0 +1,4 @@
+{"record":"span","phase":"design","started_at":"2026-10-14T10:02:00Z","ended_at":"2026-10-14T10:16:00Z","input_tokens":0,"output_tokens":0,"cache_creation_tokens":0,"cache_read_tokens":0,"collector_version":"awf-0.1.0"}
+{"record":"span","phase":"implement","started_at":"2026-10-14T10:16:00Z","ended_at":"2026-10-14T10:32:00Z","input_tokens":0,"output_tokens":0,"cache_creation_tokens":0,"cache_read_tokens":0,"collector_version":"awf-0.1.0"}
+{"record":"span","phase":"verify","started_at":"2026-10-14T10:32:00Z","ended_at":"2026-10-14T10:36:00Z","input_tokens":0,"output_tokens":0,"cache_creation_tokens":0,"cache_read_tokens":0,"collector_version":"awf-0.1.0"}
+{"record":"span","phase":"record","started_at":"2026-10-14T10:36:00Z","ended_at":"2026-10-14T10:55:00Z","input_tokens":0,"output_tokens":0,"cache_creation_tokens":0,"cache_read_tokens":0,"collector_version":"awf-0.1.0"}
