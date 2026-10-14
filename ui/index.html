@@ -14,6 +14,8 @@
       document.documentElement.classList.add('is-todo-window-pending');
     } else if (bootParams.get('performance') === '1') {
       document.documentElement.classList.add('is-performance-window-pending');
+    } else if (bootParams.get('analytics') === '1') {
+      document.documentElement.classList.add('is-analytics-window-pending');
     }
   </script>
   <style>
@@ -2208,6 +2210,126 @@
       border-radius: 8px;
     }
 
+    /* ===== 会话分析面板（单会话全生命周期） ===== */
+    .analytics-panel {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      pointer-events: auto;
+    }
+    .analytics-titlebar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 34px;
+      padding: 6px 10px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface-2);
+      cursor: move;
+      user-select: none;
+      flex: none;
+    }
+    .analytics-titlebar strong { font-size: 12px; }
+    .analytics-subtitle { font-size: 11px; color: var(--muted); }
+    .analytics-titlebar .spring { flex: 1; }
+    .analytics-close {
+      border: 0; border-radius: 4px; background: transparent; color: var(--muted);
+      font-size: 14px; line-height: 1; padding: 3px 8px; cursor: pointer;
+    }
+    .analytics-close:hover { background: #c42b1c; color: #fff; }
+    .analytics-body {
+      flex: 1; min-height: 0; overflow: auto; padding: 12px;
+      display: grid; gap: 10px; align-content: start;
+    }
+    .analytics-identity { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+    .analytics-id-main { min-width: 0; flex: 1; }
+    .analytics-id-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+    .analytics-id-title {
+      font-size: 15px; font-weight: 600; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+    }
+    .analytics-id-meta { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 3px; font-size: 11.5px; color: var(--muted); }
+    .analytics-status { display: inline-flex; align-items: center; gap: 5px; }
+    .analytics-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .analytics-chip-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .analytics-chip {
+      display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px;
+      border: 1px solid var(--border); border-radius: 999px;
+      background: var(--surface-2); color: var(--text); cursor: pointer; font-size: 11.5px;
+    }
+    .analytics-chip[aria-pressed="false"] { opacity: .45; }
+    .analytics-chip b { font-weight: 500; color: var(--muted); }
+    .analytics-chip .swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+    .analytics-cards { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
+    @media (max-width: 900px) { .analytics-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+    @media (max-width: 640px) { .analytics-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    .analytics-stat {
+      border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2);
+      padding: 8px 10px; min-width: 0;
+    }
+    .analytics-stat .k { font-size: 11px; color: var(--muted); margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .analytics-stat .v { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .analytics-stat .s { font-size: 11px; color: var(--soft); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .analytics-degraded {
+      padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px;
+      background: var(--surface-2); color: var(--muted); font-size: 11.5px;
+    }
+    .analytics-chart-panel { border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); overflow: hidden; }
+    .analytics-panel-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px 6px; }
+    .analytics-panel-head strong { font-size: 13px; }
+    .analytics-note { font-size: 11px; color: var(--muted); }
+    .analytics-panel-head .spring { flex: 1; }
+    .analytics-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+    .analytics-seg button {
+      padding: 4px 12px; border: 0; background: var(--surface); color: var(--muted);
+      cursor: pointer; font-size: 12px;
+    }
+    .analytics-seg button + button { border-left: 1px solid var(--border); }
+    .analytics-seg button[aria-pressed="true"] { background: var(--focus); color: #fff; }
+    .analytics-chartbox { position: relative; padding: 0 8px 6px; }
+    .analytics-tip {
+      position: absolute; z-index: 5; pointer-events: none; display: none;
+      min-width: 190px; max-width: 280px; padding: 7px 9px;
+      border: 1px solid var(--border); border-radius: 6px; background: var(--surface-3);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28); font-size: 11px;
+    }
+    body[data-theme="light"] .analytics-tip { box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14); }
+    .analytics-tip .tip-time { font-weight: 600; margin-bottom: 4px; }
+    .analytics-tip-row { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+    .analytics-tip-row .d { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+    .analytics-tip-row .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .analytics-tip-row .x { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .analytics-breakdown { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    @media (max-width: 780px) { .analytics-breakdown { grid-template-columns: 1fr; } }
+    .analytics-bd { border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); padding: 10px 12px; min-width: 0; }
+    .analytics-bd-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+    .analytics-segbar { display: flex; height: 10px; border-radius: 3px; overflow: hidden; background: var(--surface-3); }
+    .analytics-segbar span { display: block; height: 100%; }
+    .analytics-bd-list { margin-top: 8px; display: grid; gap: 4px; }
+    .analytics-bd-row { display: flex; align-items: center; gap: 7px; font-size: 11.5px; min-width: 0; }
+    .analytics-bd-row .d { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+    .analytics-bd-row .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .analytics-bd-row .x { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted); }
+    .analytics-tool-row { display: grid; grid-template-columns: minmax(60px, 96px) 1fr 52px; align-items: center; gap: 8px; font-size: 11.5px; margin-top: 5px; }
+    .analytics-tool-row .tn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .analytics-tool-track { height: 8px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
+    .analytics-tool-fill { height: 100%; background: var(--accent); }
+    .analytics-tool-row .tc { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+    .analytics-bd-note { margin-top: 8px; font-size: 11px; color: var(--soft); }
+    .analytics-empty { padding: 28px 12px; text-align: center; color: var(--muted); font-size: 12px; }
+    .analytics-chartbox svg text { font-size: 11px; }
+    .usage-analyze-btn {
+      margin-top: 8px; padding: 3px 12px; border: 1px solid var(--border); border-radius: 5px;
+      background: var(--surface-3); color: var(--text); cursor: pointer; font-size: 11.5px;
+    }
+    .usage-analyze-btn:hover { border-color: var(--accent); color: var(--accent); }
+
     .perf-panel-head {
       display: flex;
       align-items: center;
@@ -3079,6 +3201,9 @@
     html.is-performance-window-pending .watcher-window,
     html.is-performance-window-pending .compact-rail,
     html.is-performance-window-pending .waiting-alert-layer,
+    html.is-analytics-window-pending .watcher-window,
+    html.is-analytics-window-pending .compact-rail,
+    html.is-analytics-window-pending .waiting-alert-layer,
     body.is-todo-window .watcher-window,
     body.is-todo-window .compact-rail,
     body.is-todo-window .waiting-alert-layer,
@@ -3089,12 +3214,20 @@
     body.is-performance-window .waiting-alert-layer,
     body.is-performance-window .session-preview,
     body.is-performance-window .handoff-layer,
-    body.is-performance-window .todo-window {
+    body.is-performance-window .todo-window,
+    body.is-analytics-window .watcher-window,
+    body.is-analytics-window .compact-rail,
+    body.is-analytics-window .waiting-alert-layer,
+    body.is-analytics-window .session-preview,
+    body.is-analytics-window .handoff-layer,
+    body.is-analytics-window .todo-window,
+    body.is-analytics-window .perf-panel {
       display: none !important;
     }
 
     body.is-todo-window .desktop,
-    body.is-performance-window .desktop {
+    body.is-performance-window .desktop,
+    body.is-analytics-window .desktop {
       display: block;
       padding: 0;
       background: transparent;
@@ -5808,6 +5941,7 @@
         <button class="handoff-menu-item" id="handoffQuickCopy" type="button" data-i18n="handoffCopyPrompt">Copy handoff prompt</button>
         <div class="handoff-menu-sep"></div>
         <button class="handoff-menu-item" id="handoffOpenSource" type="button" data-i18n="handoffOpenSource">Open source session</button>
+        <button class="handoff-menu-item" id="handoffAnalyze" type="button" data-i18n="analyticsOpenEntry">Session analytics</button>
       </div>
       <div class="handoff-layer" id="handoffLayer" hidden>
         <section class="handoff-panel" id="handoffPanel" role="dialog" aria-modal="true" aria-labelledby="handoffTitle">
@@ -5914,6 +6048,63 @@
     </section>
 
     <div class="session-preview" id="sessionPreview" aria-live="polite" hidden></div>
+
+    <section class="analytics-panel" id="analyticsPanel" aria-live="polite" hidden>
+      <div class="analytics-titlebar" id="analyticsTitlebar">
+        <strong id="analyticsTitle" data-i18n="analyticsPanelTitle">Session analytics</strong>
+        <span class="analytics-subtitle" data-i18n="analyticsPanelSub">Full session lifecycle</span>
+        <span class="spring"></span>
+        <button class="analytics-close" id="analyticsClose" type="button" data-i18n-aria="close" data-i18n-title="close">&times;</button>
+      </div>
+      <div class="analytics-body" id="analyticsBody">
+        <div class="analytics-identity" id="analyticsIdentity"></div>
+        <div class="analytics-cards" id="analyticsCards"></div>
+        <div class="analytics-degraded" id="analyticsDegraded" hidden></div>
+        <section class="analytics-chart-panel" id="analyticsChartPanel">
+          <div class="analytics-panel-head">
+            <strong data-i18n="analyticsUsageTitle">Usage timeline</strong>
+            <span class="analytics-note" data-i18n="analyticsUsageNote"></span>
+            <span class="spring"></span>
+            <div class="analytics-seg" role="group" aria-label="timeline granularity">
+              <button type="button" id="analyticsGHour" aria-pressed="true" data-i18n="analyticsGHour">Hour</button>
+              <button type="button" id="analyticsG6h" aria-pressed="false" data-i18n="analyticsG6h">6h</button>
+              <button type="button" id="analyticsGDay" aria-pressed="false" data-i18n="analyticsGDay">Day</button>
+            </div>
+          </div>
+          <div class="analytics-chartbox" style="padding: 0 12px 4px">
+            <div class="analytics-chip-row" id="analyticsChips"></div>
+          </div>
+          <div class="analytics-chartbox" id="analyticsUsageBox">
+            <div class="analytics-tip" id="analyticsTip" role="tooltip"></div>
+            <div id="analyticsUsageChart"></div>
+          </div>
+          <div class="analytics-chartbox" id="analyticsCtxBox" style="padding-top: 0">
+            <div id="analyticsCtxChart"></div>
+          </div>
+          <div class="analytics-chartbox" id="analyticsRhythmBox" style="padding-top: 0; padding-bottom: 8px">
+            <div id="analyticsRhythmChart"></div>
+          </div>
+        </section>
+        <div class="analytics-breakdown">
+          <div class="analytics-bd">
+            <div class="analytics-bd-title" data-i18n="analyticsByType">By type</div>
+            <div class="analytics-segbar" id="analyticsTypeBar"></div>
+            <div class="analytics-bd-list" id="analyticsTypeList"></div>
+          </div>
+          <div class="analytics-bd">
+            <div class="analytics-bd-title" data-i18n="analyticsByModel">By model</div>
+            <div class="analytics-segbar" id="analyticsModelBar"></div>
+            <div class="analytics-bd-list" id="analyticsModelList"></div>
+          </div>
+          <div class="analytics-bd">
+            <div class="analytics-bd-title" data-i18n="analyticsByTool">Top tools</div>
+            <div id="analyticsToolList"></div>
+            <div class="analytics-bd-note" id="analyticsToolNote"></div>
+          </div>
+        </div>
+        <div class="analytics-empty" id="analyticsEmpty" hidden></div>
+      </div>
+    </section>
 
     <section class="perf-panel" id="perfPanel" aria-live="polite" hidden>
       <div class="perf-panel-head" id="perfTitlebar">
@@ -6054,6 +6245,7 @@
     const isHandoffWindow = runtimeParams.get('handoff') === '1';
     const isTodoWindow = runtimeParams.get('todo') === '1';
     const isPerformanceWindow = runtimeParams.get('performance') === '1';
+    const isAnalyticsWindow = runtimeParams.get('analytics') === '1';
     if (tauriInvoke) {
       try {
         const runtimeState = await tauriInvoke('get_debug_runtime_state');
@@ -6106,6 +6298,7 @@
     if (isHandoffWindow) document.body.classList.add('is-handoff-window');
     if (isTodoWindow) document.body.classList.add('is-todo-window');
     if (isPerformanceWindow) document.body.classList.add('is-performance-window');
+    if (isAnalyticsWindow) document.body.classList.add('is-analytics-window');
     const root = document.documentElement;
     const toast = document.getElementById('toast');
     const sessionScroll = document.getElementById('sessionScroll');
@@ -6217,6 +6410,7 @@
     const handoffOpen = document.getElementById('handoffOpen');
     const handoffQuickCopy = document.getElementById('handoffQuickCopy');
     const handoffOpenSource = document.getElementById('handoffOpenSource');
+    const handoffAnalyze = document.getElementById('handoffAnalyze');
     const handoffLayer = document.getElementById('handoffLayer');
     const handoffPanel = document.getElementById('handoffPanel');
     const handoffTitlebar = document.getElementById('handoffTitlebar');
@@ -6465,7 +6659,7 @@
     let settings = loadSettings();
     const i18n = {
       en: {
-        allSessions: 'All agent sessions', watched: '83 workspaces watched', filterActive: 'Workspace filter active', waitingChip: '8 waiting', workspace: 'Workspace', allWorkspaces: 'All workspaces', perRow: 'Per row', visibleNow: 'visible now', inQueue: 'in scroll queue', sessions: 'sessions', updated: 'Updated 2s ago', workspacePrefix: 'Workspace: ', overflow: 'Scroll continues by priority: waiting, running, idle', priority: 'priority', live: 'live', quiet: 'quiet', waiting: 'Waiting', running: 'Running', idle: 'Idle', all: 'All', wait: 'Wait', run: 'Run', col: 'col', cols: 'cols', perRowButton: '/ row', iconsPerRow: 'icons per row', windowSize: 'Window size', openWorkspace: 'Open VS Code workspace: ', openingAgents: 'Opening session...', openedAgents: 'Session opened', themeLight: 'Light theme', themeDark: 'Dark theme', settings: 'Settings', appearance: 'Appearance', language: 'Language', theme: 'Theme', layout: 'Layout', horizontal: 'Horizontal', vertical: 'Vertical', agentTaskFlipSpeed: 'Flip speed (ms)', lastUser: 'Last user', lastAi: 'Last AI', noUserMessage: 'No user message captured', noAiMessage: 'No AI message captured', tailOnly: 'tail', errorExcerpt: 'error', windowBehavior: 'Window', alwaysOnTop: 'Always on top', dataSources: 'Data', includeCopilot: 'VS Code Copilot sessions', includeCopilotCli: 'Copilot CLI sessions', includeClaude: 'Claude sessions', hideArchived: 'Hide archived', scanLimits: 'Scan limits', activeWindowDays: 'Active window (days)', maxSessions: 'Sessions per provider', refreshInterval: 'Refresh interval (sec)', settingsSaved: 'Settings updated', maxCardsPerRow: 'Max cards per row', waitingAlertSize: 'Waiting alert size', waitingAlertDuration: 'Waiting alert duration (sec)', small: 'Small', medium: 'Medium', large: 'Large', waitingAlertAria: 'New waiting session', handoffCreate: 'Create handoff session...', handoffCopyPrompt: 'Copy handoff prompt', handoffOpenSource: 'Open source session', handoffTitle: 'Create handoff session', handoffNewSessionIn: 'New session in', handoffWithProvider: 'with', handoffLatestSnapshot: 'Latest snapshot', handoffSourceLocator: 'Source locator', handoffPreview: 'Preview', handoffCopy: 'Copy', handoffLaunch: 'Launch', handoffSaveTodo: 'Save Todo', handoffPromptPreview: 'Prompt preview', handoffTaskPlaceholder: 'What would you like session B to do?', handoffWorkspacePlaceholder: 'Search or paste workspace path', handoffUsePastedPath: 'Use pasted path', handoffNoWorkspace: 'No matching workspace', handoffSelected: 'selected', handoffCopied: 'Copied handoff prompt', handoffClipboardFallback: 'Clipboard write failed; prompt is selected', handoffLaunching: 'Launching handoff...', handoffLaunched: 'Handoff launch requested', handoffNoSession: 'No source session selected', handoffOpenFailed: 'Handoff panel failed to open', handoffSelectWorkspace: 'Select workspace', handoffAgentsLabel: 'Copilot Editor', handoffCodeChatLabel: 'Copilot CLI Editor', handoffClaudeLabel: 'Claude Code Editor', handoffAgentsDescription: 'Open Copilot in a VS Code editor tab and insert the handoff prompt', handoffCodeChatDescription: 'Open a Copilot CLI editor tab and insert the handoff prompt', handoffClaudeDescription: 'Open Claude Code in a VS Code editor tab', bridgeTitle: 'VS Code Bridge', bridgePreviewOnly: 'Preview only', bridgeChecking: 'Checking...', bridgeInstalled: 'Bridge installed', bridgeNeedsUpdate: 'Bridge update available', bridgeNotInstalled: 'Bridge not installed', bridgeInstall: 'Install', bridgeUpdate: 'Update', bridgeRetry: 'Retry', bridgeInstalling: 'Installing...', bridgeInstallFailed: 'Bridge install failed', todoWindowTitle: 'AI Task Input', todoWindowSubtitle: 'Workspace todo queue', todoOpen: 'Open Todo', todoReadyNudge: 'Ready todo in ', todoRefresh: 'Refresh', todoUsePath: 'Use Path', todoCancel: 'Cancel', todoAdd: 'Add', todoSave: 'Save', todoActive: 'Active', todoShowDone: 'Done', todoTitlePlaceholder: 'Task title', todoDescriptionPlaceholder: 'Task notes', todoAcceptancePlaceholder: 'Completion standard', todoPathPlaceholder: 'Paste workspace path', todoNoWorkspace: 'Choose workspace', todoEmpty: 'No active todo for this workspace', todoNoDone: 'No completed todo yet', todoPendingReview: 'Needs confirmation', todoPromptPreview: 'Prompt', todoDispatch: 'Launch', todoComplete: 'Done', todoRetry: 'Rework', todoBlock: 'Block', todoUnblock: 'Unblock', todoDelete: 'Delete', todoEdit: 'Edit', todoSaved: 'Todo saved', todoLaunched: 'Todo launch requested', todoCopied: 'Prompt copied', todoBlocked: 'Blocked', todoDone: 'Completed', todoReady: 'Ready', todoRunning: 'Running', todoReview: 'Review', todoUnbound: 'dispatched, unbound', todoBound: 'bound session', todoCountsText: 'active {active} / done {done}', todoCreateFromHandoff: 'Saved handoff as todo',
+        allSessions: 'All agent sessions', watched: '83 workspaces watched', filterActive: 'Workspace filter active', waitingChip: '8 waiting', workspace: 'Workspace', allWorkspaces: 'All workspaces', perRow: 'Per row', visibleNow: 'visible now', inQueue: 'in scroll queue', sessions: 'sessions', updated: 'Updated 2s ago', workspacePrefix: 'Workspace: ', overflow: 'Scroll continues by priority: waiting, running, idle', priority: 'priority', live: 'live', quiet: 'quiet', waiting: 'Waiting', running: 'Running', idle: 'Idle', all: 'All', wait: 'Wait', run: 'Run', col: 'col', cols: 'cols', perRowButton: '/ row', iconsPerRow: 'icons per row', windowSize: 'Window size', openWorkspace: 'Open VS Code workspace: ', openingAgents: 'Opening session...', openedAgents: 'Session opened', themeLight: 'Light theme', themeDark: 'Dark theme', settings: 'Settings', appearance: 'Appearance', language: 'Language', theme: 'Theme', layout: 'Layout', horizontal: 'Horizontal', vertical: 'Vertical', agentTaskFlipSpeed: 'Flip speed (ms)', lastUser: 'Last user', lastAi: 'Last AI', noUserMessage: 'No user message captured', noAiMessage: 'No AI message captured', tailOnly: 'tail', errorExcerpt: 'error', windowBehavior: 'Window', alwaysOnTop: 'Always on top', dataSources: 'Data', includeCopilot: 'VS Code Copilot sessions', includeCopilotCli: 'Copilot CLI sessions', includeClaude: 'Claude sessions', hideArchived: 'Hide archived', scanLimits: 'Scan limits', activeWindowDays: 'Active window (days)', maxSessions: 'Sessions per provider', refreshInterval: 'Refresh interval (sec)', settingsSaved: 'Settings updated', maxCardsPerRow: 'Max cards per row', waitingAlertSize: 'Waiting alert size', waitingAlertDuration: 'Waiting alert duration (sec)', small: 'Small', medium: 'Medium', large: 'Large', waitingAlertAria: 'New waiting session', handoffCreate: 'Create handoff session...', handoffCopyPrompt: 'Copy handoff prompt', handoffOpenSource: 'Open source session', analyticsOpenEntry: 'Session analytics', analyticsPanelTitle: 'Session analytics', analyticsPanelSub: 'Full session lifecycle', analyticsUsageTitle: 'Usage timeline', analyticsUsageNote: 'Gross input by model (incl. cache reads)', analyticsGHour: 'Hour', analyticsG6h: '6h', analyticsGDay: 'Day', analyticsByType: 'By type', analyticsByModel: 'By model', analyticsByTool: 'Top tools', analyticsCacheRead: 'Cache read', analyticsFreshInput: 'Fresh input', analyticsOutput: 'Output', analyticsCtxTitle: 'Context usage', analyticsRhythmTitle: 'Activity rhythm', analyticsCompact: 'compact', analyticsDegraded: 'Timeline downsampled (call budget exceeded)', analyticsNoTimeline: 'No usage timeline from this data source', analyticsChipHint: 'Click to toggle this model on the timeline', analyticsWindowLimit: 'window {tokens}', analyticsTipIn: 'in', analyticsTipOut: 'out', analyticsTipCtx: 'ctx end', analyticsModelCallsUnit: 'calls', analyticsToolNoteRest: '{count} more calls not listed', analyticsLoadFailed: 'Failed to load session lifecycle', analyticsNoSession: 'No source session for analytics', handoffTitle: 'Create handoff session', handoffNewSessionIn: 'New session in', handoffWithProvider: 'with', handoffLatestSnapshot: 'Latest snapshot', handoffSourceLocator: 'Source locator', handoffPreview: 'Preview', handoffCopy: 'Copy', handoffLaunch: 'Launch', handoffSaveTodo: 'Save Todo', handoffPromptPreview: 'Prompt preview', handoffTaskPlaceholder: 'What would you like session B to do?', handoffWorkspacePlaceholder: 'Search or paste workspace path', handoffUsePastedPath: 'Use pasted path', handoffNoWorkspace: 'No matching workspace', handoffSelected: 'selected', handoffCopied: 'Copied handoff prompt', handoffClipboardFallback: 'Clipboard write failed; prompt is selected', handoffLaunching: 'Launching handoff...', handoffLaunched: 'Handoff launch requested', handoffNoSession: 'No source session selected', handoffOpenFailed: 'Handoff panel failed to open', handoffSelectWorkspace: 'Select workspace', handoffAgentsLabel: 'Copilot Editor', handoffCodeChatLabel: 'Copilot CLI Editor', handoffClaudeLabel: 'Claude Code Editor', handoffAgentsDescription: 'Open Copilot in a VS Code editor tab and insert the handoff prompt', handoffCodeChatDescription: 'Open a Copilot CLI editor tab and insert the handoff prompt', handoffClaudeDescription: 'Open Claude Code in a VS Code editor tab', bridgeTitle: 'VS Code Bridge', bridgePreviewOnly: 'Preview only', bridgeChecking: 'Checking...', bridgeInstalled: 'Bridge installed', bridgeNeedsUpdate: 'Bridge update available', bridgeNotInstalled: 'Bridge not installed', bridgeInstall: 'Install', bridgeUpdate: 'Update', bridgeRetry: 'Retry', bridgeInstalling: 'Installing...', bridgeInstallFailed: 'Bridge install failed', todoWindowTitle: 'AI Task Input', todoWindowSubtitle: 'Workspace todo queue', todoOpen: 'Open Todo', todoReadyNudge: 'Ready todo in ', todoRefresh: 'Refresh', todoUsePath: 'Use Path', todoCancel: 'Cancel', todoAdd: 'Add', todoSave: 'Save', todoActive: 'Active', todoShowDone: 'Done', todoTitlePlaceholder: 'Task title', todoDescriptionPlaceholder: 'Task notes', todoAcceptancePlaceholder: 'Completion standard', todoPathPlaceholder: 'Paste workspace path', todoNoWorkspace: 'Choose workspace', todoEmpty: 'No active todo for this workspace', todoNoDone: 'No completed todo yet', todoPendingReview: 'Needs confirmation', todoPromptPreview: 'Prompt', todoDispatch: 'Launch', todoComplete: 'Done', todoRetry: 'Rework', todoBlock: 'Block', todoUnblock: 'Unblock', todoDelete: 'Delete', todoEdit: 'Edit', todoSaved: 'Todo saved', todoLaunched: 'Todo launch requested', todoCopied: 'Prompt copied', todoBlocked: 'Blocked', todoDone: 'Completed', todoReady: 'Ready', todoRunning: 'Running', todoReview: 'Review', todoUnbound: 'dispatched, unbound', todoBound: 'bound session', todoCountsText: 'active {active} / done {done}', todoCreateFromHandoff: 'Saved handoff as todo',
         handoffPromptIdLabel: 'AgentWatcher Handoff ID',
         handoffSourceAccessTitle: '[Source Access]',
         handoffTargetAgentLabel: 'Target agent',
@@ -6511,7 +6705,7 @@
         usage: 'Usage', usageTotalInput: 'Total input', usageOutput: 'Total output', usageContext: 'Context', usageTurns: 'User turns', usageToolCalls: 'Tool calls', usageModelCalls: 'Model calls', usageModels: 'Model', usageDuration: 'Duration', usageCost: 'Cost', usageTurnsUnit: 'turns', usageToolsUnit: 'tools', usageCached: 'cached {percent}%', usageOfWindow: 'of {window} window', usageActiveSpan: '{active} active · {span} span', usageSpanOnly: 'span {span}', usageModelMore: '+{count}', usageNoDataNote: 'This source does not report usage data', usageCredits: 'credits'
       },
       zh: {
-        allSessions: '全部 Agent 会话', watched: '已监控 83 个工作区', filterActive: '已启用工作区过滤', waitingChip: '8 待回复', workspace: '工作区', allWorkspaces: '全部工作区', perRow: '每排数量', visibleNow: '当前可见', inQueue: '在滚动队列', sessions: '个会话', updated: '2 秒前更新', workspacePrefix: '工作区：', overflow: '按优先级继续滚动：待回复、运行中、闲置', priority: '优先', live: '实时', quiet: '静默', waiting: '待回复', running: '运行中', idle: '闲置', all: '全部', wait: '待回', run: '运行', col: '列', cols: '列', perRowButton: '/ 排', iconsPerRow: '个/排', windowSize: '窗口尺寸', openWorkspace: '打开 VS Code 工作区：', openingAgents: '正在打开会话...', openedAgents: '已打开会话', themeLight: '浅色主题', themeDark: '深色主题', settings: '设置', appearance: '外观', language: '语言', theme: '主题', layout: '布局', horizontal: '横版', vertical: '竖版', agentTaskFlipSpeed: '翻转速度（毫秒）', lastUser: '最后用户输入', lastAi: '最后 AI 回复', noUserMessage: '未捕获到用户输入', noAiMessage: '未捕获到 AI 回复', tailOnly: '尾部', errorExcerpt: '错误', windowBehavior: '窗口', alwaysOnTop: '永远置顶', dataSources: '数据', includeCopilot: 'Copilot 会话', includeClaude: 'Claude 会话', hideArchived: '隐藏归档', scanLimits: '扫描限制', activeWindowDays: '活跃窗口（天）', maxSessions: '每个提供方会话数', refreshInterval: '刷新间隔（秒）', settingsSaved: '设置已更新', maxCardsPerRow: '每排最大数量', waitingAlertSize: '待回复提醒尺寸', waitingAlertDuration: '待回复持续时间（秒）', small: '小', medium: '中', large: '大', waitingAlertAria: '新的待回复会话', handoffCreate: '创建接续会话...', handoffCopyPrompt: '复制接续提示词', handoffOpenSource: '打开原会话', handoffTitle: '创建接续会话', handoffNewSessionIn: '在', handoffWithProvider: '使用', handoffLatestSnapshot: '最新快照', handoffSourceLocator: '来源定位', handoffPreview: '预览', handoffCopy: '复制', handoffLaunch: '启动', handoffSaveTodo: '存为 Todo', handoffPromptPreview: '提示词预览', handoffTaskPlaceholder: '希望新会话做什么？', handoffWorkspacePlaceholder: '搜索或粘贴工作区路径', handoffUsePastedPath: '使用粘贴路径', handoffNoWorkspace: '没有匹配的工作区', handoffSelected: '已选', handoffCopied: '已复制接续提示词', handoffClipboardFallback: '无法直接写剪贴板，已选中提示词', handoffLaunching: '正在启动接续会话...', handoffLaunched: '已请求启动接续会话', handoffNoSession: '未选择来源会话', handoffOpenFailed: '接续面板打开失败', handoffSelectWorkspace: '选择工作区', handoffAgentsLabel: 'Copilot 编辑器', handoffCodeChatLabel: 'Copilot CLI 编辑器', handoffClaudeLabel: 'Claude Code 编辑器', handoffAgentsDescription: '在 VS Code 编辑器标签页中打开 Copilot 并填入接续提示词', handoffCodeChatDescription: '打开 Copilot CLI 编辑器标签页并填入接续提示词', handoffClaudeDescription: '在 VS Code 编辑器标签页中打开 Claude Code', bridgeTitle: 'VS Code Bridge', bridgePreviewOnly: '仅预览', bridgeChecking: '正在检查...', bridgeInstalled: 'Bridge 已安装', bridgeNeedsUpdate: 'Bridge 有可用更新', bridgeNotInstalled: 'Bridge 未安装', bridgeInstall: '安装', bridgeUpdate: '更新', bridgeRetry: '重试', bridgeInstalling: '正在安装...', bridgeInstallFailed: 'Bridge 安装失败', todoWindowTitle: 'AI 任务输入法', todoWindowSubtitle: '工作区 Todo 队列', todoOpen: '打开 Todo', todoReadyNudge: '可推进 Todo：', todoRefresh: '刷新', todoUsePath: '使用路径', todoCancel: '取消', todoAdd: '添加', todoSave: '保存', todoActive: '进行中', todoShowDone: '完成项', todoTitlePlaceholder: '任务标题', todoDescriptionPlaceholder: '任务说明', todoAcceptancePlaceholder: '完成标准', todoPathPlaceholder: '粘贴工作区路径', todoNoWorkspace: '选择工作区', todoEmpty: '这个工作区没有待办任务', todoNoDone: '还没有完成项', todoPendingReview: '待确认完成', todoPromptPreview: '提示词', todoDispatch: '启动', todoComplete: '完成', todoRetry: '返工', todoBlock: '阻塞', todoUnblock: '解除阻塞', todoDelete: '删除', todoEdit: '编辑', todoSaved: 'Todo 已保存', todoLaunched: '已请求启动 Todo', todoCopied: '提示词已复制', todoBlocked: '已阻塞', todoDone: '已完成', todoReady: '就绪', todoRunning: '运行中', todoReview: '待确认', todoUnbound: '已派发，未绑定', todoBound: '已绑定会话', todoCountsText: '待办 {active} / 完成 {done}', todoCreateFromHandoff: '已将接续保存为 Todo',
+        allSessions: '全部 Agent 会话', watched: '已监控 83 个工作区', filterActive: '已启用工作区过滤', waitingChip: '8 待回复', workspace: '工作区', allWorkspaces: '全部工作区', perRow: '每排数量', visibleNow: '当前可见', inQueue: '在滚动队列', sessions: '个会话', updated: '2 秒前更新', workspacePrefix: '工作区：', overflow: '按优先级继续滚动：待回复、运行中、闲置', priority: '优先', live: '实时', quiet: '静默', waiting: '待回复', running: '运行中', idle: '闲置', all: '全部', wait: '待回', run: '运行', col: '列', cols: '列', perRowButton: '/ 排', iconsPerRow: '个/排', windowSize: '窗口尺寸', openWorkspace: '打开 VS Code 工作区：', openingAgents: '正在打开会话...', openedAgents: '已打开会话', themeLight: '浅色主题', themeDark: '深色主题', settings: '设置', appearance: '外观', language: '语言', theme: '主题', layout: '布局', horizontal: '横版', vertical: '竖版', agentTaskFlipSpeed: '翻转速度（毫秒）', lastUser: '最后用户输入', lastAi: '最后 AI 回复', noUserMessage: '未捕获到用户输入', noAiMessage: '未捕获到 AI 回复', tailOnly: '尾部', errorExcerpt: '错误', windowBehavior: '窗口', alwaysOnTop: '永远置顶', dataSources: '数据', includeCopilot: 'Copilot 会话', includeClaude: 'Claude 会话', hideArchived: '隐藏归档', scanLimits: '扫描限制', activeWindowDays: '活跃窗口（天）', maxSessions: '每个提供方会话数', refreshInterval: '刷新间隔（秒）', settingsSaved: '设置已更新', maxCardsPerRow: '每排最大数量', waitingAlertSize: '待回复提醒尺寸', waitingAlertDuration: '待回复持续时间（秒）', small: '小', medium: '中', large: '大', waitingAlertAria: '新的待回复会话', handoffCreate: '创建接续会话...', handoffCopyPrompt: '复制接续提示词', handoffOpenSource: '打开原会话', analyticsOpenEntry: '会话分析', analyticsPanelTitle: '会话分析', analyticsPanelSub: '单会话全生命周期', analyticsUsageTitle: '用量时间轴', analyticsUsageNote: '按模型分色的毛输入（含缓存读取）', analyticsGHour: '小时', analyticsG6h: '6 小时', analyticsGDay: '天', analyticsByType: '按类型', analyticsByModel: '按模型', analyticsByTool: '高频工具', analyticsCacheRead: '缓存读取', analyticsFreshInput: '净输入', analyticsOutput: '输出', analyticsCtxTitle: '上下文占用', analyticsRhythmTitle: '活动节奏', analyticsCompact: '压缩', analyticsDegraded: '调用点超出预算，时间轴已按同模型合并降采样', analyticsNoTimeline: '这个数据源没有可用的时序数据', analyticsChipHint: '点按切换该模型在时间轴上的显示', analyticsWindowLimit: '窗口上限 {tokens}', analyticsTipIn: '输入', analyticsTipOut: '输出', analyticsTipCtx: '上下文末', analyticsModelCallsUnit: '次调用', analyticsToolNoteRest: '其余 {count} 次未列出', analyticsLoadFailed: '会话时序加载失败', analyticsNoSession: '找不到要分析的会话', handoffTitle: '创建接续会话', handoffNewSessionIn: '在', handoffWithProvider: '使用', handoffLatestSnapshot: '最新快照', handoffSourceLocator: '来源定位', handoffPreview: '预览', handoffCopy: '复制', handoffLaunch: '启动', handoffSaveTodo: '存为 Todo', handoffPromptPreview: '提示词预览', handoffTaskPlaceholder: '希望新会话做什么？', handoffWorkspacePlaceholder: '搜索或粘贴工作区路径', handoffUsePastedPath: '使用粘贴路径', handoffNoWorkspace: '没有匹配的工作区', handoffSelected: '已选', handoffCopied: '已复制接续提示词', handoffClipboardFallback: '无法直接写剪贴板，已选中提示词', handoffLaunching: '正在启动接续会话...', handoffLaunched: '已请求启动接续会话', handoffNoSession: '未选择来源会话', handoffOpenFailed: '接续面板打开失败', handoffSelectWorkspace: '选择工作区', handoffAgentsLabel: 'Copilot 编辑器', handoffCodeChatLabel: 'Copilot CLI 编辑器', handoffClaudeLabel: 'Claude Code 编辑器', handoffAgentsDescription: '在 VS Code 编辑器标签页中打开 Copilot 并填入接续提示词', handoffCodeChatDescription: '打开 Copilot CLI 编辑器标签页并填入接续提示词', handoffClaudeDescription: '在 VS Code 编辑器标签页中打开 Claude Code', bridgeTitle: 'VS Code Bridge', bridgePreviewOnly: '仅预览', bridgeChecking: '正在检查...', bridgeInstalled: 'Bridge 已安装', bridgeNeedsUpdate: 'Bridge 有可用更新', bridgeNotInstalled: 'Bridge 未安装', bridgeInstall: '安装', bridgeUpdate: '更新', bridgeRetry: '重试', bridgeInstalling: '正在安装...', bridgeInstallFailed: 'Bridge 安装失败', todoWindowTitle: 'AI 任务输入法', todoWindowSubtitle: '工作区 Todo 队列', todoOpen: '打开 Todo', todoReadyNudge: '可推进 Todo：', todoRefresh: '刷新', todoUsePath: '使用路径', todoCancel: '取消', todoAdd: '添加', todoSave: '保存', todoActive: '进行中', todoShowDone: '完成项', todoTitlePlaceholder: '任务标题', todoDescriptionPlaceholder: '任务说明', todoAcceptancePlaceholder: '完成标准', todoPathPlaceholder: '粘贴工作区路径', todoNoWorkspace: '选择工作区', todoEmpty: '这个工作区没有待办任务', todoNoDone: '还没有完成项', todoPendingReview: '待确认完成', todoPromptPreview: '提示词', todoDispatch: '启动', todoComplete: '完成', todoRetry: '返工', todoBlock: '阻塞', todoUnblock: '解除阻塞', todoDelete: '删除', todoEdit: '编辑', todoSaved: 'Todo 已保存', todoLaunched: '已请求启动 Todo', todoCopied: '提示词已复制', todoBlocked: '已阻塞', todoDone: '已完成', todoReady: '就绪', todoRunning: '运行中', todoReview: '待确认', todoUnbound: '已派发，未绑定', todoBound: '已绑定会话', todoCountsText: '待办 {active} / 完成 {done}', todoCreateFromHandoff: '已将接续保存为 Todo',
         handoffPromptIdLabel: 'AgentWatcher 接续 ID',
         handoffSourceAccessTitle: '【来源访问】',
         handoffTargetAgentLabel: '目标代理',
@@ -11281,7 +11475,7 @@
     }
 
     function isChildWindow() {
-      return isPreviewWindow || isHandoffWindow || isTodoWindow || isPerformanceWindow;
+      return isPreviewWindow || isHandoffWindow || isTodoWindow || isPerformanceWindow || isAnalyticsWindow;
     }
 
     function nativeWindowShouldFocus(requested = true) {
@@ -11413,7 +11607,7 @@
 
     function emitRuntimeSettings(targetLabel) {
       const payload = runtimeSettingsPayload();
-      const targets = targetLabel ? [targetLabel] : ['session-preview', 'handoff-panel', 'todo-panel', 'performance-panel'];
+      const targets = targetLabel ? [targetLabel] : ['session-preview', 'handoff-panel', 'todo-panel', 'performance-panel', 'analytics-panel'];
       targets.forEach(label => tauriEmitTo?.(label, 'agentwatcher-settings-data', payload).catch(() => {}));
       return payload;
     }
@@ -13361,6 +13555,743 @@
       return true;
     }
 
+    // ===== 会话分析面板（单会话全生命周期） =====
+    const ANALYTICS_PANEL_MIN_WIDTH = 560;
+    const ANALYTICS_PANEL_MIN_HEIGHT = 480;
+    const ANALYTICS_PANEL_DEFAULT_SIZE = { width: 880, height: 640 };
+    const ANALYTICS_MODEL_COLORS = ['#75beff', '#4ec9b0', '#d7ba7d', '#c586c0', '#ce9178', '#4fb3d8', '#9cdcfe'];
+    const ANALYTICS_PROVIDER_LABELS = {
+      copilot: 'Copilot Chat', 'copilot-cli': 'Copilot CLI', claude: 'Claude',
+      codex: 'Codex', opencode: 'OpenCode', zcode: 'ZCode'
+    };
+    let nativeAnalyticsWindow = null;
+    let analyticsWindowDesiredVisible = false;
+    let latestAnalyticsTarget = null;
+    let analyticsState = { granularity: 'hour', hiddenModels: {}, lifecycle: null, usageDetail: null, target: null, modelOrder: [] };
+    let analyticsChartRefs = { usage: null, ctx: null, rhythm: null };
+
+    function analyticsProviderLabel(provider) {
+      return ANALYTICS_PROVIDER_LABELS[String(provider || '')] || String(provider || '—');
+    }
+
+    function analyticsModelColor(model) {
+      const order = analyticsState.modelOrder.indexOf(model);
+      return ANALYTICS_MODEL_COLORS[(order >= 0 ? order : 0) % ANALYTICS_MODEL_COLORS.length];
+    }
+
+    function analyticsNumberOr(value, min = 0) {
+      const number = Number(value);
+      return Number.isFinite(number) && number > min ? number : null;
+    }
+
+    function analyticsAnalyticsBucketMs() {
+      if (analyticsState.granularity === '6h') return 6 * 3600000;
+      if (analyticsState.granularity === 'day') return 24 * 3600000;
+      return 3600000;
+    }
+
+    function analyticsSpan() {
+      const lifecycle = analyticsState.lifecycle;
+      const stamps = [];
+      (lifecycle?.calls || []).forEach(call => stamps.push(Number(call.tMs) || 0));
+      (lifecycle?.turnTimestamps || []).forEach(stamp => stamps.push(Number(stamp) || 0));
+      (lifecycle?.toolTimestamps || []).forEach(stamp => stamps.push(Number(stamp) || 0));
+      const positive = stamps.filter(stamp => stamp > 0);
+      if (!positive.length) return null;
+      return { start: Math.min(...positive), end: Math.max(...positive) };
+    }
+
+    function analyticsBuckets() {
+      const span = analyticsSpan();
+      if (!span) return [];
+      const size = analyticsAnalyticsBucketMs();
+      const map = new Map();
+      (analyticsState.lifecycle?.calls || []).forEach(call => {
+        const t = Number(call.tMs) || 0;
+        if (t <= 0) return;
+        const start = Math.floor((t - span.start) / size) * size + span.start;
+        if (!map.has(start)) map.set(start, { start, end: start + size, models: {}, calls: 0, ctxEnd: 0 });
+        const bucket = map.get(start);
+        bucket.calls++;
+        const model = call.model || '—';
+        bucket.models[model] = bucket.models[model] || { in: 0, out: 0, calls: 0 };
+        bucket.models[model].in += Number(call.inputTokens) || 0;
+        bucket.models[model].out += Number(call.outputTokens) || 0;
+        bucket.models[model].calls++;
+        const ctx = Number(call.contextTokens) || 0;
+        if (ctx > bucket.ctxEnd) bucket.ctxEnd = ctx;
+      });
+      return Array.from(map.values()).sort((left, right) => left.start - right.start);
+    }
+
+    function analyticsVisibleModels() {
+      return analyticsState.modelOrder.filter(model => !analyticsState.hiddenModels[model]);
+    }
+
+    function analyticsSvgEl(name, attrs) {
+      const node = document.createElementNS('http://www.w3.org/2000/svg', name);
+      Object.keys(attrs || {}).forEach(key => node.setAttribute(key, attrs[key]));
+      return node;
+    }
+
+    function analyticsPad() { return { left: 52, right: 10 }; }
+
+    function analyticsPlotWidth(hostWidth) {
+      const pad = analyticsPad();
+      return Math.max(200, hostWidth - pad.left - pad.right);
+    }
+
+    function analyticsXOf(ms, span, width) {
+      const pad = analyticsPad();
+      return pad.left + (ms - span.start) / Math.max(1, span.end - span.start) * analyticsPlotWidth(width);
+    }
+
+    function analyticsMsAt(px, span, width) {
+      const pad = analyticsPad();
+      return span.start + (px - pad.left) / analyticsPlotWidth(width) * Math.max(1, span.end - span.start);
+    }
+
+    function analyticsClockLabel(ms) {
+      const d = new Date(ms);
+      const pad2 = value => String(value).padStart(2, '0');
+      return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+    }
+
+    function analyticsTickLabel(ms) {
+      const d = new Date(ms);
+      if (analyticsState.granularity === 'day') return (d.getMonth() + 1) + '/' + d.getDate();
+      if (d.getHours() === 0) return (d.getMonth() + 1) + '/' + d.getDate();
+      return String(d.getHours()).padStart(2, '0') + ':00';
+    }
+
+    function drawAnalyticsUsageChart() {
+      const host = document.getElementById('analyticsUsageChart');
+      if (!host) return;
+      host.replaceChildren();
+      const span = analyticsSpan();
+      const buckets = analyticsBuckets();
+      const visible = analyticsVisibleModels();
+      const W = Math.max(300, host.clientWidth || 640);
+      const H = 168, padT = 8, padB = 20;
+      const svg = analyticsSvgEl('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', height: H, role: 'img', 'aria-label': t('analyticsUsageTitle') });
+      const pad = analyticsPad();
+      let maxV = 0;
+      buckets.forEach(bucket => {
+        const sum = visible.reduce((acc, model) => acc + (bucket.models[model]?.in || 0), 0);
+        if (sum > maxV) maxV = sum;
+      });
+      const ceil = Math.max(1e6, Math.ceil((maxV * 1.12) / 2e7) * 2e7);
+      const yV = value => padT + (H - padT - padB) * (1 - value / ceil);
+      for (let tick = 0; tick <= 4; tick++) {
+        const value = ceil * tick / 4;
+        const y = yV(value);
+        svg.appendChild(analyticsSvgEl('line', { x1: pad.left, x2: W - pad.right, y1: y, y2: y, stroke: 'var(--border)', 'stroke-width': '1' }));
+        const label = analyticsSvgEl('text', { x: pad.left - 6, y: y + 3.5, 'text-anchor': 'end', fill: 'var(--muted)' });
+        label.textContent = formatUsageTokens(value);
+        svg.appendChild(label);
+      }
+      if (span && buckets.length) {
+        const under = [];
+        visible.forEach(model => {
+          const tops = [], bottoms = [];
+          buckets.forEach(bucket => {
+            const bx0 = Math.max(pad.left, analyticsXOf(bucket.start, span, W));
+            const bx1 = Math.min(W - pad.right, analyticsXOf(bucket.end, span, W));
+            let top = 0, bottom = 0;
+            visible.forEach(visibleModel => {
+              const cell = bucket.models[visibleModel];
+              if (visibleModel === model && cell) top += cell.in;
+              if (under.includes(visibleModel) && cell) bottom += cell.in;
+            });
+            tops.push([bx0, bx1, top]);
+            bottoms.push([bx0, bx1, bottom]);
+          });
+          let path = `M${pad.left} ${yV(0).toFixed(1)}`;
+          tops.forEach(point => {
+            path += ` L${point[0].toFixed(1)} ${yV(point[2]).toFixed(1)} L${point[1].toFixed(1)} ${yV(point[2]).toFixed(1)}`;
+          });
+          path += ` L${(W - pad.right).toFixed(1)} ${yV(0).toFixed(1)}`;
+          for (let index = bottoms.length - 1; index >= 0; index--) {
+            path += ` L${bottoms[index][1].toFixed(1)} ${yV(bottoms[index][2]).toFixed(1)} L${bottoms[index][0].toFixed(1)} ${yV(bottoms[index][2]).toFixed(1)}`;
+          }
+          path += ' Z';
+          svg.appendChild(analyticsSvgEl('path', {
+            d: path, fill: analyticsModelColor(model), 'fill-opacity': '0.55',
+            stroke: analyticsModelColor(model), 'stroke-width': '1.2'
+          }));
+          under.push(model);
+        });
+        const size = analyticsAnalyticsBucketMs();
+        const tickStep = size * (analyticsState.granularity === 'hour' ? 6 : 1);
+        let tick = Math.ceil(span.start / tickStep) * tickStep;
+        for (; tick <= span.end; tick += tickStep) {
+          const tx = analyticsXOf(tick, span, W);
+          const label = analyticsSvgEl('text', { x: tx, y: H - 6, 'text-anchor': 'middle', fill: 'var(--muted)' });
+          label.textContent = analyticsTickLabel(tick);
+          svg.appendChild(label);
+        }
+      } else {
+        const empty = analyticsSvgEl('text', { x: (pad.left + W - pad.right) / 2, y: H / 2, 'text-anchor': 'middle', fill: 'var(--muted)' });
+        empty.textContent = t('analyticsNoTimeline');
+        svg.appendChild(empty);
+      }
+      const guide = analyticsSvgEl('line', { x1: 0, x2: 0, y1: padT, y2: H - padB, stroke: 'var(--muted)', 'stroke-width': '1', 'stroke-dasharray': '3 3', visibility: 'hidden' });
+      svg.appendChild(guide);
+      const hit = analyticsSvgEl('rect', { x: pad.left, y: padT, width: analyticsPlotWidth(W), height: H - padT - padB, fill: 'transparent', 'data-analytics-hit': '' });
+      hit.style.cursor = 'crosshair';
+      svg.appendChild(hit);
+      host.appendChild(svg);
+      analyticsChartRefs.usage = { svg, guide, W, H };
+    }
+
+    function drawAnalyticsContextChart() {
+      const host = document.getElementById('analyticsCtxChart');
+      if (!host) return;
+      host.replaceChildren();
+      const lifecycle = analyticsState.lifecycle;
+      const calls = (lifecycle?.calls || []).filter(call => analyticsNumberOr(call.contextTokens) != null);
+      const W = Math.max(300, host.clientWidth || 640);
+      const H = 116, padT = 16, padB = 18;
+      const svg = analyticsSvgEl('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', height: H, role: 'img', 'aria-label': t('analyticsCtxTitle') });
+      const title = analyticsSvgEl('text', { x: analyticsPad().left, y: 10, fill: 'var(--muted)' });
+      title.textContent = t('analyticsCtxTitle');
+      svg.appendChild(title);
+      const span = analyticsSpan();
+      if (!span || !calls.length) {
+        const empty = analyticsSvgEl('text', { x: (analyticsPad().left + W - analyticsPad().right) / 2, y: H / 2, 'text-anchor': 'middle', fill: 'var(--muted)' });
+        empty.textContent = t('analyticsNoTimeline');
+        svg.appendChild(empty);
+        host.appendChild(svg);
+        analyticsChartRefs.ctx = null;
+        return;
+      }
+      const values = calls.map(call => Number(call.contextTokens));
+      const minV = Math.min(...values), maxV = Math.max(...values);
+      const range = maxV - minV || maxV || 1;
+      const domLow = Math.max(0, minV - range * 0.25);
+      const domHigh = maxV + range * 0.15;
+      const yC = value => padT + (H - padT - padB) * (1 - (value - domLow) / (domHigh - domLow));
+      const step = (domHigh - domLow) / 3;
+      [domLow, domLow + step, domLow + step * 2, domHigh].forEach(value => {
+        const y = yC(value);
+        svg.appendChild(analyticsSvgEl('line', { x1: analyticsPad().left, x2: W - analyticsPad().right, y1: y, y2: y, stroke: 'var(--border)', 'stroke-width': '1' }));
+        const label = analyticsSvgEl('text', { x: analyticsPad().left - 6, y: y + 3.5, 'text-anchor': 'end', fill: 'var(--muted)' });
+        label.textContent = formatUsageTokens(Math.round(value));
+        svg.appendChild(label);
+      });
+      const windowTokens = analyticsNumberOr(lifecycle?.contextWindowTokens);
+      if (windowTokens != null && windowTokens <= domHigh) {
+        const y = yC(windowTokens);
+        svg.appendChild(analyticsSvgEl('line', { x1: analyticsPad().left, x2: W - analyticsPad().right, y1: y, y2: y, stroke: 'var(--soft)', 'stroke-width': '1', 'stroke-dasharray': '5 4' }));
+        const label = analyticsSvgEl('text', { x: W - analyticsPad().right, y: y - 4, 'text-anchor': 'end', fill: 'var(--soft)' });
+        label.textContent = t('analyticsWindowLimit').replace('{tokens}', formatUsageTokens(windowTokens));
+        svg.appendChild(label);
+      }
+      const points = calls.map(call => `${analyticsXOf(Number(call.tMs), span, W).toFixed(1)},${yC(Number(call.contextTokens)).toFixed(1)}`).join(' ');
+      svg.appendChild(analyticsSvgEl('polyline', { points, fill: 'none', stroke: 'var(--accent)', 'stroke-width': '1.6', 'stroke-linejoin': 'round' }));
+      svg.appendChild(analyticsSvgEl('polyline', {
+        points: `${analyticsPad().left},${H - padB} ${points} ${W - analyticsPad().right},${H - padB}`,
+        fill: 'var(--accent)', 'fill-opacity': '0.1', stroke: 'none'
+      }));
+      // 压缩回落：相邻调用间上下文骤降超过 40% 时标注
+      for (let index = 1; index < calls.length; index++) {
+        const previous = Number(calls[index - 1].contextTokens);
+        const current = Number(calls[index].contextTokens);
+        if (previous > 0 && current < previous * 0.6) {
+          const cx = analyticsXOf(Number(calls[index].tMs), span, W);
+          const cy = yC(current);
+          svg.appendChild(analyticsSvgEl('circle', { cx, cy, r: 3.5, fill: 'var(--accent)' }));
+          const tag = analyticsSvgEl('text', { x: Math.min(cx + 7, W - 44), y: cy - 8, fill: 'var(--muted)' });
+          tag.textContent = t('analyticsCompact');
+          svg.appendChild(tag);
+          break;
+        }
+      }
+      const guide = analyticsSvgEl('line', { x1: 0, x2: 0, y1: padT, y2: H - padB, stroke: 'var(--muted)', 'stroke-width': '1', 'stroke-dasharray': '3 3', visibility: 'hidden' });
+      svg.appendChild(guide);
+      const hit = analyticsSvgEl('rect', { x: analyticsPad().left, y: padT, width: analyticsPlotWidth(W), height: H - padT - padB, fill: 'transparent', 'data-analytics-hit': '' });
+      hit.style.cursor = 'crosshair';
+      svg.appendChild(hit);
+      host.appendChild(svg);
+      analyticsChartRefs.ctx = { svg, guide, W, H };
+    }
+
+    function drawAnalyticsRhythmChart() {
+      const host = document.getElementById('analyticsRhythmChart');
+      if (!host) return;
+      host.replaceChildren();
+      const lifecycle = analyticsState.lifecycle;
+      const span = analyticsSpan();
+      const W = Math.max(300, host.clientWidth || 640);
+      const H = 34, padT = 12, barH = 12;
+      const svg = analyticsSvgEl('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', height: H, role: 'img', 'aria-label': t('analyticsRhythmTitle') });
+      const title = analyticsSvgEl('text', { x: analyticsPad().left, y: 8, fill: 'var(--muted)' });
+      title.textContent = t('analyticsRhythmTitle');
+      svg.appendChild(title);
+      if (!span) {
+        host.appendChild(svg);
+        analyticsChartRefs.rhythm = null;
+        return;
+      }
+      const baseY = padT;
+      svg.appendChild(analyticsSvgEl('rect', { x: analyticsPad().left, y: baseY, width: analyticsPlotWidth(W), height: barH, fill: 'var(--surface-3)', rx: 2 }));
+      const buckets = analyticsBuckets();
+      const toolsByBucket = new Map();
+      (lifecycle?.toolTimestamps || []).forEach(stamp => {
+        const key = Math.floor((stamp - span.start) / analyticsAnalyticsBucketMs());
+        toolsByBucket.set(key, (toolsByBucket.get(key) || 0) + 1);
+      });
+      let maxTools = 1;
+      toolsByBucket.forEach(count => { if (count > maxTools) maxTools = count; });
+      const activeBuckets = new Set(buckets.map(bucket => Math.floor((bucket.start - span.start) / analyticsAnalyticsBucketMs())));
+      buckets.forEach(bucket => {
+        const key = Math.floor((bucket.start - span.start) / analyticsAnalyticsBucketMs());
+        const x0 = Math.max(analyticsPad().left, analyticsXOf(bucket.start, span, W));
+        const x1 = Math.min(W - analyticsPad().right, analyticsXOf(bucket.end, span, W));
+        const opacity = 0.2 + 0.55 * ((toolsByBucket.get(key) || 0) / maxTools);
+        svg.appendChild(analyticsSvgEl('rect', {
+          x: x0 + 0.5, y: baseY, width: Math.max(0.5, x1 - x0 - 1), height: barH,
+          fill: 'var(--accent)', 'fill-opacity': opacity.toFixed(2)
+        }));
+      });
+      (lifecycle?.turnTimestamps || []).forEach(stamp => {
+        const x = analyticsXOf(stamp, span, W);
+        svg.appendChild(analyticsSvgEl('path', {
+          d: `M${x} ${baseY - 4} l3.2 4 l-3.2 4 l-3.2 -4 Z`, fill: 'var(--idle)'
+        }));
+      });
+      const _ = activeBuckets;
+      const guide = analyticsSvgEl('line', { x1: 0, x2: 0, y1: padT - 6, y2: H - 6, stroke: 'var(--muted)', 'stroke-width': '1', 'stroke-dasharray': '3 3', visibility: 'hidden' });
+      svg.appendChild(guide);
+      const hit = analyticsSvgEl('rect', { x: analyticsPad().left, y: padT - 8, width: analyticsPlotWidth(W), height: H - padT + 4, fill: 'transparent', 'data-analytics-hit': '' });
+      hit.style.cursor = 'crosshair';
+      svg.appendChild(hit);
+      host.appendChild(svg);
+      analyticsChartRefs.rhythm = { svg, guide, W, H };
+    }
+
+    function analyticsWireHover() {
+      const tip = document.getElementById('analyticsTip');
+      ['usage', 'ctx', 'rhythm'].forEach(key => {
+        const ref = analyticsChartRefs[key];
+        if (!ref) return;
+        ref.svg.querySelectorAll('[data-analytics-hit]').forEach(hit => {
+          hit.onmousemove = event => {
+            const rect = ref.svg.getBoundingClientRect();
+            const scale = rect.width / ref.W;
+            const px = (event.clientX - rect.left) / scale;
+            const span = analyticsSpan();
+            if (!span) return;
+            const ms = analyticsMsAt(px, span, ref.W);
+            const bx = analyticsXOf(ms, span, ref.W);
+            ['usage', 'ctx', 'rhythm'].forEach(otherKey => {
+              const other = analyticsChartRefs[otherKey];
+              if (!other) return;
+              other.guide.setAttribute('x1', bx);
+              other.guide.setAttribute('x2', bx);
+              other.guide.setAttribute('visibility', 'visible');
+            });
+            if (key !== 'usage' || !tip) return;
+            const buckets = analyticsBuckets();
+            const bucket = buckets.find(item => ms >= item.start && ms < item.end)
+              || (ms < buckets[0]?.start ? buckets[0] : buckets[buckets.length - 1]);
+            if (!bucket) return;
+            const rows = [];
+            rows.push(`<div class="tip-time">${analyticsClockLabel(bucket.start)} – ${analyticsClockLabel(Math.min(bucket.end, span.end))}</div>`);
+            analyticsVisibleModels().forEach(model => {
+              const cell = bucket.models[model];
+              if (!cell || cell.in + cell.out <= 0) return;
+              rows.push(
+                `<div class="analytics-tip-row"><span class="d" style="background:${analyticsModelColor(model)}"></span>` +
+                `<span class="n">${model}</span>` +
+                `<span class="x">${t('analyticsTipIn')} ${formatUsageTokens(cell.in)} · ${t('analyticsTipOut')} ${formatUsageTokens(cell.out)} · ${cell.calls}</span></div>`
+              );
+            });
+            if (bucket.ctxEnd > 0) {
+              rows.push(`<div class="analytics-tip-row"><span class="n" style="color:var(--muted)">${t('analyticsTipCtx')}</span><span class="x">${formatUsageTokens(bucket.ctxEnd)}</span></div>`);
+            }
+            tip.innerHTML = rows.join('');
+            tip.style.display = 'block';
+            const box = document.getElementById('analyticsUsageBox');
+            const boxWidth = box?.clientWidth || 640;
+            const tipWidth = tip.offsetWidth || 200;
+            let left = bx - tipWidth / 2 - 8;
+            if (left < 2) left = 2;
+            if (left + tipWidth > boxWidth - 2) left = boxWidth - tipWidth - 2;
+            tip.style.left = left + 'px';
+            tip.style.top = '4px';
+          };
+          hit.onmouseleave = () => {
+            ['usage', 'ctx', 'rhythm'].forEach(otherKey => {
+              analyticsChartRefs[otherKey]?.guide.setAttribute('visibility', 'hidden');
+            });
+            if (tip) tip.style.display = 'none';
+          };
+        });
+      });
+    }
+
+    function renderAnalyticsIdentity() {
+      const host = document.getElementById('analyticsIdentity');
+      const target = analyticsState.target;
+      if (!host || !target) return;
+      const statusMap = { waiting: ['waiting', 'waiting'], running: ['running', 'running'], idle: ['soft', 'idle'] };
+      const status = statusMap[target.statusClass] || statusMap.idle;
+      const models = analyticsState.modelOrder;
+      const chips = models.map(model => {
+        const hidden = analyticsState.hiddenModels[model] ? 'false' : 'true';
+        const sums = analyticsModelSums();
+        const share = sums[model] && sums.total > 0 ? Math.round(sums[model].in * 100 / sums.total) : 0;
+        return `<button type="button" class="analytics-chip" data-analytics-model="${model}" aria-pressed="${hidden}" title="${t('analyticsChipHint')}">` +
+          `<span class="swatch" style="background:${analyticsModelColor(model)}"></span>${model} <b>${share}%</b></button>`;
+      }).join('');
+      host.innerHTML =
+        '<div class="analytics-id-main">' +
+        '<div class="analytics-id-title-row">' +
+        `<span class="provider">${target.providerLabel}</span>` +
+        `<span class="analytics-id-title" title="${target.title.replace(/"/g, '&quot;')}">${target.title}</span>` +
+        '</div>' +
+        '<div class="analytics-id-meta">' +
+        `<span title="${(target.workspacePath || target.workspace || '').replace(/"/g, '&quot;')}">${target.workspace || ''}</span>` +
+        `<span class="analytics-status"><span class="analytics-dot" style="background:var(--${status[0]})"></span>${t(status[1])}</span>` +
+        `<span>${target.timeLabel || ''}</span>` +
+        '</div></div>' +
+        `<div class="analytics-chip-row">${chips}</div>`;
+    }
+
+    function analyticsModelSums() {
+      const sums = { total: 0 };
+      (analyticsState.lifecycle?.calls || []).forEach(call => {
+        const model = call.model || '—';
+        sums[model] = sums[model] || { in: 0, out: 0, calls: 0 };
+        sums[model].in += Number(call.inputTokens) || 0;
+        sums[model].out += Number(call.outputTokens) || 0;
+        sums[model].calls++;
+        sums.total += Number(call.inputTokens) || 0;
+      });
+      return sums;
+    }
+
+    function renderAnalyticsCards() {
+      const host = document.getElementById('analyticsCards');
+      if (!host) return;
+      const dash = '—';
+      const usage = analyticsState.lifecycle?.usage || null;
+      const numberOr = analyticsNumberOr;
+      const totalInput = usage ? numberOr(usage.totalInputTokens) : null;
+      const cached = usage ? numberOr(usage.cachedInputTokens) : null;
+      const output = usage ? numberOr(usage.totalOutputTokens) : null;
+      const modelCalls = usage ? numberOr(usage.modelCalls) : null;
+      const toolCalls = usage ? numberOr(usage.toolCalls) : null;
+      const turns = usage ? numberOr(usage.userTurns) : null;
+      const activeMs = usage ? numberOr(usage.activeDurationMs) : null;
+      const spanMs = usage ? numberOr(usage.durationMs) : null;
+      const costUsd = usage ? numberOr(usage.costUsd) : null;
+      const credits = usage ? numberOr(usage.copilotCredits) : null;
+      let costText = dash, costSub = '';
+      if (costUsd != null) { costText = '$' + costUsd.toFixed(2); }
+      else if (credits != null) { costText = formatUsageNumber(credits); costSub = 'credits'; }
+      let durationText = dash, durationSub = '';
+      if (activeMs != null && spanMs != null) {
+        durationText = formatUsageDuration(activeMs);
+        durationSub = t('usageActiveSpan').replace('{active}', formatUsageDuration(activeMs)).replace('{span}', formatUsageDuration(spanMs));
+      } else if (spanMs != null) {
+        durationText = formatUsageDuration(spanMs);
+      }
+      const cards = [
+        { k: t('usageTotalInput'), v: totalInput != null ? formatUsageTokens(totalInput) : dash, s: totalInput && cached != null ? t('usageCached').replace('{percent}', String(Math.round(cached / totalInput * 100))) : '' },
+        { k: t('usageOutput'), v: output != null ? formatUsageTokens(output) : dash, s: '' },
+        { k: t('usageModelCalls'), v: modelCalls != null ? modelCalls.toLocaleString('en-US') : dash, s: '' },
+        { k: t('usageToolCalls'), v: toolCalls != null ? toolCalls.toLocaleString('en-US') : dash, s: '' },
+        { k: t('usageTurns'), v: turns != null ? String(turns) : dash, s: '' },
+        { k: t('usageDuration'), v: durationText, s: durationSub },
+        { k: t('usageCost'), v: costText, s: costSub }
+      ];
+      host.innerHTML = cards.map(card =>
+        `<div class="analytics-stat"><div class="k">${card.k}</div><div class="v">${card.v}</div>` +
+        (card.s ? `<div class="s">${card.s}</div>` : '') + '</div>'
+      ).join('');
+    }
+
+    function renderAnalyticsBreakdowns() {
+      const usage = analyticsState.lifecycle?.usage || null;
+      const dash = '—';
+      const typeBar = document.getElementById('analyticsTypeBar');
+      const typeList = document.getElementById('analyticsTypeList');
+      if (typeBar && typeList) {
+        const total = analyticsNumberOr(usage?.totalInputTokens);
+        const cached = analyticsNumberOr(usage?.cachedInputTokens);
+        const output = analyticsNumberOr(usage?.totalOutputTokens);
+        if (total != null) {
+          const fresh = Math.max(0, total - (cached || 0));
+          const parts = [
+            { key: 'analyticsCacheRead', value: cached || 0, color: '#75beff' },
+            { key: 'analyticsFreshInput', value: fresh, color: '#4ec9b0' },
+            { key: 'analyticsOutput', value: output || 0, color: '#d7ba7d' }
+          ];
+          const sum = parts.reduce((acc, part) => acc + part.value, 0) || 1;
+          typeBar.innerHTML = parts.map(part =>
+            `<span style="width:${(part.value / sum * 100).toFixed(2)}%;background:${part.color}"></span>`
+          ).join('');
+          typeList.innerHTML = parts.map(part =>
+            `<div class="analytics-bd-row"><span class="d" style="background:${part.color}"></span>` +
+            `<span class="n">${t(part.key)}</span>` +
+            `<span class="x">${formatUsageTokens(part.value)} · ${(part.value / sum * 100).toFixed(part.value / sum < 0.0001 ? 2 : 1)}%</span></div>`
+          ).join('');
+        } else {
+          typeBar.innerHTML = '';
+          typeList.innerHTML = `<div class="analytics-bd-row"><span class="n">${dash}</span></div>`;
+        }
+      }
+      const modelBar = document.getElementById('analyticsModelBar');
+      const modelList = document.getElementById('analyticsModelList');
+      if (modelBar && modelList) {
+        const sums = analyticsModelSums();
+        const models = analyticsState.modelOrder.filter(model => sums[model] && sums[model].in + sums[model].out > 0);
+        if (models.length) {
+          modelBar.innerHTML = models.map(model =>
+            `<span style="width:${(sums[model].in / Math.max(1, sums.total) * 100).toFixed(2)}%;background:${analyticsModelColor(model)}"></span>`
+          ).join('');
+          modelList.innerHTML = models.map(model =>
+            `<div class="analytics-bd-row"><span class="d" style="background:${analyticsModelColor(model)}"></span>` +
+            `<span class="n">${model}</span>` +
+            `<span class="x">${formatUsageTokens(sums[model].in)} · ${Math.round(sums[model].in * 100 / Math.max(1, sums.total))}% · ${sums[model].calls.toLocaleString('en-US')} ${t('analyticsModelCallsUnit')}</span></div>`
+          ).join('');
+        } else {
+          modelBar.innerHTML = '';
+          modelList.innerHTML = `<div class="analytics-bd-row"><span class="n">${dash}</span></div>`;
+        }
+      }
+      const toolList = document.getElementById('analyticsToolList');
+      const toolNote = document.getElementById('analyticsToolNote');
+      if (toolList) {
+        const tools = (analyticsState.usageDetail?.topTools || []).filter(tool => tool && tool.name);
+        if (tools.length) {
+          const maxCount = tools.reduce((acc, tool) => Math.max(acc, Number(tool.count) || 0), 1);
+          toolList.innerHTML = tools.map(tool =>
+            `<div class="analytics-tool-row"><span class="tn">${tool.name}</span>` +
+            `<span class="analytics-tool-track"><span class="analytics-tool-fill" style="width:${((Number(tool.count) || 0) / maxCount * 100).toFixed(1)}%"></span></span>` +
+            `<span class="tc">${(Number(tool.count) || 0).toLocaleString('en-US')}</span></div>`
+          ).join('');
+        } else {
+          toolList.innerHTML = `<div class="analytics-bd-row"><span class="n">${dash}</span></div>`;
+        }
+        if (toolNote) {
+          const total = analyticsNumberOr(analyticsState.lifecycle?.usage?.toolCalls);
+          const listed = tools.reduce((acc, tool) => acc + (Number(tool.count) || 0), 0);
+          toolNote.textContent = total != null && total > listed
+            ? t('analyticsToolNoteRest').replace('{count}', (total - listed).toLocaleString('en-US'))
+            : '';
+        }
+      }
+    }
+
+    function renderAnalyticsAll() {
+      const lifecycle = analyticsState.lifecycle;
+      const empty = document.getElementById('analyticsEmpty');
+      const chartPanel = document.getElementById('analyticsChartPanel');
+      const hasTimeline = !!lifecycle && ((lifecycle.calls || []).length > 0 || (lifecycle.turnTimestamps || []).length > 0 || (lifecycle.toolTimestamps || []).length > 0);
+      if (empty) {
+        empty.hidden = !!lifecycle;
+        empty.textContent = lifecycle ? '' : t('analyticsNoTimeline');
+      }
+      if (chartPanel) chartPanel.style.display = hasTimeline ? '' : 'none';
+      const degraded = document.getElementById('analyticsDegraded');
+      if (degraded) {
+        degraded.hidden = !lifecycle?.degraded;
+        degraded.textContent = t('analyticsDegraded');
+      }
+      renderAnalyticsIdentity();
+      renderAnalyticsCards();
+      drawAnalyticsUsageChart();
+      drawAnalyticsContextChart();
+      drawAnalyticsRhythmChart();
+      analyticsWireHover();
+      renderAnalyticsBreakdowns();
+    }
+
+    async function loadAnalyticsLifecycle(target) {
+      analyticsState.target = target;
+      analyticsState.lifecycle = null;
+      analyticsState.usageDetail = null;
+      renderAnalyticsAll();
+      try {
+        const lifecycle = await tauriInvoke('get_session_lifecycle', {
+          request: { id: target.id, provider: target.provider, sessionPath: target.sessionPath || null }
+        });
+        const order = [];
+        (lifecycle?.calls || []).forEach(call => {
+          const model = call.model || '—';
+          if (!order.includes(model)) order.push(model);
+        });
+        analyticsState.modelOrder = order;
+        analyticsState.lifecycle = lifecycle || null;
+        renderAnalyticsAll();
+        let detail = null;
+        try {
+          detail = await tauriInvoke('get_session_usage_detail', { id: target.id });
+        } catch (detailError) {
+          detail = null;
+        }
+        analyticsState.usageDetail = detail;
+        renderAnalyticsBreakdowns();
+      } catch (error) {
+        analyticsState.lifecycle = { id: target.id, provider: target.provider, usage: null, calls: [], turnTimestamps: [], toolTimestamps: [], degraded: false };
+        analyticsState.modelOrder = [];
+        renderAnalyticsAll();
+        if (!isSilentDebugMode()) showToast(t('analyticsLoadFailed') + ': ' + (error?.message || error));
+      }
+    }
+
+    function setupAnalyticsWindow() {
+      document.title = 'AgentWatcher Analytics';
+      const panel = document.getElementById('analyticsPanel');
+      if (panel) panel.hidden = false;
+      applyLanguage();
+      tauriListen?.('agentwatcher-settings-data', event => {
+        applyRuntimeSettings(event.payload);
+        renderAnalyticsAll();
+      }).catch(() => {});
+      tauriListen?.('agentwatcher-analytics-target', event => {
+        const target = event.payload;
+        if (target?.id) loadAnalyticsLifecycle(target);
+      }).catch(() => {});
+      const granularityButtons = [
+        ['analyticsGHour', 'hour'],
+        ['analyticsG6h', '6h'],
+        ['analyticsGDay', 'day']
+      ];
+      granularityButtons.forEach(([id, value]) => {
+        document.getElementById(id)?.addEventListener('click', () => {
+          analyticsState.granularity = value;
+          granularityButtons.forEach(([buttonId]) => {
+            document.getElementById(buttonId)?.setAttribute('aria-pressed', buttonId === id ? 'true' : 'false');
+          });
+          renderAnalyticsAll();
+        });
+      });
+      document.getElementById('analyticsChips')?.addEventListener('click', event => {
+        const chip = event.target.closest?.('[data-analytics-model]');
+        if (!chip) return;
+        const model = chip.getAttribute('data-analytics-model');
+        const visibleModels = analyticsVisibleModels();
+        if (!analyticsState.hiddenModels[model] && visibleModels.length <= 1) return;
+        analyticsState.hiddenModels[model] = !analyticsState.hiddenModels[model];
+        renderAnalyticsIdentity();
+        drawAnalyticsUsageChart();
+        analyticsWireHover();
+      });
+      document.getElementById('analyticsClose')?.addEventListener('click', async () => {
+        tauriEmitTo?.('main', 'agentwatcher-analytics-close', {}).catch(() => {});
+        try {
+          await tauriWindow?.hide();
+        } catch (error) {
+          try { await tauriWindow?.close(); } catch (closeError) { /* last resort ignore */ }
+        }
+      });
+      document.getElementById('analyticsTitlebar')?.addEventListener('pointerdown', () => {
+        if (tauriWindow) tauriWindow.startDragging().catch(() => {});
+      });
+      if (window.ResizeObserver) {
+        new ResizeObserver(() => {
+          if (!analyticsState.lifecycle) return;
+          drawAnalyticsUsageChart();
+          drawAnalyticsContextChart();
+          drawAnalyticsRhythmChart();
+          analyticsWireHover();
+        }).observe(document.getElementById('analyticsBody') || document.body);
+      }
+      tauriEmitTo?.('main', 'agentwatcher-analytics-ready', {}).catch(() => {});
+    }
+
+    async function nativeAnalyticsWindowPosition() {
+      return nativeSidePanelWindowPosition(ANALYTICS_PANEL_DEFAULT_SIZE.width, ANALYTICS_PANEL_DEFAULT_SIZE.height, { x: 128, y: 96 });
+    }
+
+    async function revealNativeAnalyticsWindow(existing = null) {
+      if (!WebviewWindowClass || !analyticsWindowDesiredVisible) return false;
+      const windowRef = await usableNativeWindow('analytics-panel', existing || nativeAnalyticsWindow);
+      if (!windowRef) return false;
+      nativeAnalyticsWindow = windowRef;
+      emitRuntimeSettings('analytics-panel');
+      if (latestAnalyticsTarget) {
+        await tauriEmitTo?.('analytics-panel', 'agentwatcher-analytics-target', latestAnalyticsTarget).catch(() => {});
+      }
+      await windowRef.show().catch(() => {});
+      await focusNativeWindowIfAllowed(windowRef);
+      return true;
+    }
+
+    async function showNativeAnalyticsWindow() {
+      if (!WebviewWindowClass || isAnalyticsWindow) return false;
+      analyticsWindowDesiredVisible = true;
+      const position = await nativeAnalyticsWindowPosition();
+      const existing = await usableNativeWindow('analytics-panel', nativeAnalyticsWindow);
+      if (existing) {
+        await revealNativeAnalyticsWindow(existing);
+        return true;
+      }
+      nativeAnalyticsWindow = new WebviewWindowClass('analytics-panel', {
+        url: childWindowUrl('?analytics=1'),
+        title: 'AgentWatcher Analytics',
+        x: position.x,
+        y: position.y,
+        width: ANALYTICS_PANEL_DEFAULT_SIZE.width,
+        height: ANALYTICS_PANEL_DEFAULT_SIZE.height,
+        minWidth: ANALYTICS_PANEL_MIN_WIDTH,
+        minHeight: ANALYTICS_PANEL_MIN_HEIGHT,
+        resizable: true,
+        decorations: false,
+        transparent: true,
+        alwaysOnTop: effectiveAlwaysOnTop(),
+        skipTaskbar: true,
+        shadow: false,
+        focus: nativeWindowShouldFocus(true),
+        parent: tauriWindow || 'main',
+        visible: false,
+        preventOverflow: false
+      });
+      nativeAnalyticsWindow.once('tauri://destroyed', () => { nativeAnalyticsWindow = null; });
+      nativeAnalyticsWindow.once('tauri://error', () => { nativeAnalyticsWindow = null; });
+      nativeAnalyticsWindow.once('tauri://created', () => {
+        setNativeWindowPhysicalPosition(nativeAnalyticsWindow, position);
+        scheduleNativeRevealFallback(() => revealNativeAnalyticsWindow(), [420, 1200]);
+      });
+      return true;
+    }
+
+    function analyticsTargetFromSession(session) {
+      if (!session) return null;
+      return {
+        id: String(session.id || ''),
+        provider: String(session.provider || ''),
+        sessionPath: session.sessionPath || null,
+        title: session.title || session.id || '—',
+        workspace: session.workspaceLabel || session.workspace || '',
+        workspacePath: session.workspacePath || '',
+        statusClass: normalizedSessionStatus(session),
+        providerLabel: analyticsProviderLabel(session.provider),
+        timeLabel: session.timeLabel || ''
+      };
+    }
+
+    async function openAnalyticsForSession(sessionOrId) {
+      const session = typeof sessionOrId === 'string'
+        ? sessionData.get(sessionOrId)
+        : sessionOrId;
+      const target = analyticsTargetFromSession(session);
+      if (!target?.id) {
+        showToast(t('analyticsNoSession'));
+        return;
+      }
+      latestAnalyticsTarget = target;
+      if (!(await showNativeAnalyticsWindow())) {
+        if (isPreviewWindow) return;
+        // 浏览器 mock：没有真实窗口时给出提示
+        showToast(t('analyticsWindowTitle'));
+      }
+    }
+
     async function showNativePerformanceWindow() {
       if (!WebviewWindowClass || isPerformanceWindow) return false;
       performanceWindowDesiredVisible = true;
@@ -15166,6 +16097,19 @@
       if (!usage) {
         // Copilot CLI 的数据源没有任何用量字段，明确说明而不是显示一排 0
         if (isCliSource) appendText(section, 'div', 'usage-empty-note', t('usageNoDataNote'));
+        const analyzeButton = document.createElement('button');
+        analyzeButton.type = 'button';
+        analyzeButton.className = 'usage-analyze-btn';
+        analyzeButton.textContent = t('analyticsOpenEntry');
+        analyzeButton.title = t('analyticsPanelTitle');
+        analyzeButton.addEventListener('click', () => {
+          if (isPreviewWindow) {
+            tauriEmitTo?.('main', 'agentwatcher-analytics-open', { sessionId: data.sessionId }).catch(() => {});
+            return;
+          }
+          openAnalyticsForSession(data.sessionId);
+        });
+        section.appendChild(analyzeButton);
         body.appendChild(section);
         return;
       }
@@ -15258,8 +16202,21 @@
       }
       addItem('usageCost', costText, '', costMissing);
 
-      section.appendChild(grid);
+        section.appendChild(grid);
       if (isCliSource) appendText(section, 'div', 'usage-empty-note', t('usageNoDataNote'));
+      const analyzeButton = document.createElement('button');
+      analyzeButton.type = 'button';
+      analyzeButton.className = 'usage-analyze-btn';
+      analyzeButton.textContent = t('analyticsOpenEntry');
+      analyzeButton.title = t('analyticsPanelTitle');
+      analyzeButton.addEventListener('click', () => {
+        if (isPreviewWindow) {
+          tauriEmitTo?.('main', 'agentwatcher-analytics-open', { sessionId: data.sessionId }).catch(() => {});
+          return;
+        }
+        openAnalyticsForSession(data.sessionId);
+      });
+      section.appendChild(analyzeButton);
       body.appendChild(section);
     }
 
@@ -16157,6 +17114,8 @@
       });
     } else if (isTodoWindow) {
       setupTodoWindow();
+    } else if (isAnalyticsWindow) {
+      setupAnalyticsWindow();
     } else if (isPerformanceWindow) {
       setupPerformanceWindow();
       perfAgentScope.addEventListener('click', togglePerformanceAgentProcessScope);
@@ -16202,6 +17161,24 @@
             await existing.hide().catch(() => {});
           }
         }
+      }).catch(() => {});
+      tauriListen?.('agentwatcher-analytics-ready', async () => {
+        const existing = await usableNativeWindow('analytics-panel', nativeAnalyticsWindow);
+        if (existing) {
+          nativeAnalyticsWindow = existing;
+          if (analyticsWindowDesiredVisible) {
+            await revealNativeAnalyticsWindow(existing);
+          } else {
+            await existing.hide().catch(() => {});
+          }
+        }
+      }).catch(() => {});
+      tauriListen?.('agentwatcher-analytics-close', () => {
+        analyticsWindowDesiredVisible = false;
+      }).catch(() => {});
+      tauriListen?.('agentwatcher-analytics-open', event => {
+        const sessionId = event.payload?.sessionId;
+        if (sessionId) openAnalyticsForSession(sessionId);
       }).catch(() => {});
       tauriListen?.('agentwatcher-performance-close', () => {
         performanceWindowDesiredVisible = false;
@@ -16354,6 +17331,10 @@
       handoffOpen.addEventListener('click', openHandoffPanel);
       handoffQuickCopy.addEventListener('click', () => copyHandoffPrompt(t('handoffCopied')));
       handoffOpenSource.addEventListener('click', () => { closeHandoffMenu(); if (handoffSourceCard) openCard(handoffSourceCard); });
+      handoffAnalyze.addEventListener('click', () => {
+        closeHandoffMenu();
+        if (handoffSourceCard) openAnalyticsForSession(handoffSourceCard.dataset.sessionId);
+      });
       handoffClose.addEventListener('click', closeHandoffPanel);
       handoffWorkspaceButton.addEventListener('click', () => handoffWorkspacePopover.hidden ? openHandoffWorkspacePicker() : closeHandoffWorkspacePicker());
       handoffWorkspaceInput.addEventListener('input', () => {
