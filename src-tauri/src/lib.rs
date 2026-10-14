@@ -520,11 +520,13 @@ struct ClaudeSessionSummary {
 struct CodexAppServerProcess {
     port: u16,
     child: Child,
+    job: Option<KillOnCloseJob>,
 }
 
 struct OpenCodeWebServerProcess {
     port: u16,
     child: Child,
+    job: Option<KillOnCloseJob>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -3706,6 +3708,7 @@ pub fn run() {
             tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
         ) {
             shutdown_codex_app_server();
+            shutdown_opencode_web_server();
         }
     });
 }
@@ -6320,7 +6323,7 @@ fn start_owned_opencode_web_server() -> Result<u16, String> {
     command.stdin(Stdio::null());
     command.stdout(Stdio::null());
     command.stderr(Stdio::null());
-    let mut child = spawn_hidden(command)
+    let (mut child, job) = spawn_in_kill_on_close_job(command)
         .map_err(|error| format!("Failed to start OpenCode Web server: {}", error))?;
 
     let start = Instant::now();
@@ -6329,7 +6332,11 @@ fn start_owned_opencode_web_server() -> Result<u16, String> {
             if let Ok(mut server_guard) =
                 OPENCODE_WEB_SERVER.get_or_init(|| Mutex::new(None)).lock()
             {
-                *server_guard = Some(OpenCodeWebServerProcess { port, child });
+                *server_guard = Some(OpenCodeWebServerProcess {
+                    port,
+                    child,
+                    job: Some(job),
+                });
             }
             return Ok(port);
         }
@@ -6338,6 +6345,7 @@ fn start_owned_opencode_web_server() -> Result<u16, String> {
 
     let _ = child.kill();
     let _ = child.wait();
+    drop(job);
     Err(format!(
         "OpenCode Web server did not become ready on port {}",
         port
@@ -6694,14 +6702,19 @@ fn ensure_codex_app_server() -> Result<u16, String> {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
 
-        match spawn_hidden(command) {
-            Ok(mut child) => {
+        match spawn_in_kill_on_close_job(command) {
+            Ok((mut child, job)) => {
                 if wait_for_codex_app_server_ready(port, CODEX_APP_SERVER_READY_TIMEOUT_MS) {
-                    *server_guard = Some(CodexAppServerProcess { port, child });
+                    *server_guard = Some(CodexAppServerProcess {
+                        port,
+                        child,
+                        job: Some(job),
+                    });
                     return Ok(port);
                 }
                 let _ = child.kill();
                 let _ = child.wait();
+                drop(job);
                 last_error = Some(format!(
                     "Codex app-server did not become ready on {}",
                     listen_url
@@ -6717,8 +6730,7 @@ fn ensure_codex_app_server() -> Result<u16, String> {
 }
 
 fn stop_codex_app_server(server: &mut CodexAppServerProcess) {
-    let _ = server.child.kill();
-    let _ = server.child.wait();
+    terminate_server_tree(&mut server.child, &mut server.job);
 }
 
 fn shutdown_codex_app_server() {
@@ -6730,6 +6742,18 @@ fn shutdown_codex_app_server() {
     };
     if let Some(mut server) = server_guard.take() {
         stop_codex_app_server(&mut server);
+    }
+}
+
+fn shutdown_opencode_web_server() {
+    let Some(server_mutex) = OPENCODE_WEB_SERVER.get() else {
+        return;
+    };
+    let Ok(mut server_guard) = server_mutex.lock() else {
+        return;
+    };
+    if let Some(mut server) = server_guard.take() {
+        terminate_server_tree(&mut server.child, &mut server.job);
     }
 }
 
@@ -10525,6 +10549,153 @@ fn spawn_hidden(mut command: Command) -> std::io::Result<Child> {
     command.spawn()
 }
 
+/// Windows Job Object 句柄，带 kill-on-close 限制：宿主无论正常退出还是被
+/// 强杀，句柄被系统关闭时整棵挂进作业的子进程树（含孙进程）一起终止。
+/// codex app-server 与 opencode serve 都是 cmd/node 多层进程树，
+/// `Child::kill` 只能终止直接子进程，孙进程必须靠这个作业兜底。
+#[cfg(target_os = "windows")]
+struct KillOnCloseJob(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(not(target_os = "windows"))]
+struct KillOnCloseJob;
+
+#[cfg(target_os = "windows")]
+impl std::fmt::Debug for KillOnCloseJob {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_tuple("KillOnCloseJob").field(&self.0).finish()
+    }
+}
+
+#[cfg(target_os = "windows")]
+// 句柄只经由服务互斥锁串行使用，CloseHandle 本身线程安全；
+// 静态 OnceLock 存储要求跨线程传递。
+unsafe impl Send for KillOnCloseJob {}
+
+#[cfg(target_os = "windows")]
+unsafe impl Sync for KillOnCloseJob {}
+
+#[cfg(target_os = "windows")]
+impl Drop for KillOnCloseJob {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
+/// 把子进程挂进 kill-on-close 作业后再放行。
+/// CREATE_SUSPENDED 起进程、挂作业、恢复主线程，保证直接子进程派生的
+/// 所有后代（node、codex.exe 等）都在作业里；进程刚创建时只有主线程一个，
+/// 快照里属于该 pid 的线程就是它。
+#[cfg(target_os = "windows")]
+fn spawn_in_kill_on_close_job(mut command: Command) -> std::io::Result<(Child, KillOnCloseJob)> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    use windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
+
+    command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
+    let mut child = command.spawn()?;
+
+    let fail = |child: &mut Child, message: &str| {
+        let _ = child.kill();
+        let _ = child.wait();
+        Err(std::io::Error::other(message.to_string()))
+    };
+
+    let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    if job.is_null() {
+        return fail(&mut child, "CreateJobObjectW failed");
+    }
+
+    let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    let configured = unsafe {
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &limits as *const _ as *const core::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+    };
+    if configured == 0 {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(job);
+        }
+        return fail(&mut child, "SetInformationJobObject failed");
+    }
+
+    let assigned = unsafe { AssignProcessToJobObject(job, child.as_raw_handle() as HANDLE) };
+    if assigned == 0 {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(job);
+        }
+        return fail(&mut child, "AssignProcessToJobObject failed");
+    }
+
+    resume_process_threads(child.id());
+    Ok((child, KillOnCloseJob(job)))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn spawn_in_kill_on_close_job(command: Command) -> std::io::Result<(Child, KillOnCloseJob)> {
+    spawn_hidden(command).map(|child| (child, KillOnCloseJob))
+}
+
+#[cfg(target_os = "windows")]
+fn resume_process_threads(pid: u32) {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+    };
+    use windows_sys::Win32::System::Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME};
+
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return;
+    }
+    let mut entry: THREADENTRY32 = unsafe { std::mem::zeroed() };
+    entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+    if unsafe { Thread32First(snapshot, &mut entry) } != 0 {
+        loop {
+            if entry.th32OwnerProcessID == pid {
+                let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
+                if !thread.is_null() {
+                    unsafe {
+                        ResumeThread(thread);
+                        CloseHandle(thread);
+                    }
+                }
+            }
+            entry = unsafe { std::mem::zeroed() };
+            entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+            if unsafe { Thread32Next(snapshot, &mut entry) } == 0 {
+                break;
+            }
+        }
+    }
+    unsafe {
+        CloseHandle(snapshot);
+    }
+}
+
+/// 主动终止整棵服务进程树。正常退出路径调用；强杀宿主的场景由
+/// KillOnCloseJob 的 kill-on-close 兜底，两条路都收敛到「无孤儿」。
+fn terminate_server_tree(child: &mut Child, job: &mut Option<KillOnCloseJob>) {
+    #[cfg(target_os = "windows")]
+    if let Some(job) = job.as_ref() {
+        unsafe {
+            windows_sys::Win32::System::JobObjects::TerminateJobObject(job.0, 0);
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 fn spawn_hidden_with_output(mut command: Command) -> std::io::Result<std::process::Output> {
     #[cfg(target_os = "windows")]
     {
@@ -13995,5 +14166,100 @@ mod tests {
         assert!(missing.usage.is_none());
         assert!(missing.top_tools.is_empty());
         reset_usage_scan_budget();
+    }
+
+    #[cfg(target_os = "windows")]
+    mod kill_on_close_job {
+        use super::super::spawn_in_kill_on_close_job;
+        use std::process::Command;
+        use std::time::{Duration, Instant};
+
+        fn snapshot_processes() -> Vec<(u32, u32, String)> {
+            use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+            use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+                CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+                TH32CS_SNAPPROCESS,
+            };
+
+            let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+            if snapshot == INVALID_HANDLE_VALUE {
+                return Vec::new();
+            }
+            let mut entries = Vec::new();
+            let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+            entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+            if unsafe { Process32FirstW(snapshot, &mut entry) } != 0 {
+                loop {
+                    entries.push((
+                        entry.th32ProcessID,
+                        entry.th32ParentProcessID,
+                        super::super::wide_null_string(&entry.szExeFile).to_lowercase(),
+                    ));
+                    entry = unsafe { std::mem::zeroed() };
+                    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+                    if unsafe { Process32NextW(snapshot, &mut entry) } == 0 {
+                        break;
+                    }
+                }
+            }
+            unsafe { CloseHandle(snapshot) };
+            entries
+        }
+
+        fn process_alive(pid: u32) -> bool {
+            snapshot_processes().iter().any(|(entry_pid, _, _)| *entry_pid == pid)
+        }
+
+        fn wait_for_descendant(root_pid: u32, image: &str, timeout: Duration) -> Option<u32> {
+            let deadline = Instant::now() + timeout;
+            while Instant::now() < deadline {
+                for (pid, parent_pid, name) in snapshot_processes() {
+                    if parent_pid == root_pid && name.contains(image) {
+                        return Some(pid);
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            None
+        }
+
+        #[test]
+        fn job_handle_drop_terminates_whole_descendant_tree() {
+            // 两层树：直接子进程 cmd，孙进程 powershell。先复现旧泄漏机制
+            // （杀直接子进程孙进程存活），再证明作业句柄释放能整树终止。
+            let mut command = Command::new("cmd");
+            command.args([
+                "/c",
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Start-Sleep",
+                "-Seconds",
+                "30",
+            ]);
+            let (mut child, job) = spawn_in_kill_on_close_job(command).expect("spawn cmd tree");
+            let child_pid = child.id();
+
+            let grandchild = wait_for_descendant(child_pid, "powershell.exe", Duration::from_secs(10))
+                .expect("powershell descendant never appeared");
+
+            let _ = child.kill();
+            let _ = child.wait();
+            std::thread::sleep(Duration::from_millis(600));
+            assert!(
+                process_alive(grandchild),
+                "killing the direct child alone must leave the grandchild running (old leak mechanism)"
+            );
+
+            drop(job);
+            let deadline = Instant::now() + Duration::from_secs(8);
+            while process_alive(grandchild) {
+                assert!(
+                    Instant::now() < deadline,
+                    "grandchild survived kill-on-close job handle drop"
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
     }
 }
