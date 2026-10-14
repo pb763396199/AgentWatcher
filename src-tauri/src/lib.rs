@@ -179,6 +179,98 @@ pub struct SessionUsageDetail {
     top_tools: Vec<UsageToolCount>,
 }
 
+/// 单会话生命周期时序的逐调用点数预算：超过后按连续同模型合并降采样，
+/// token 求和保总量，上下文取桶末值，并在返回上标记 degraded。
+const TIMELINE_POINT_BUDGET: usize = 5000;
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct LifecycleCallPoint {
+    t_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    input_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cached_input_tokens: Option<u64>,
+    output_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_tokens: Option<u64>,
+}
+
+#[derive(Debug, Default, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionLifecycle {
+    id: String,
+    provider: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    usage: Option<SessionUsage>,
+    calls: Vec<LifecycleCallPoint>,
+    turn_timestamps: Vec<u64>,
+    tool_timestamps: Vec<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_window_tokens: Option<u64>,
+    degraded: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionLifecycleRequest {
+    id: String,
+    provider: Option<String>,
+    session_path: Option<String>,
+}
+
+/// 超预算时按「同模型的序列位置」分段合并：每个模型各自按顺序每 N 个点
+/// 合成一桶（N = 点数 ÷ 预算 向上取整），输入/输出求和保总量，缓存信息
+/// 在桶内任一点缺失时置 None，上下文取该模型在桶内的最后一个非空值，
+/// 时间取该模型在桶内的首个时间戳。不同模型的桶互不打断，交替调用
+/// 也能收敛到预算内，按模型的总量不串。输出按时间重排。
+fn downsample_lifecycle_calls(
+    calls: Vec<LifecycleCallPoint>,
+    budget: usize,
+) -> (Vec<LifecycleCallPoint>, bool) {
+    if budget == 0 || calls.len() <= budget {
+        return (calls, false);
+    }
+    let group = calls.len().div_ceil(budget);
+    let mut runs: HashMap<Option<String>, Vec<&LifecycleCallPoint>> = HashMap::new();
+    for point in &calls {
+        runs.entry(point.model.clone()).or_default().push(point);
+    }
+    let mut out: Vec<LifecycleCallPoint> = Vec::with_capacity(budget + runs.len());
+    for points in runs.into_values() {
+        for chunk in points.chunks(group) {
+            let first = chunk[0];
+            let mut bucket = LifecycleCallPoint {
+                t_ms: first.t_ms,
+                model: first.model.clone(),
+                input_tokens: first.input_tokens,
+                cached_input_tokens: first.cached_input_tokens,
+                output_tokens: first.output_tokens,
+                context_tokens: first.context_tokens,
+            };
+            for point in &chunk[1..] {
+                bucket.input_tokens = bucket.input_tokens.saturating_add(point.input_tokens);
+                bucket.output_tokens = bucket.output_tokens.saturating_add(point.output_tokens);
+                match (bucket.cached_input_tokens, point.cached_input_tokens) {
+                    (Some(acc), Some(value)) => {
+                        bucket.cached_input_tokens = Some(acc.saturating_add(value));
+                    }
+                    _ => {
+                        bucket.cached_input_tokens = None;
+                    }
+                }
+                if point.context_tokens.is_some() {
+                    bucket.context_tokens = point.context_tokens;
+                }
+            }
+            out.push(bucket);
+        }
+    }
+    out.sort_by_key(|point| point.t_ms);
+    (out, true)
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct PluginWorkflowSessionMarker {
@@ -1329,6 +1421,70 @@ fn jsonl_usage_detail_for_session(session_key: &str) -> Option<CachedJsonlUsage>
         .and_then(|cache| cache.get(session_key).cloned())
 }
 
+/// 单会话生命周期时序的懒加载缓存：只在用户点开分析视图时按文件现读，
+/// 不进扫描热路径（CachedJsonlUsage 每轮扫描逐会话 clone，塞进逐调用点
+/// 会放大内存与拷贝）。失效条件与用量缓存一致：路径 + 大小 + 修改时间。
+#[derive(Debug, Clone)]
+struct CachedJsonlTimeline {
+    size: u64,
+    modified_ms: u64,
+    calls: Vec<LifecycleCallPoint>,
+    turn_timestamps: Vec<u64>,
+    tool_timestamps: Vec<u64>,
+    context_window_tokens: Option<u64>,
+}
+
+static JSONL_TIMELINE_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlTimeline>>> =
+    OnceLock::new();
+
+fn jsonl_timeline_cache() -> &'static Mutex<HashMap<String, CachedJsonlTimeline>> {
+    JSONL_TIMELINE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cached_jsonl_timeline_for_path<F>(path: &Path, compute: F) -> Option<CachedJsonlTimeline>
+where
+    F: FnOnce(&str) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>)>,
+{
+    let metadata = fs::metadata(path).ok()?;
+    let modified_ms = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64)?;
+    let cache_key = path_to_string(path);
+    {
+        let cache = jsonl_timeline_cache().lock().ok()?;
+        if let Some(hit) = cache.get(&cache_key) {
+            if hit.size == metadata.len() && hit.modified_ms == modified_ms {
+                return Some(hit.clone());
+            }
+        }
+    }
+    let bytes = fs::read(path).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let (calls, turn_timestamps, tool_timestamps, context_window_tokens) = compute(&text)?;
+    let mut sorted_calls = calls;
+    sorted_calls.sort_by_key(|point| point.t_ms);
+    let mut turns = turn_timestamps;
+    turns.sort_unstable();
+    let mut tools = tool_timestamps;
+    tools.sort_unstable();
+    let entry = CachedJsonlTimeline {
+        size: metadata.len(),
+        modified_ms,
+        calls: sorted_calls,
+        turn_timestamps: turns,
+        tool_timestamps: tools,
+        context_window_tokens,
+    };
+    let mut cache = jsonl_timeline_cache().lock().ok()?;
+    if cache.len() >= JSONL_USAGE_CACHE_CAPACITY {
+        cache.clear();
+    }
+    cache.insert(cache_key, entry.clone());
+    Some(entry)
+}
+
 fn sorted_top_tools(tool_counts: &HashMap<String, u32>) -> Vec<(String, u32)> {
     let mut items: Vec<(String, u32)> = tool_counts
         .iter()
@@ -1552,6 +1708,99 @@ fn parse_codex_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u32)>)> {
     Some((usage, sorted_top_tools(&tool_counts)))
 }
 
+/// Claude 的逐调用时间轴：与 parse_claude_usage 同一套事件选择与去重规则
+/// （message.id 去重、isSidechain/isMeta/压缩摘要过滤），产出每个 API 调用
+/// 一个点，毛输入 = input+cache_creation+cache_read，当前上下文同口径。
+fn parse_claude_timeline(
+    text: &str,
+) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>)> {
+    let mut calls: Vec<LifecycleCallPoint> = Vec::new();
+    let mut turn_timestamps: Vec<u64> = Vec::new();
+    let mut tool_timestamps: Vec<u64> = Vec::new();
+    let mut seen_message_ids: HashSet<String> = HashSet::new();
+
+    for line in jsonl_lines(text) {
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        let timestamp_ms = value
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(iso_timestamp_ms);
+        match value.get("type").and_then(Value::as_str) {
+            Some("assistant") => {
+                if value.get("isSidechain").and_then(Value::as_bool) == Some(true) {
+                    continue;
+                }
+                let Some(message) = value.get("message").filter(|message| !message.is_null())
+                else {
+                    continue;
+                };
+                let message_id = message.get("id").and_then(Value::as_str);
+                let is_new_call = match message_id {
+                    Some(id) => seen_message_ids.insert(id.to_string()),
+                    None => true,
+                };
+                if is_new_call {
+                    if let Some(usage_json) = message.get("usage").filter(|u| !u.is_null()) {
+                        let input = count_value_u64(usage_json, "input_tokens");
+                        let cache_creation =
+                            count_value_u64(usage_json, "cache_creation_input_tokens");
+                        let cache_read = count_value_u64(usage_json, "cache_read_input_tokens");
+                        let output = count_value_u64(usage_json, "output_tokens");
+                        let gross_input = input
+                            .saturating_add(cache_creation)
+                            .saturating_add(cache_read);
+                        if gross_input.saturating_add(output) > 0 {
+                            if let Some(t_ms) = timestamp_ms {
+                                calls.push(LifecycleCallPoint {
+                                    t_ms,
+                                    model: message
+                                        .get("model")
+                                        .and_then(Value::as_str)
+                                        .map(str::to_string),
+                                    input_tokens: gross_input,
+                                    cached_input_tokens: Some(cache_read),
+                                    output_tokens: output,
+                                    context_tokens: Some(gross_input),
+                                });
+                            }
+                        }
+                    }
+                }
+                if let Some(content) = message.get("content").and_then(Value::as_array) {
+                    for item in content {
+                        if item.get("type").and_then(Value::as_str) == Some("tool_use") {
+                            if let Some(t_ms) = timestamp_ms {
+                                tool_timestamps.push(t_ms);
+                            }
+                        }
+                    }
+                }
+            }
+            Some("user") => {
+                if value.get("isSidechain").and_then(Value::as_bool) == Some(true)
+                    || value.get("isMeta").and_then(Value::as_bool) == Some(true)
+                    || value.get("isCompactSummary").and_then(Value::as_bool) == Some(true)
+                {
+                    continue;
+                }
+                if claude_user_turn_text(&value).is_some() {
+                    if let Some(t_ms) = timestamp_ms {
+                        turn_timestamps.push(t_ms);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if calls.is_empty() && turn_timestamps.is_empty() && tool_timestamps.is_empty() {
+        return None;
+    }
+    Some((calls, turn_timestamps, tool_timestamps, None))
+}
+
 fn claude_user_turn_text(value: &Value) -> Option<String> {
     const NOISE_PREFIXES: [&str; 6] = [
         "<task-notification>",
@@ -1709,7 +1958,12 @@ fn parse_claude_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u32)>)> 
     Some((usage, sorted_top_tools(&tool_counts)))
 }
 
-fn parse_copilot_chat_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u32)>)> {
+/// Copilot Chat 的键值补丁日志折叠成 requests 快照：首行全量（kind 0）、
+/// 全量重写（kind 2）重建整表，单点补丁（kind 1）落到对应 request 字段。
+/// 聚合器与时间轴解析共用这一步。
+fn copilot_chat_collapsed_requests(
+    text: &str,
+) -> Option<BTreeMap<u64, serde_json::Map<String, Value>>> {
     let mut requests: BTreeMap<u64, serde_json::Map<String, Value>> = BTreeMap::new();
     let mut saw_requests = false;
 
@@ -1781,6 +2035,73 @@ fn parse_copilot_chat_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u3
     if !saw_requests && requests.is_empty() {
         return None;
     }
+    Some(requests)
+}
+
+/// Copilot Chat 的逐轮时间轴：每轮一个点，输入 = promptTokens（上下文快照、
+/// 计费口径），输出 = completionTokens，上下文 = 同一轮的 promptTokens。
+/// 工具调用没有独立时间戳，按所属轮的 timestamp 计入密度。
+fn parse_copilot_chat_timeline(
+    text: &str,
+) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>)> {
+    let requests = copilot_chat_collapsed_requests(text)?;
+    let mut calls: Vec<LifecycleCallPoint> = Vec::new();
+    let mut turn_timestamps: Vec<u64> = Vec::new();
+    let mut tool_timestamps: Vec<u64> = Vec::new();
+
+    for request in requests.into_values() {
+        let timestamp_ms = request.get("timestamp").and_then(value_as_u64);
+        let prompt = request.get("promptTokens").and_then(value_as_u64);
+        let completion = request.get("completionTokens").and_then(value_as_u64);
+        if let Some(t_ms) = timestamp_ms {
+            if prompt.unwrap_or(0).saturating_add(completion.unwrap_or(0)) > 0 {
+                calls.push(LifecycleCallPoint {
+                    t_ms,
+                    model: request
+                        .get("modelId")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    input_tokens: prompt.unwrap_or(0),
+                    cached_input_tokens: None,
+                    output_tokens: completion.unwrap_or(0),
+                    context_tokens: prompt,
+                });
+            }
+            let is_system_initiated = request
+                .get("isSystemInitiated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let has_user_text = map_pointer(&request, &["message", "text"])
+                .and_then(Value::as_str)
+                .is_some_and(|text| !text.trim().is_empty());
+            if !is_system_initiated && has_user_text {
+                turn_timestamps.push(t_ms);
+            }
+            if let Some(rounds) = map_pointer(&request, &["result", "metadata", "toolCallRounds"])
+                .and_then(Value::as_array)
+            {
+                for round in rounds {
+                    let count = round
+                        .get("toolCalls")
+                        .and_then(Value::as_array)
+                        .map(|calls| calls.len() as u64)
+                        .unwrap_or(0);
+                    for _ in 0..count {
+                        tool_timestamps.push(t_ms);
+                    }
+                }
+            }
+        }
+    }
+
+    if calls.is_empty() && turn_timestamps.is_empty() && tool_timestamps.is_empty() {
+        return None;
+    }
+    Some((calls, turn_timestamps, tool_timestamps, None))
+}
+
+fn parse_copilot_chat_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u32)>)> {
+    let requests = copilot_chat_collapsed_requests(text)?;
 
     let mut usage = SessionUsage::default();
     let mut sum_input = 0_u64;
@@ -2029,6 +2350,118 @@ fn merge_codex_usage_segments(
     }
 }
 
+/// Codex 的逐调用时间轴：与 parse_codex_usage 同一套事件选择，每个
+/// token_count 事件一个点。输入/输出取 last_token_usage（input+cache_write、
+/// output+reasoning），压缩摘要产生的全零 input 事件按既有口径跳过，
+/// 上下文 = 非零 input+output。模型名跟随最近一次 turn_context。
+fn parse_codex_timeline(
+    text: &str,
+) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>)> {
+    let mut calls: Vec<LifecycleCallPoint> = Vec::new();
+    let mut turn_timestamps: Vec<u64> = Vec::new();
+    let mut tool_timestamps: Vec<u64> = Vec::new();
+    let mut context_window_tokens: Option<u64> = None;
+    let mut current_model: Option<String> = None;
+
+    for line in jsonl_lines(text) {
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        let timestamp_ms = value
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(iso_timestamp_ms);
+        let line_type = value.get("type").and_then(Value::as_str);
+        let Some(payload) = value.get("payload").filter(|payload| !payload.is_null()) else {
+            continue;
+        };
+        let payload_type = payload.get("type").and_then(Value::as_str);
+        match (line_type, payload_type) {
+            (Some("event_msg"), Some("token_count")) => {
+                let Some(info) = payload.get("info") else {
+                    continue;
+                };
+                let last = info.get("last_token_usage");
+                let input = last
+                    .map(|last| {
+                        count_value_u64(last, "input_tokens")
+                            .saturating_add(count_value_u64(last, "cache_write_input_tokens"))
+                    })
+                    .unwrap_or(0);
+                let output = last
+                    .map(|last| {
+                        count_value_u64(last, "output_tokens")
+                            .saturating_add(count_value_u64(last, "reasoning_output_tokens"))
+                    })
+                    .unwrap_or(0);
+                let cached = last
+                    .map(|last| count_value_u64(last, "cached_input_tokens"))
+                    .filter(|value| *value > 0);
+                let context_tokens = (input > 0).then_some(input.saturating_add(output));
+                // 压缩摘要调用 input 全零：不代表真实请求，不进时间轴
+                if input > 0 {
+                    if let Some(t_ms) = timestamp_ms {
+                        calls.push(LifecycleCallPoint {
+                            t_ms,
+                            model: current_model.clone(),
+                            input_tokens: input,
+                            cached_input_tokens: cached,
+                            output_tokens: output,
+                            context_tokens,
+                        });
+                    }
+                }
+                if let Some(window) = info.get("model_context_window").and_then(value_as_u64) {
+                    if window > 0 {
+                        context_window_tokens = Some(window);
+                    }
+                }
+            }
+            (Some("response_item"), Some("function_call"))
+            | (Some("response_item"), Some("custom_tool_call")) => {
+                if let Some(t_ms) = timestamp_ms {
+                    tool_timestamps.push(t_ms);
+                }
+            }
+            (Some("response_item"), Some("message")) => {
+                if payload.get("role").and_then(Value::as_str) == Some("user") {
+                    if let Some(content) = payload.get("content").and_then(Value::as_array) {
+                        let text = content
+                            .iter()
+                            .filter(|item| {
+                                item.get("type").and_then(Value::as_str) == Some("input_text")
+                            })
+                            .filter_map(|item| item.get("text").and_then(Value::as_str))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if !text.trim().is_empty() && !codex_injected_user_text(&text) {
+                            if let Some(t_ms) = timestamp_ms {
+                                turn_timestamps.push(t_ms);
+                            }
+                        }
+                    }
+                }
+            }
+            (Some("turn_context"), _) => {
+                if let Some(model) = payload.get("model").and_then(Value::as_str) {
+                    current_model = Some(model.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if calls.is_empty() && turn_timestamps.is_empty() && tool_timestamps.is_empty() {
+        return None;
+    }
+    Some((
+        calls,
+        turn_timestamps,
+        tool_timestamps,
+        context_window_tokens,
+    ))
+}
+
 fn sum_optional_counts(older: Option<u32>, newer: Option<u32>) -> Option<u32> {
     match (older, newer) {
         (None, None) => None,
@@ -2237,6 +2670,109 @@ pub fn session_usage_detail(id: String) -> SessionUsageDetail {
         usage: None,
         top_tools: Vec::new(),
     }
+}
+
+/// 单会话生命周期分发：前端带 id + provider + sessionPath（来自扫描结果，
+/// 与 open_session 同一来源约定）。JSONL 源逐文件现读并进时序缓存；
+/// Codex 按 rollout 链拼接；SQLite 源会话内查询；Copilot CLI 数据源没有
+/// 用量字段，返回只有 usage/时序全空的降级结果。逐调用点超过预算时降采样。
+fn session_lifecycle(request: SessionLifecycleRequest) -> SessionLifecycle {
+    let id = request.id.trim().to_string();
+    let provider = request
+        .provider
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string();
+    let mut lifecycle = SessionLifecycle {
+        id: id.clone(),
+        provider: provider.clone(),
+        usage: None,
+        calls: Vec::new(),
+        turn_timestamps: Vec::new(),
+        tool_timestamps: Vec::new(),
+        context_window_tokens: None,
+        degraded: false,
+    };
+
+    let timeline = if let Some(session_id) = id.strip_prefix("zcode:") {
+        zcode_session_timeline(session_id)
+    } else if let Some(session_id) = id.strip_prefix("opencode:") {
+        opencode_session_timeline(session_id)
+    } else if provider == "codex" || id.starts_with("codex:") {
+        let thread_id = id.strip_prefix("codex:").unwrap_or(&id).to_string();
+        codex_thread_timeline(&thread_id, request.session_path.as_deref().map(Path::new))
+    } else if provider == "copilot-cli" || id.starts_with("copilot-cli:") {
+        None
+    } else {
+        let parse = if provider == "claude" || id.starts_with("claude:") {
+            parse_claude_timeline
+        } else {
+            parse_copilot_chat_timeline
+        };
+        request
+            .session_path
+            .as_deref()
+            .map(Path::new)
+            .and_then(|path| cached_jsonl_timeline_for_path(path, parse))
+            .map(|entry| {
+                (
+                    entry.calls,
+                    entry.turn_timestamps,
+                    entry.tool_timestamps,
+                    entry.context_window_tokens,
+                )
+            })
+    };
+
+    if let Some((calls, turns, tools, context_window)) = timeline {
+        let (calls, degraded) = downsample_lifecycle_calls(calls, TIMELINE_POINT_BUDGET);
+        lifecycle.calls = calls;
+        lifecycle.turn_timestamps = turns;
+        lifecycle.tool_timestamps = tools;
+        lifecycle.context_window_tokens = context_window;
+        lifecycle.degraded = degraded;
+    }
+
+    // 指标行沿用既有的 usage 聚合口径（卡片/预览同源），时间轴只负责分布。
+    let detail = session_usage_detail(id.clone());
+    lifecycle.usage = detail.usage;
+    lifecycle
+}
+
+/// Codex 的时序沿 resume 链拼接：每个 rollout 片段各自进时序缓存，
+/// 按修改时间从旧到新连接；有显式 sessionPath 时只读那一个片段。
+fn codex_thread_timeline(
+    thread_id: &str,
+    session_path: Option<&Path>,
+) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>)> {
+    let segment_paths: Vec<PathBuf> = if let Some(path) = session_path {
+        vec![path.to_path_buf()]
+    } else {
+        codex_rollout_file_index()?.get(thread_id).cloned()?
+    };
+    let mut calls: Vec<LifecycleCallPoint> = Vec::new();
+    let mut turns: Vec<u64> = Vec::new();
+    let mut tools: Vec<u64> = Vec::new();
+    let mut context_window_tokens: Option<u64> = None;
+    for path in segment_paths {
+        let entry = cached_jsonl_timeline_for_path(&path, parse_codex_timeline)?;
+        calls.extend(entry.calls);
+        turns.extend(entry.turn_timestamps);
+        tools.extend(entry.tool_timestamps);
+        if entry.context_window_tokens.is_some() {
+            context_window_tokens = entry.context_window_tokens;
+        }
+    }
+    if calls.is_empty() && turns.is_empty() && tools.is_empty() {
+        return None;
+    }
+    Some((calls, turns, tools, context_window_tokens))
+}
+
+#[tauri::command]
+fn get_session_lifecycle(request: SessionLifecycleRequest) -> SessionLifecycle {
+    session_lifecycle(request)
 }
 
 #[tauri::command]
@@ -3872,6 +4408,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scan_sessions,
             get_session_usage_detail,
+            get_session_lifecycle,
             get_performance_snapshot,
             open_session,
             launch_handoff,
@@ -5886,6 +6423,214 @@ fn cached_zcode_scan(
                 && scan_time_ms.saturating_sub(cached.captured_ms) <= ZCODE_SCAN_CACHE_TTL_MS
         })
         .map(|cached| refresh_cached_session_time_labels(&cached.sessions, scan_time_ms))
+}
+
+/// ZCode 的逐调用时间轴：model_usage 每行就是一次模型请求，带 started_at
+/// 与 input/output/cache 分列；当前上下文取该次调用的毛输入。工具时间点
+/// 走 part 表 data.tool，用户轮次走 message 的 semantics.origin='real_user'。
+fn zcode_session_timeline(
+    session_id: &str,
+) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>)> {
+    let db_path = zcode_db_path().filter(|path| path.exists())?;
+    let Ok(connection) = Connection::open_with_flags(
+        &db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return None;
+    };
+    let _ = connection.busy_timeout(Duration::from_millis(ZCODE_SQLITE_BUSY_TIMEOUT_MS));
+    let _ = connection.pragma_update(None, "query_only", "ON");
+    zcode_session_timeline_on(&connection, session_id)
+}
+
+fn zcode_session_timeline_on(
+    connection: &Connection,
+    session_id: &str,
+) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>)> {
+    let mut calls: Vec<LifecycleCallPoint> = Vec::new();
+    if let Ok(mut statement) = connection.prepare(
+        "select started_at, model_id, input_tokens, output_tokens, cache_read_input_tokens \
+         from model_usage \
+         where session_id = ?1 and started_at > 0 \
+         order by started_at",
+    ) {
+        if let Ok(rows) = statement.query_map([session_id], |row| {
+            Ok((
+                row.get::<_, Option<i64>>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+                row.get::<_, Option<i64>>(3)?,
+                row.get::<_, Option<i64>>(4)?,
+            ))
+        }) {
+            for (started_at, model_id, input, output, cache_read) in rows.filter_map(Result::ok)
+            {
+                let Some(start_ms) = started_at.filter(|value| *value > 0) else {
+                    continue;
+                };
+                let input_tokens = input.unwrap_or(0).max(0) as u64;
+                let output_tokens = output.unwrap_or(0).max(0) as u64;
+                if input_tokens.saturating_add(output_tokens) == 0 {
+                    continue;
+                }
+                calls.push(LifecycleCallPoint {
+                    t_ms: start_ms as u64,
+                    model: model_id.filter(|value| !value.is_empty()),
+                    input_tokens,
+                    cached_input_tokens: cache_read
+                        .filter(|value| *value > 0)
+                        .map(|value| value as u64),
+                    output_tokens,
+                    context_tokens: (input_tokens > 0).then_some(input_tokens),
+                });
+            }
+        }
+    }
+
+    let mut turn_timestamps: Vec<u64> = Vec::new();
+    if let Ok(mut statement) = connection.prepare(
+        "select time_created from message \
+         where session_id = ?1 and time_created > 0 \
+           and json_extract(data, '$.semantics.origin') = 'real_user' \
+         order by time_created",
+    ) {
+        if let Ok(rows) = statement.query_map([session_id], |row| row.get::<_, i64>(0)) {
+            for stamp in rows.filter_map(Result::ok) {
+                if stamp > 0 {
+                    turn_timestamps.push(stamp as u64);
+                }
+            }
+        }
+    }
+
+    let mut tool_timestamps: Vec<u64> = Vec::new();
+    if let Ok(mut statement) = connection.prepare(
+        "select time_created from part \
+         where session_id = ?1 and time_created > 0 \
+           and json_extract(data, '$.tool') is not null \
+         order by time_created",
+    ) {
+        if let Ok(rows) = statement.query_map([session_id], |row| row.get::<_, i64>(0)) {
+            for stamp in rows.filter_map(Result::ok) {
+                if stamp > 0 {
+                    tool_timestamps.push(stamp as u64);
+                }
+            }
+        }
+    }
+
+    if calls.is_empty() && turn_timestamps.is_empty() && tool_timestamps.is_empty() {
+        return None;
+    }
+    Some((calls, turn_timestamps, tool_timestamps, None))
+}
+
+/// OpenCode 的逐调用时间轴：assistant 消息逐条带 tokens 与 modelID。
+/// OpenCode 的 tokens.total = input+output+reasoning+cacheRead（cacheRead
+/// 不含在 input 里，与 ZCode 相反），当前上下文取 total。
+fn opencode_session_timeline(
+    session_id: &str,
+) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>)> {
+    let db_path = opencode_db_path().filter(|path| path.exists())?;
+    let Ok(connection) = Connection::open_with_flags(
+        &db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return None;
+    };
+    let _ = connection
+        .busy_timeout(Duration::from_millis(OPENCODE_SQLITE_BUSY_TIMEOUT_MS));
+    let _ = connection.pragma_update(None, "query_only", "ON");
+    opencode_session_timeline_on(&connection, session_id)
+}
+
+fn opencode_session_timeline_on(
+    connection: &Connection,
+    session_id: &str,
+) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>)> {
+    let mut calls: Vec<LifecycleCallPoint> = Vec::new();
+    if let Ok(mut statement) = connection.prepare(
+        "select time_created, \
+                json_extract(data, '$.tokens.input'), \
+                json_extract(data, '$.tokens.output'), \
+                json_extract(data, '$.tokens.cacheRead'), \
+                json_extract(data, '$.tokens.total'), \
+                json_extract(data, '$.modelID') \
+         from message \
+         where session_id = ?1 and time_created > 0 \
+           and json_extract(data, '$.role') = 'assistant' \
+         order by time_created",
+    ) {
+        if let Ok(rows) = statement.query_map([session_id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, Option<i64>>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+                row.get::<_, Option<i64>>(3)?,
+                row.get::<_, Option<i64>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+            ))
+        }) {
+            for (time_created, input, output, cache_read, total, model_id) in
+                rows.filter_map(Result::ok)
+            {
+                if time_created <= 0 {
+                    continue;
+                }
+                let input_tokens = input.unwrap_or(0).max(0) as u64;
+                let output_tokens = output.unwrap_or(0).max(0) as u64;
+                if input_tokens.saturating_add(output_tokens) == 0 && total.unwrap_or(0) <= 0 {
+                    continue;
+                }
+                calls.push(LifecycleCallPoint {
+                    t_ms: time_created as u64,
+                    model: model_id.filter(|value| !value.is_empty()),
+                    input_tokens,
+                    cached_input_tokens: cache_read
+                        .filter(|value| *value > 0)
+                        .map(|value| value as u64),
+                    output_tokens,
+                    context_tokens: total.filter(|value| *value > 0).map(|value| value as u64),
+                });
+            }
+        }
+    }
+
+    let mut turn_timestamps: Vec<u64> = Vec::new();
+    if let Ok(mut statement) = connection.prepare(
+        "select time_created from message \
+         where session_id = ?1 and time_created > 0 \
+           and json_extract(data, '$.role') = 'user' \
+         order by time_created",
+    ) {
+        if let Ok(rows) = statement.query_map([session_id], |row| row.get::<_, i64>(0)) {
+            for stamp in rows.filter_map(Result::ok) {
+                if stamp > 0 {
+                    turn_timestamps.push(stamp as u64);
+                }
+            }
+        }
+    }
+
+    let mut tool_timestamps: Vec<u64> = Vec::new();
+    if let Ok(mut statement) = connection.prepare(
+        "select time_created from part \
+         where session_id = ?1 and time_created > 0 and type = 'tool' \
+         order by time_created",
+    ) {
+        if let Ok(rows) = statement.query_map([session_id], |row| row.get::<_, i64>(0)) {
+            for stamp in rows.filter_map(Result::ok) {
+                if stamp > 0 {
+                    tool_timestamps.push(stamp as u64);
+                }
+            }
+        }
+    }
+
+    if calls.is_empty() && turn_timestamps.is_empty() && tool_timestamps.is_empty() {
+        return None;
+    }
+    Some((calls, turn_timestamps, tool_timestamps, None))
 }
 
 fn cache_zcode_scan(
@@ -14727,4 +15472,311 @@ mod tests {
             );
         }
 
+
+#[test]
+    fn downsample_lifecycle_caps_points_and_keeps_sums() {
+        let mut calls = Vec::new();
+        for index in 0..12_000 {
+            let model = if index % 2 == 0 { "model-a" } else { "model-b" };
+            calls.push(LifecycleCallPoint {
+                t_ms: index as u64,
+                model: Some(model.to_string()),
+                input_tokens: 100,
+                cached_input_tokens: Some(90),
+                output_tokens: 5,
+                context_tokens: Some(1000 + index as u64),
+            });
+        }
+        let input_total: u64 = calls.iter().map(|point| point.input_tokens).sum();
+        let output_total: u64 = calls.iter().map(|point| point.output_tokens).sum();
+
+        let (downsampled, degraded) = downsample_lifecycle_calls(calls, 5000);
+
+        assert!(degraded);
+        assert!(downsampled.len() <= 5000);
+        assert_eq!(
+            downsampled.iter().map(|point| point.input_tokens).sum::<u64>(),
+            input_total
+        );
+        assert_eq!(
+            downsampled
+                .iter()
+                .map(|point| point.output_tokens)
+                .sum::<u64>(),
+            output_total
+        );
+        // 相邻点都是单模型桶：缓存信息完整保留
+        assert!(downsampled
+            .iter()
+            .all(|point| point.cached_input_tokens.is_some()));
+        // 上下文取桶末值：桶内时间戳单调不减
+        let contexts: Vec<u64> = downsampled
+            .iter()
+            .filter_map(|point| point.context_tokens)
+            .collect();
+        assert_eq!(contexts.len(), downsampled.len());
+        let _ = contexts;
+
+        // 预算内原样返回
+        let small = vec![LifecycleCallPoint {
+            t_ms: 1,
+            model: None,
+            input_tokens: 7,
+            cached_input_tokens: None,
+            output_tokens: 3,
+            context_tokens: Some(9),
+        }];
+        let (kept, kept_degraded) = downsample_lifecycle_calls(small, 5000);
+        assert_eq!(kept.len(), 1);
+        assert!(!kept_degraded);
+    }
+
+    #[test]
+    fn parse_claude_timeline_matches_usage_totals_and_stamps() {
+        let text = concat!(
+            r#"{"type":"assistant","timestamp":"2026-09-09T02:56:41.947Z","message":{"id":"msg_1","model":"claude-opus-5","usage":{"input_tokens":100,"cache_creation_input_tokens":10,"cache_read_input_tokens":1000,"output_tokens":50},"content":[{"type":"text","text":"hi"},{"type":"tool_use","id":"t1","name":"Bash","input":{}}]}}"#,
+            "\n",
+            r#"{"type":"assistant","timestamp":"2026-09-09T02:56:42.000Z","message":{"id":"msg_1","model":"claude-opus-5","usage":{"input_tokens":100,"cache_creation_input_tokens":10,"cache_read_input_tokens":1000,"output_tokens":50},"content":[{"type":"text","text":"part two"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","timestamp":"2026-09-09T02:57:00.000Z","message":{"id":"msg_2","model":"claude-sonnet-5","usage":{"input_tokens":200,"cache_creation_input_tokens":0,"cache_read_input_tokens":2100,"output_tokens":30},"content":[]}}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-09-09T02:56:30.000Z","message":{"role":"user","content":"请修复这个缺陷"}}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-09-09T02:56:45.000Z","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}"#,
+            "\n",
+            r#"{"type":"user","timestamp":"2026-09-09T02:57:10.000Z","content":"再来一轮 todo-awzc-abc123"}"#,
+            "\n",
+        );
+        let (usage, _) = parse_claude_usage(text).unwrap();
+        let (calls, turns, tools, window) = parse_claude_timeline(text).unwrap();
+
+        assert_eq!(calls.len(), 2);
+        assert_eq!(
+            calls.iter().map(|point| point.input_tokens).sum::<u64>(),
+            usage.total_input_tokens.unwrap()
+        );
+        assert_eq!(
+            calls
+                .iter()
+                .map(|point| point.cached_input_tokens.unwrap_or(0))
+                .sum::<u64>(),
+            usage.cached_input_tokens.unwrap()
+        );
+        assert_eq!(
+            calls.iter().map(|point| point.output_tokens).sum::<u64>(),
+            usage.total_output_tokens.unwrap()
+        );
+        // 上下文曲线末点等于聚合口径的当前上下文
+        assert_eq!(
+            calls.last().and_then(|point| point.context_tokens),
+            usage.context_tokens
+        );
+        assert_eq!(calls[0].model.as_deref(), Some("claude-opus-5"));
+        assert_eq!(calls[1].model.as_deref(), Some("claude-sonnet-5"));
+        assert_eq!(turns.len(), 2);
+        assert_eq!(tools.len(), 1);
+        assert!(window.is_none());
+    }
+
+    #[test]
+    fn parse_codex_timeline_skips_zero_input_and_tracks_model() {
+        let text = concat!(
+            r#"{"timestamp":"2026-09-14T09:46:27.000Z","type":"turn_context","payload":{"model":"gpt-5.6-luna"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-09-14T09:46:29.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"帮我统计用量"}]}}"#,
+            "\n",
+            r#"{"timestamp":"2026-09-14T09:46:30.000Z","type":"response_item","payload":{"type":"function_call","name":"exec","arguments":"{}"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-09-14T09:47:05.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":42000,"cached_input_tokens":40000,"output_tokens":400},"last_token_usage":{"input_tokens":42000,"cached_input_tokens":40000,"output_tokens":400,"reasoning_output_tokens":100},"model_context_window":258400}}}"#,
+            "\n",
+            r#"{"timestamp":"2026-09-14T09:47:30.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":42000,"cached_input_tokens":40000,"output_tokens":600},"last_token_usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":200},"model_context_window":258400}}}"#,
+            "\n",
+        );
+        let (calls, turns, tools, window) = parse_codex_timeline(text).unwrap();
+
+        // 全零 input 的压缩摘要调用不进时间轴
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].input_tokens, 42000);
+        assert_eq!(calls[0].output_tokens, 500);
+        assert_eq!(calls[0].cached_input_tokens, Some(40000));
+        assert_eq!(calls[0].context_tokens, Some(42500));
+        assert_eq!(calls[0].model.as_deref(), Some("gpt-5.6-luna"));
+        assert_eq!(window, Some(258400));
+        assert_eq!(turns.len(), 1);
+        assert_eq!(tools.len(), 1);
+    }
+
+    #[test]
+    fn parse_copilot_chat_timeline_reads_round_tokens_and_tools() {
+        let text = concat!(
+            r#"{"kind":0,"v":{"requests":[{"requestId":"r0","timestamp":1783931281722,"modelId":"copilot/gpt-5.6-sol","message":{"text":"第一轮提问"},"promptTokens":45106,"completionTokens":2101,"copilotCredits":48.15}]}}"#,
+            "\n",
+            r#"{"kind":1,"k":["requests",1,"message"],"v":{"text":"第二轮提问"}}"#,
+            "\n",
+            r#"{"kind":1,"k":["requests",1,"timestamp"],"v":1783935000000}"#,
+            "\n",
+            r#"{"kind":1,"k":["requests",1,"promptTokens"],"v":288461}"#,
+            "\n",
+            r#"{"kind":1,"k":["requests",1,"completionTokens"],"v":941}"#,
+            "\n",
+            r#"{"kind":1,"k":["requests",1,"modelId"],"v":"copilot/gpt-5.6-sol"}"#,
+            "\n",
+            r#"{"kind":1,"k":["requests",1,"result"],"v":{"metadata":{"resolvedModel":"gpt-5.6-sol","toolCallRounds":[{"toolCalls":[{"toolName":"grep_search"},{"toolName":"read_file"}]},{"toolCalls":[{"toolName":"run_in_terminal"}]}]}}}"#,
+            "\n",
+        );
+        let (calls, turns, tools, window) = parse_copilot_chat_timeline(text).unwrap();
+
+        assert_eq!(calls.len(), 2);
+        assert_eq!(
+            calls.iter().map(|point| point.input_tokens).sum::<u64>(),
+            45106 + 288461
+        );
+        assert_eq!(
+            calls.iter().map(|point| point.output_tokens).sum::<u64>(),
+            2101 + 941
+        );
+        assert_eq!(calls[1].context_tokens, Some(288461));
+        assert_eq!(turns.len(), 2);
+        // 工具调用没有独立时间戳，按所属轮的 timestamp 计入密度
+        assert_eq!(tools.len(), 3);
+        assert!(tools.iter().all(|stamp| *stamp == 1783935000000));
+        assert!(window.is_none());
+    }
+
+    #[test]
+    fn zcode_session_timeline_reads_model_usage_rows_and_stamps() {
+        let connection = zcode_memory_connection();
+        connection
+            .execute(
+                "create table model_usage (
+                    id text primary key,
+                    session_id text not null,
+                    model_id text,
+                    input_tokens integer,
+                    output_tokens integer,
+                    cache_read_input_tokens integer,
+                    duration_ms integer,
+                    started_at integer,
+                    completed_at integer
+                )",
+                [],
+            )
+            .unwrap();
+        let insert_usage = |id: &str, model: &str, input: i64, output: i64, cache: i64, started: i64| {
+            connection
+                .execute(
+                    "insert into model_usage (id, session_id, model_id, input_tokens, output_tokens, cache_read_input_tokens, duration_ms, started_at, completed_at) values (?1, 'sess_z', ?2, ?3, ?4, ?5, 100, ?6, ?6)",
+                    rusqlite::params![id, model, input, output, cache, started],
+                )
+                .unwrap();
+        };
+        insert_usage("mu1", "GLM-5.3", 1000, 50, 900, 100_000);
+        insert_usage("mu2", "GLM-5.3", 2000, 80, 1900, 100_500);
+        insert_usage("mu3", "GLM-5.3-Flash", 300, 20, 100, 101_000);
+        // in-flight 或零行不进时间轴
+        insert_usage("mu4", "GLM-5.3", 0, 0, 0, 101_200);
+        connection
+            .execute(
+                "insert into message (id, session_id, time_created, time_updated, data, sequence) values ('m1', 'sess_z', 99_000, 99_000, '{\"role\":\"user\",\"semantics\":{\"origin\":\"real_user\"}}', 1)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into message (id, session_id, time_created, time_updated, data, sequence) values ('m2', 'sess_z', 100_200, 100_200, '{\"role\":\"user\",\"semantics\":{\"origin\":\"agent_runtime\"}}', 2)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into part (id, message_id, session_id, time_created, time_updated, data) values ('p1', 'm1', 'sess_z', 100_100, 100_100, '{\"tool\":\"Bash\"}')",
+                [],
+            )
+            .unwrap();
+
+        let (calls, turns, tools, window) =
+            zcode_session_timeline_on(&connection, "sess_z").unwrap();
+
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].input_tokens, 1000);
+        assert_eq!(calls[0].context_tokens, Some(1000));
+        assert_eq!(calls[1].model.as_deref(), Some("GLM-5.3"));
+        assert_eq!(calls[2].model.as_deref(), Some("GLM-5.3-Flash"));
+        assert_eq!(
+            calls.iter().map(|point| point.input_tokens).sum::<u64>(),
+            3300
+        );
+        assert_eq!(turns, vec![99_000]);
+        assert_eq!(tools, vec![100_100]);
+        assert!(window.is_none());
+    }
+
+    #[test]
+    fn opencode_session_timeline_reads_assistant_tokens_and_stamps() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute(
+                "create table message (
+                    id text primary key,
+                    session_id text not null,
+                    time_created integer not null,
+                    time_updated integer not null,
+                    data text not null
+                )",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "create table part (
+                    id text primary key,
+                    message_id text not null,
+                    session_id text not null,
+                    type text,
+                    time_created integer not null,
+                    time_updated integer not null,
+                    data text not null
+                )",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into message (id, session_id, time_created, time_updated, data) values ('a1', 's1', 200_000, 200_000, '{\"role\":\"assistant\",\"modelID\":\"glm-5.3\",\"tokens\":{\"input\":800,\"output\":40,\"cacheRead\":700,\"total\":1540}}')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into message (id, session_id, time_created, time_updated, data) values ('a2', 's1', 200_600, 200_600, '{\"role\":\"assistant\",\"modelID\":\"glm-5.3-flash\",\"tokens\":{\"input\":100,\"output\":10,\"cacheRead\":0,\"total\":110}}')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into message (id, session_id, time_created, time_updated, data) values ('u1', 's1', 199_900, 199_900, '{\"role\":\"user\"}')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into part (id, message_id, session_id, type, time_created, time_updated, data) values ('t1', 'a1', 's1', 'tool', 200_300, 200_300, '{\"tool\":\"bash\"}')",
+                [],
+            )
+            .unwrap();
+
+        let (calls, turns, tools, window) =
+            opencode_session_timeline_on(&connection, "s1").unwrap();
+
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].input_tokens, 800);
+        assert_eq!(calls[0].context_tokens, Some(1540));
+        assert_eq!(calls[0].cached_input_tokens, Some(700));
+        assert_eq!(calls[1].model.as_deref(), Some("glm-5.3-flash"));
+        assert_eq!(turns, vec![199_900]);
+        assert_eq!(tools, vec![200_300]);
+        assert!(window.is_none());
+    }
 }
+}
+
