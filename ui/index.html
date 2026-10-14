@@ -13725,7 +13725,7 @@
       const visible = analyticsVisibleModels();
       const W = Math.max(300, host.clientWidth || 640);
       const H = 168, padT = 8, padB = 20;
-      const svg = analyticsSvgEl('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', height: H, role: 'img', 'aria-label': t('analyticsUsageTitle') });
+      const svg = analyticsSvgEl('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', height: H, preserveAspectRatio: 'none', role: 'img', 'aria-label': t('analyticsUsageTitle') });
       const pad = analyticsPad();
       let maxV = 0;
       buckets.forEach(bucket => {
@@ -13813,7 +13813,7 @@
       const calls = (lifecycle?.calls || []).filter(call => analyticsNumberOr(call.contextTokens) != null);
       const W = Math.max(300, host.clientWidth || 640);
       const H = 116, padT = 16, padB = 18;
-      const svg = analyticsSvgEl('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', height: H, role: 'img', 'aria-label': t('analyticsCtxTitle') });
+      const svg = analyticsSvgEl('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', height: H, preserveAspectRatio: 'none', role: 'img', 'aria-label': t('analyticsCtxTitle') });
       const title = analyticsSvgEl('text', { x: analyticsPad().left, y: 10, fill: 'var(--muted)' });
       title.textContent = t('analyticsCtxTitle');
       svg.appendChild(title);
@@ -13894,7 +13894,7 @@
       const span = analyticsSpan();
       const W = Math.max(300, host.clientWidth || 640);
       const H = 34, padT = 12, barH = 12;
-      const svg = analyticsSvgEl('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', height: H, role: 'img', 'aria-label': t('analyticsRhythmTitle') });
+      const svg = analyticsSvgEl('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', height: H, preserveAspectRatio: 'none', role: 'img', 'aria-label': t('analyticsRhythmTitle') });
       const title = analyticsSvgEl('text', { x: analyticsPad().left, y: 8, fill: 'var(--muted)' });
       title.textContent = t('analyticsRhythmTitle');
       svg.appendChild(title);
@@ -14282,21 +14282,47 @@
         if (tauriWindow) tauriWindow.startDragging().catch(() => {});
       });
       let analyticsResizeRedrawFrame = 0;
+      const drawAnalyticsChartsOnce = () => {
+        drawAnalyticsUsageChart();
+        drawAnalyticsContextChart();
+        drawAnalyticsRhythmChart();
+        analyticsWireHover();
+      };
+      // 绘制后自校验：svg 实际渲染宽与宿主宽失配超过 2px（任何原因导致的陈旧
+      // viewBox / 漏掉的 resize 事件）就用新鲜测量值立即重绘一次，兜死
+      // 「内容被压成一条竖线」这类失配失败的呈现
+      const analyticsChartsWidthMismatched = () => {
+        return ['analyticsUsageChart', 'analyticsCtxChart', 'analyticsRhythmChart'].some(id => {
+          const host = document.getElementById(id);
+          const svg = host && host.querySelector('svg');
+          if (!host || !svg) return false;
+          const viewBoxWidth = parseFloat(String(svg.getAttribute('viewBox') || '').split(/\s+/)[2] || '0');
+          return Number.isFinite(viewBoxWidth) && viewBoxWidth > 0
+            && Math.abs(viewBoxWidth - host.clientWidth) > 2;
+        });
+      };
+      const drawAnalyticsChartsWithSelfCheck = () => {
+        drawAnalyticsChartsOnce();
+        if (analyticsChartsWidthMismatched()) {
+          drawAnalyticsChartsOnce();
+        }
+      };
       const scheduleAnalyticsResizeRedraw = () => {
         if (analyticsResizeRedrawFrame) return;
         // 等 layout 结算后再量宽：ResizeObserver 回调里立即可能有中间态尺寸
         analyticsResizeRedrawFrame = window.requestAnimationFrame(() => {
           analyticsResizeRedrawFrame = 0;
           if (!analyticsState.lifecycle) return;
-          drawAnalyticsUsageChart();
-          drawAnalyticsContextChart();
-          drawAnalyticsRhythmChart();
-          analyticsWireHover();
+          drawAnalyticsChartsWithSelfCheck();
         });
       };
       if (window.ResizeObserver) {
-        new ResizeObserver(scheduleAnalyticsResizeRedraw)
-          .observe(document.getElementById('analyticsBody') || document.body);
+        const analyticsResizeObserver = new ResizeObserver(scheduleAnalyticsResizeRedraw);
+        analyticsResizeObserver.observe(document.getElementById('analyticsBody') || document.body);
+        ['analyticsUsageChart', 'analyticsCtxChart', 'analyticsRhythmChart'].forEach(id => {
+          const host = document.getElementById(id);
+          if (host) analyticsResizeObserver.observe(host);
+        });
       }
       window.addEventListener('resize', scheduleAnalyticsResizeRedraw);
       tauriEmitTo?.('main', 'agentwatcher-analytics-ready', {}).catch(() => {});
