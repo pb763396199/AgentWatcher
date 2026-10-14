@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "protocol": "1.3.0",
+  "generated_at": "2026-10-14T08:22:41Z",
+  "generated_by": {
+    "tool_revision": "awf-0.1.0"
+  },
+  "work_item": {
+    "id": "wi_5SYZXNKVTFYTV99EVBBBMJK0S6",
+    "short_id": "7176h9hq",
+    "slug": "GUI-退出后-codex-app-server-子进程随宿主一起结束",
+    "title": "GUI 退出后 codex app-server 子进程随宿主一起结束",
+    "kind": "fix",
+    "status": "done",
+    "branch": "feature/GUI-退出后-codex-app-server-子进程随宿主一起结束",
+    "home_repository": "https://github.com/pb763396199/AgentWatcher.git",
+    "contract_digest": "sha256:2bf0546a812236ff05d377823c4cea07a5a43bdabe190a850ba43a1afb2433e4",
+    "acceptance_ids": [
+      "AC-001",
+      "AC-002",
+      "AC-003"
+    ]
+  },
+  "artifacts": [
+    {
+      "artifact_id": "ar_01M4WQWT770004D278AR5DQDVR",
+      "type": "build",
+      "path": "builds/1.md",
+      "outcome": "complete",
+      "freshness": "fresh",
+      "stage": null,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_01M4WQWTF8000EVW4T1NAYN4Y8",
+      "type": "delivery",
+      "path": "delivery.md",
+      "outcome": "delivered",
+      "freshness": "fresh",
+      "stage": 80,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_01M4WQWT8Y000F351BN8R7PXAG",
+      "type": "review",
+      "path": "evidence/code-review.md",
+      "outcome": "approved",
+      "freshness": "fresh",
+      "stage": 60,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_01M4WQWTB400096JX0NYV0R27N",
+      "type": "validation",
+      "path": "evidence/validation.md",
+      "outcome": "passed",
+      "freshness": "fresh",
+      "stage": 70,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_01M4WQWTDA0007KCZPE2V2AK3W",
+      "type": "manual-test",
+      "path": "manual-test.md",
+      "outcome": "passed",
+      "freshness": "fresh",
+      "stage": 70,
+      "depends_on": []
+    }
+  ],
+  "wayfinder": null,
+  "manual_test": {
+    "passed": 0,
+    "open": 0,
+    "failed": 0
+  },
+  "stage": {
+    "reached": "delivery",
+    "reached_stage": 80,
+    "next_skill": "aes-retrospect",
+    "waiting_on": null
+  },
+  "next": "已收口",
+  "computed_from": {
+    "documents": {
+      "builds/1.md": "sha256:ff337063c6b9f0a357385af98eff158492c4fd91db57cc593ed3e29be26803e6",
+      "delivery.md": "sha256:b06173ebdbc7581a6e4d56d4ff7b305dd81db40d2a6048b6737d89ba31a52254",
+      "evidence/code-review.md": "sha256:05fcfea54a106faa5c546a51ea84692fefb0fea7c6f0226e70396f0e7d7328be",
+      "evidence/validation.md": "sha256:3a55068afb40d6d69566808b0f9030529092b04cb209208ef7f845afea8f9a5a",
+      "manual-test.md": "sha256:010c6ed379cb5002172c5db54e50cc3ea0749653ab8f77b2cfa79c0855d1f62b",
+      "work-item.md": "sha256:e35858615b499d18ec72c7b2b88e5427154d9b0161599380fafbf20f384d2123"
+    },
+    "change_set": {
+      "revision": "600df7183d583146885548753268fa38bac740f7",
+      "tree": "60ab4b0b42c3218d51637d36a7e5ebc6ae41eedd",
+      "content_digest": "sha256:a267719298d49c79fb1702007882d62c8c6563225cfd0e78d5058221ecdc73cd"
+    }
+  }
+}
