@@ -37,6 +37,7 @@ fn session_list_parses_filters() {
             workspace,
             limit,
             active_days,
+            include_archived,
         },
     } = parsed.command
     else {
@@ -47,6 +48,35 @@ fn session_list_parses_filters() {
     assert_eq!(workspace.as_deref(), Some("F:\\demo"));
     assert_eq!(limit, Some(5));
     assert_eq!(active_days, Some(3));
+    assert!(!include_archived);
+}
+
+#[test]
+fn session_list_parses_full_history_flags() {
+    let parsed = parse(&[
+        "session",
+        "list",
+        "--active-days",
+        "0",
+        "--include-archived",
+        "--limit",
+        "20000",
+    ])
+    .expect("full-history flags should parse");
+    let Commands::Session {
+        action: SessionAction::List {
+            active_days,
+            include_archived,
+            limit,
+            ..
+        },
+    } = parsed.command
+    else {
+        panic!("expected session list");
+    };
+    assert_eq!(active_days, Some(0));
+    assert!(include_archived);
+    assert_eq!(limit, Some(20000));
 }
 
 #[test]

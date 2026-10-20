@@ -56,12 +56,15 @@ pub enum SessionAction {
         /// 只看这个工作区路径（整串相等，忽略大小写）
         #[arg(long = "workspace")]
         workspace: Option<String>,
-        /// 最多返回多少个会话，默认 80
+        /// 最多返回多少个会话，默认 80；--active-days 0 时最高 20000
         #[arg(long = "limit")]
         limit: Option<usize>,
-        /// 活跃窗口天数，夹在 1 到 30，默认 7
+        /// 活跃窗口天数，非 0 值夹在 1 到 30，默认 7；0 表示不限时间（全历史）
         #[arg(long = "active-days")]
         active_days: Option<u64>,
+        /// 连归档会话一起列出：Codex archived_sessions 目录、OpenCode/ZCode time_archived、JSONL 归档标记
+        #[arg(long = "include-archived", default_value_t = false)]
+        include_archived: bool,
     },
     /// 查看单个会话的详情，默认只到悬浮预览级，--content 才带正文内容
     Show {

@@ -21,6 +21,10 @@ pub mod plugin_catalog;
 pub mod plugin_state;
 const DEFAULT_MAX_ACTIVE_SESSIONS: usize = 80;
 const DEFAULT_ACTIVE_SESSION_DAYS: u64 = 7;
+const ACTIVE_SESSION_DAYS_LIMIT: u64 = 30;
+const MAX_ACTIVE_SESSIONS_LIMIT: usize = 5_000;
+// 全历史模式（active_window_days 显式传 0）只给 CLI 用：GUI 的窗口滑条最低 1 天，永远进不来。
+const FULL_HISTORY_SESSIONS_LIMIT: usize = 20_000;
 const COPILOT_TITLE_SAMPLE_LINES: usize = 240;
 const CLAUDE_TITLE_SAMPLE_LINES: usize = 240;
 const JSONL_HEAD_SAMPLE_BYTES: usize = 128 * 1024;
@@ -980,6 +984,218 @@ pub fn scan_sessions_blocking(options: Option<ScanOptions>) -> Vec<AgentSession>
     sessions
 }
 
+/// CLI 的兜底定向查找：默认扫描参数找不到的会话 ID（归档、30 天窗口外）走这里。
+/// OpenCode/ZCode 按 ID 直查 SQLite 行并补全量摘要；Codex 按 ID 定位文件后全量读
+/// （含 .jsonl.zst 解压）；其余 provider 全历史宽扫。GUI 不经过这个入口。
+pub fn lookup_session_full_history(id: &str) -> Option<AgentSession> {
+    let trimmed = id.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let scan_time_ms = current_time_ms();
+    // copilot-cli 必须在 copilot 之前判：前缀字符串包含它。
+    if trimmed.starts_with("copilot-cli:") {
+        return lookup_session_via_wide_scan(scan_time_ms, trimmed, "copilot-cli");
+    }
+    for provider in ["zcode", "opencode", "codex", "copilot", "claude"] {
+        let Some(key) = trimmed.strip_prefix(&format!("{provider}:")) else {
+            continue;
+        };
+        return match provider {
+            "zcode" => lookup_zcode_session_by_key(scan_time_ms, key),
+            "opencode" => lookup_opencode_session_by_key(scan_time_ms, key),
+            "codex" => lookup_codex_session_by_key(scan_time_ms, key),
+            other => lookup_session_via_wide_scan(scan_time_ms, trimmed, other),
+        };
+    }
+    lookup_session_via_wide_scan(scan_time_ms, trimmed, "")
+}
+
+fn full_history_scan_options() -> ScanOptions {
+    ScanOptions {
+        max_sessions: Some(FULL_HISTORY_SESSIONS_LIMIT),
+        active_window_days: Some(0),
+        hide_archived: Some(false),
+        include_copilot: None,
+        include_copilot_cli: None,
+        include_claude: None,
+        include_codex: None,
+        include_open_code: None,
+        include_zcode: None,
+        workspace_path_blacklist: None,
+    }
+}
+
+fn full_history_resolved_options() -> ResolvedScanOptions {
+    resolve_scan_options(Some(full_history_scan_options()))
+}
+
+fn lookup_session_via_wide_scan(
+    scan_time_ms: u64,
+    id: &str,
+    provider: &str,
+) -> Option<AgentSession> {
+    let mut options = full_history_scan_options();
+    if !provider.is_empty() {
+        options.include_copilot = Some(provider == "copilot");
+        options.include_copilot_cli = Some(provider == "copilot-cli");
+        options.include_claude = Some(provider == "claude");
+        options.include_codex = Some(provider == "codex");
+        options.include_open_code = Some(provider == "opencode");
+        options.include_zcode = Some(provider == "zcode");
+    }
+    let _ = scan_time_ms;
+    scan_sessions_blocking(Some(options))
+        .into_iter()
+        .find(|session| session.id == id)
+}
+
+fn open_readonly_sqlite(db_path: &Path, busy_timeout_ms: u64) -> Option<Connection> {
+    let connection = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .ok()?;
+    let _ = connection.busy_timeout(Duration::from_millis(busy_timeout_ms));
+    let _ = connection.pragma_update(None, "query_only", "ON");
+    let _ = connection.pragma_update(None, "temp_store", "MEMORY");
+    Some(connection)
+}
+
+fn lookup_opencode_session_by_key(scan_time_ms: u64, key: &str) -> Option<AgentSession> {
+    let db_path = opencode_db_path().filter(|path| path.exists())?;
+    let connection = open_readonly_sqlite(&db_path, OPENCODE_SQLITE_BUSY_TIMEOUT_MS)?;
+    let mut statement = connection
+        .prepare(
+            "select id, title, directory, path, time_created, time_updated, time_archived, \
+                    coalesce(cost, 0), coalesce(tokens_input, 0), coalesce(tokens_output, 0), \
+                    coalesce(tokens_cache_read, 0), coalesce(tokens_cache_write, 0) \
+             from session \
+             where id = ?1",
+        )
+        .ok()?;
+    let row = statement
+        .query_row(rusqlite::params![key], opencode_session_row_from_sql)
+        .ok()?;
+    let options = full_history_resolved_options();
+    let mut unlimited_budget = usize::MAX;
+    let summary = cached_or_read_opencode_session_summary(
+        &connection,
+        &row,
+        &mut unlimited_budget,
+        None,
+    );
+    read_opencode_session_row(&row, summary, scan_time_ms, &options)
+}
+
+fn lookup_zcode_session_by_key(scan_time_ms: u64, key: &str) -> Option<AgentSession> {
+    let db_path = zcode_db_path().filter(|path| path.exists())?;
+    let connection = open_readonly_sqlite(&db_path, ZCODE_SQLITE_BUSY_TIMEOUT_MS)?;
+    let mut statement = connection
+        .prepare(
+            "select id, title, directory, task_type, time_created, time_updated, time_archived \
+             from session \
+             where id = ?1",
+        )
+        .ok()?;
+    let row = statement
+        .query_row(rusqlite::params![key], zcode_session_row_from_sql)
+        .ok()?;
+    if row.task_type.as_deref() == Some("subagent_child") {
+        return None;
+    }
+    let options = full_history_resolved_options();
+    let usage_by_session = zcode_usage_by_session(&connection, &[row.id.clone()]);
+    let usage = usage_by_session.get(&row.id).cloned();
+    let mut unlimited_budget = usize::MAX;
+    let summary =
+        cached_or_read_zcode_session_summary(&connection, &row, &mut unlimited_budget, None);
+    read_zcode_session_row(&row, summary, scan_time_ms, &options, usage)
+}
+
+fn lookup_codex_session_by_key(scan_time_ms: u64, key: &str) -> Option<AgentSession> {
+    let user_profile_path = env::var_os("USERPROFILE")?;
+    let codex_home = PathBuf::from(user_profile_path).join(".codex");
+    let options = full_history_resolved_options();
+    let mut candidates: Vec<(PathBuf, u64)> = Vec::new();
+    for root in [codex_home.join("sessions"), codex_home.join("archived_sessions")] {
+        collect_codex_jsonl_candidates(&root, scan_time_ms, &options, &mut candidates);
+    }
+    candidates
+        .into_iter()
+        .filter(|(path, _)| {
+            codex_rollout_session_id_candidates(path)
+                .iter()
+                .any(|candidate| candidate == key)
+        })
+        .max_by_key(|(_, modified_ms)| *modified_ms)
+        .and_then(|(path, _)| {
+            read_codex_jsonl_session_at_depth(&path, scan_time_ms, &options, CodexZstDepth::Full)
+        })
+}
+
+/// 把 Codex 归档的 .jsonl.zst 解压成可读 JSONL，写到
+/// <系统临时目录>\AgentWatcher\handoff-sources\codex\<原名去掉 .zst>。
+/// 给 CLI 的 session show --content / handoff export 用，返回解压副本路径；
+/// GUI 的接续面板不走这里，引用的仍是原始归档路径。
+pub fn export_codex_zst_transcript(source_path: &str) -> Result<String, String> {
+    let source = Path::new(source_path);
+    if !has_extension(source, "zst") {
+        return Err("not a zst file".to_string());
+    }
+    let base_name = source
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .map(|name| name.trim_end_matches(".zst").to_string())
+        .filter(|name| !name.trim().is_empty())
+        .ok_or_else(|| "missing file name".to_string())?;
+    let target_dir = env::temp_dir()
+        .join("AgentWatcher")
+        .join("handoff-sources")
+        .join("codex");
+    fs::create_dir_all(&target_dir).map_err(|error| error.to_string())?;
+    let target_path = target_dir.join(base_name);
+
+    let input = File::open(source).map_err(|error| error.to_string())?;
+    let mut decoder =
+        ruzstd::decoding::StreamingDecoder::new(input).map_err(|error| error.to_string())?;
+    let output = File::create(&target_path).map_err(|error| error.to_string())?;
+    let mut writer = std::io::BufWriter::new(output);
+    std::io::copy(&mut decoder, &mut writer).map_err(|error| error.to_string())?;
+    writer.flush().map_err(|error| error.to_string())?;
+    Ok(path_to_string(&target_path))
+}
+
+fn opencode_session_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<OpenCodeSessionRow> {    let time_archived: Option<i64> = row.get(6)?;
+    Ok(OpenCodeSessionRow {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        directory: row.get(2)?,
+        path: row.get(3)?,
+        time_created: sqlite_millis_to_u64(row.get::<_, i64>(4)?),
+        time_updated: sqlite_millis_to_u64(row.get::<_, i64>(5)?),
+        time_archived: time_archived.map(sqlite_millis_to_u64),
+        cost: row.get::<_, Option<f64>>(7)?.unwrap_or(0.0),
+        tokens_input: row.get::<_, Option<i64>>(8)?.unwrap_or(0).max(0) as u64,
+        tokens_output: row.get::<_, Option<i64>>(9)?.unwrap_or(0).max(0) as u64,
+        tokens_cache_read: row.get::<_, Option<i64>>(10)?.unwrap_or(0).max(0) as u64,
+        tokens_cache_write: row.get::<_, Option<i64>>(11)?.unwrap_or(0).max(0) as u64,
+    })
+}
+
+fn zcode_session_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<ZcodeSessionRow> {
+    let time_archived: Option<i64> = row.get(6)?;
+    Ok(ZcodeSessionRow {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        directory: row.get(2)?,
+        task_type: row.get(3)?,
+        time_created: sqlite_millis_to_u64(row.get::<_, i64>(4)?),
+        time_updated: sqlite_millis_to_u64(row.get::<_, i64>(5)?),
+        time_archived: time_archived.map(sqlite_millis_to_u64),
+    })
+}
+
 fn apply_workspace_path_blacklist(sessions: &mut Vec<AgentSession>, blacklist: &[String]) {
     let normalized_blacklist: Vec<String> = blacklist
         .iter()
@@ -1734,7 +1950,7 @@ fn build_codex_rollout_index(sessions_root: &Path) -> HashMap<String, Vec<PathBu
 /// rollout 文件名里的 uuid 索引键：普通文件只有尾部一个 uuid；resume 副本
 /// `<时间戳>-<原uuid>_<新uuid>.jsonl`（可连续叠加）按顺序返回链条上每个 uuid。
 fn codex_rollout_session_id_candidates(session_path: &Path) -> Vec<String> {
-    let Some(file_name) = file_stem(session_path) else {
+    let Some(file_name) = codex_file_base_name(session_path) else {
         return Vec::new();
     };
     let mut candidates = Vec::new();
@@ -3518,7 +3734,7 @@ fn collect_codex_jsonl_candidates(
                 pending_dirs.push(entry_path);
                 continue;
             }
-            if !has_extension(&entry_path, "jsonl") {
+            if !(has_extension(&entry_path, "jsonl") || has_extension(&entry_path, "zst")) {
                 continue;
             }
             let modified_ms = dir_entry_modified_ms(&entry);
@@ -3859,10 +4075,36 @@ fn read_codex_thread_with_summary(
     })
 }
 
+// .zst 归档的读取深度：头部流式解压便宜，尾部要全流解压。
+// 全历史列表扫描只取头部（千级文件全解压要分钟级），定向 show/export 才走全量。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexZstDepth {
+    HeadOnly,
+    Full,
+}
+
+fn codex_scan_zst_depth(session_path: &Path, options: &ResolvedScanOptions) -> CodexZstDepth {
+    if is_full_history(options) && has_extension(session_path, "zst") {
+        CodexZstDepth::HeadOnly
+    } else {
+        CodexZstDepth::Full
+    }
+}
+
 fn read_codex_jsonl_session(
     session_path: &Path,
     scan_time_ms: u64,
     options: &ResolvedScanOptions,
+) -> Option<AgentSession> {
+    let depth = codex_scan_zst_depth(session_path, options);
+    read_codex_jsonl_session_at_depth(session_path, scan_time_ms, options, depth)
+}
+
+fn read_codex_jsonl_session_at_depth(
+    session_path: &Path,
+    scan_time_ms: u64,
+    options: &ResolvedScanOptions,
+    depth: CodexZstDepth,
 ) -> Option<AgentSession> {
     let fingerprint = jsonl_fingerprint(session_path)?;
     let fallback_updated_ms = fallback_updated_ms(&fingerprint, scan_time_ms);
@@ -3870,7 +4112,7 @@ fn read_codex_jsonl_session(
         return None;
     }
 
-    let summary = cached_or_read_codex_file_session(session_path, &fingerprint)?;
+    let summary = cached_or_read_codex_file_session(session_path, &fingerprint, depth)?;
     if options.hide_archived && summary.archived {
         return None;
     }
@@ -3923,8 +4165,13 @@ fn read_codex_jsonl_session(
         "codex",
         &[last_user_message.as_deref(), last_ai_message.as_deref()],
     );
-    let usage_entry = codex_thread_usage(&session_id)
-        .or_else(|| cached_jsonl_usage_for_path(session_path, parse_codex_usage));
+    // HeadOnly 模式跳过 usage：parse_codex_usage 也要读尾部，等于把省下的全流解压又花回去。
+    let usage_entry = if depth == CodexZstDepth::Full {
+        codex_thread_usage(&session_id)
+            .or_else(|| cached_jsonl_usage_for_path(session_path, parse_codex_usage))
+    } else {
+        codex_thread_usage(&session_id)
+    };
     let usage = usage_entry.as_ref().map(|entry| entry.usage.clone());
     if let Some(entry) = &usage_entry {
         store_jsonl_usage_detail(&format!("codex:{}", session_id), entry);
@@ -3963,25 +4210,30 @@ fn read_codex_jsonl_session(
 fn cached_or_read_codex_file_session(
     session_path: &Path,
     fingerprint: &JsonlFingerprint,
+    depth: CodexZstDepth,
 ) -> Option<CodexFileSessionSummary> {
     let path_key = path_to_string(session_path);
     if let Some(summary) = cached_jsonl_summary(&CODEX_FILE_SESSION_CACHE, &path_key, fingerprint) {
         return Some(summary);
     }
 
-    let summary = read_codex_file_session_summary(session_path, fingerprint)?;
-    store_jsonl_summary(
-        &CODEX_FILE_SESSION_CACHE,
-        path_key,
-        fingerprint,
-        summary.clone(),
-    );
+    let summary = read_codex_file_session_summary(session_path, fingerprint, depth)?;
+    // 缓存里只放全量摘要：HeadOnly 的薄摘要一旦落缓存，定向 show 会拿到没有尾部的预览。
+    if depth == CodexZstDepth::Full {
+        store_jsonl_summary(
+            &CODEX_FILE_SESSION_CACHE,
+            path_key,
+            fingerprint,
+            summary.clone(),
+        );
+    }
     Some(summary)
 }
 
 fn read_codex_file_session_summary(
     session_path: &Path,
     fingerprint: &JsonlFingerprint,
+    depth: CodexZstDepth,
 ) -> Option<CodexFileSessionSummary> {
     let mut session_id =
         codex_session_id_from_path(session_path).unwrap_or_else(|| "unknown".to_string());
@@ -4049,30 +4301,34 @@ fn read_codex_file_session_summary(
         },
     )?;
 
-    let tail_covers_file = tail_sample_covers_file(fingerprint.len);
-    let _ = visit_jsonl_tail_values(session_path, fingerprint.len, |json_value| {
-        if is_archived_json(json_value) {
-            archived = true;
-        }
-        latest_timestamp_ms =
-            newest_timestamp_ms(latest_timestamp_ms, timestamp_ms_from_json(json_value));
-        if let Some(user_text) = codex_jsonl_user_text(json_value) {
-            tail_message_count = tail_message_count.saturating_add(1);
-            collect_todo_ids_from_text(&user_text, &mut todo_ids);
-            if !is_user_system_error_text(&user_text) && !is_codex_context_user_text(&user_text) {
-                if title.is_none() {
-                    title = title_candidate_from_text(&user_text);
+    // zst 的 fingerprint.len 是压缩长度，推不出解压后是否被尾样本覆盖，一律按未覆盖算。
+    let tail_covers_file =
+        !has_extension(session_path, "zst") && tail_sample_covers_file(fingerprint.len);
+    if depth == CodexZstDepth::Full {
+        let _ = visit_jsonl_tail_values(session_path, fingerprint.len, |json_value| {
+            if is_archived_json(json_value) {
+                archived = true;
+            }
+            latest_timestamp_ms =
+                newest_timestamp_ms(latest_timestamp_ms, timestamp_ms_from_json(json_value));
+            if let Some(user_text) = codex_jsonl_user_text(json_value) {
+                tail_message_count = tail_message_count.saturating_add(1);
+                collect_todo_ids_from_text(&user_text, &mut todo_ids);
+                if !is_user_system_error_text(&user_text) && !is_codex_context_user_text(&user_text) {
+                    if title.is_none() {
+                        title = title_candidate_from_text(&user_text);
+                    }
+                    last_user_message = Some(user_text);
                 }
-                last_user_message = Some(user_text);
+            } else if let Some(ai_text) = codex_jsonl_ai_text(json_value) {
+                tail_message_count = tail_message_count.saturating_add(1);
+                collect_todo_ids_from_text(&ai_text, &mut todo_ids);
+                if !is_ai_model_noise_text(&ai_text) {
+                    last_ai_message = Some(ai_text);
+                }
             }
-        } else if let Some(ai_text) = codex_jsonl_ai_text(json_value) {
-            tail_message_count = tail_message_count.saturating_add(1);
-            collect_todo_ids_from_text(&ai_text, &mut todo_ids);
-            if !is_ai_model_noise_text(&ai_text) {
-                last_ai_message = Some(ai_text);
-            }
-        }
-    });
+        });
+    }
 
     let (last_user_message, last_user_message_truncated) =
         apply_user_preview_budget(last_user_message.or(first_user_message));
@@ -4101,11 +4357,24 @@ fn read_codex_file_session_summary(
 }
 
 fn codex_session_id_from_path(session_path: &Path) -> Option<String> {
-    let file_name = file_stem(session_path)?;
+    let file_name = codex_file_base_name(session_path)?;
     if file_name.chars().count() < 36 {
         return None;
     }
     codex_uuid_tail(&file_name).or_else(|| Some(clean_label(&file_name, 96)))
+}
+
+// Codex 会话文件名有两种后缀：`.jsonl` 和归档目录的 `.jsonl.zst`。
+// Path::file_stem 只剥一层，`.jsonl.zst` 会剩下 `…<uuid>.jsonl`，UUID 提取就断了。
+fn codex_file_base_name(session_path: &Path) -> Option<String> {
+    let mut file_name = file_stem(session_path)?;
+    if has_extension(Path::new(&file_name), "jsonl") {
+        file_name = Path::new(&file_name)
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .filter(|stem| !stem.trim().is_empty())?;
+    }
+    Some(file_name)
 }
 
 fn looks_like_uuid(text: &str) -> bool {
@@ -4392,15 +4661,9 @@ fn scan_opencode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> V
         return cached_sessions;
     }
 
-    let Ok(connection) = Connection::open_with_flags(
-        &db_path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    ) else {
+    let Some(connection) = open_readonly_sqlite(&db_path, OPENCODE_SQLITE_BUSY_TIMEOUT_MS) else {
         return Vec::new();
     };
-    let _ = connection.busy_timeout(Duration::from_millis(OPENCODE_SQLITE_BUSY_TIMEOUT_MS));
-    let _ = connection.pragma_update(None, "query_only", "ON");
-    let _ = connection.pragma_update(None, "temp_store", "MEMORY");
 
     let mut statement = match connection.prepare(
         "select id, title, directory, path, time_created, time_updated, time_archived, \
@@ -4424,30 +4687,13 @@ fn scan_opencode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> V
             active_cutoff_ms,
             hide_archived
         ],
-        |row| {
-            let time_archived: Option<i64> = row.get(6)?;
-            Ok(OpenCodeSessionRow {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                directory: row.get(2)?,
-                path: row.get(3)?,
-                time_created: sqlite_millis_to_u64(row.get::<_, i64>(4)?),
-                time_updated: sqlite_millis_to_u64(row.get::<_, i64>(5)?),
-                time_archived: time_archived.map(sqlite_millis_to_u64),
-                cost: row.get::<_, Option<f64>>(7)?.unwrap_or(0.0),
-                tokens_input: row.get::<_, Option<i64>>(8)?.unwrap_or(0).max(0) as u64,
-                tokens_output: row.get::<_, Option<i64>>(9)?.unwrap_or(0).max(0) as u64,
-                tokens_cache_read: row.get::<_, Option<i64>>(10)?.unwrap_or(0).max(0) as u64,
-                tokens_cache_write: row.get::<_, Option<i64>>(11)?.unwrap_or(0).max(0) as u64,
-            })
-        },
+        opencode_session_row_from_sql,
     ) {
         Ok(rows) => rows,
         Err(_) => return Vec::new(),
     };
 
-    let mut sessions = Vec::new();
-    let mut summary_fetch_budget = OPENCODE_SUMMARY_FETCH_BUDGET.min(options.max_sessions);
+    let mut candidate_rows: Vec<OpenCodeSessionRow> = Vec::new();
     for row in rows.filter_map(Result::ok) {
         if options.hide_archived && row.time_archived.is_some() {
             continue;
@@ -4456,8 +4702,33 @@ fn scan_opencode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> V
         if !is_active_session(row_updated_ms, scan_time_ms, options) {
             continue;
         }
-        let summary =
-            cached_or_read_opencode_session_summary(&connection, &row, &mut summary_fetch_budget);
+        candidate_rows.push(row);
+    }
+
+    // 全历史模式下摘要预算只够前几行，messageCount 用一条批量查询补齐真值；
+    // 预算耗尽的行在默认模式里维持 0（未采样口径），与 GUI 现状一致。
+    let batch_counts = if is_full_history(options) {
+        batch_message_counts(
+            &connection,
+            candidate_rows
+                .iter()
+                .map(|row| row.id.as_str())
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        HashMap::new()
+    };
+
+    let mut sessions = Vec::new();
+    let mut summary_fetch_budget = OPENCODE_SUMMARY_FETCH_BUDGET.min(options.max_sessions);
+    for row in candidate_rows {
+        let batch_message_count = batch_counts.get(&row.id).copied();
+        let summary = cached_or_read_opencode_session_summary(
+            &connection,
+            &row,
+            &mut summary_fetch_budget,
+            batch_message_count,
+        );
         if let Some(session) = read_opencode_session_row(&row, summary, scan_time_ms, options) {
             sessions.push(session);
             if sessions.len() >= options.max_sessions {
@@ -4483,11 +4754,22 @@ fn opencode_db_path() -> Option<PathBuf> {
 }
 
 fn sqlite_session_scan_limit(options: &ResolvedScanOptions, hard_max: usize) -> usize {
-    options
+    // 240 行硬上限是给 GUI 的响应速度定的；全历史模式（CLI 显式 --active-days 0）
+    // 解除到 max_sessions 的三倍（给 subagent/归档行过滤留裕量），
+    // 否则上万会话的库永远只能看见最近 240 行。
+    let raw = options
         .max_sessions
         .saturating_mul(3)
-        .max(options.max_sessions + 20)
-        .clamp(40, hard_max)
+        .max(options.max_sessions + 20);
+    if is_full_history(options) {
+        raw.max(40)
+    } else {
+        raw.clamp(40, hard_max)
+    }
+}
+
+fn is_full_history(options: &ResolvedScanOptions) -> bool {
+    options.active_window_ms == u64::MAX
 }
 
 fn sqlite_millis_to_u64(value: i64) -> u64 {
@@ -4561,19 +4843,50 @@ fn cached_or_read_opencode_session_summary(
     connection: &Connection,
     row: &OpenCodeSessionRow,
     summary_fetch_budget: &mut usize,
+    batch_message_count: Option<u32>,
 ) -> OpenCodeSessionSummary {
     if let Some(summary) = cached_opencode_session_summary(&row.id, row.time_updated) {
         return summary;
     }
 
     if *summary_fetch_budget == 0 {
-        return lightweight_opencode_session_summary(row);
+        let mut summary = lightweight_opencode_session_summary(row);
+        summary.message_count = batch_message_count.unwrap_or(summary.message_count);
+        return summary;
     }
     *summary_fetch_budget = summary_fetch_budget.saturating_sub(1);
 
     let summary = opencode_session_summary(connection, &row.id);
     cache_opencode_session_summary(&row.id, row.time_updated, summary.clone());
     summary
+}
+
+// 一条聚合查询拿一批会话的消息数，代替逐会话的摘要查询（后者单个约 9ms，全历史库要分钟级）。
+fn batch_message_counts(connection: &Connection, session_ids: Vec<&str>) -> HashMap<String, u32> {
+    let mut counts: HashMap<String, u32> = HashMap::new();
+    if session_ids.is_empty() {
+        return counts;
+    }
+    let Ok(ids_json) = serde_json::to_string(&session_ids) else {
+        return counts;
+    };
+    let Ok(mut statement) = connection.prepare(
+        "select session_id, count(*) \
+         from message \
+         where session_id in (select value from json_each(?1)) \
+         group by session_id",
+    ) else {
+        return counts;
+    };
+    let Ok(rows) = statement.query_map(rusqlite::params![ids_json], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    }) else {
+        return counts;
+    };
+    for (session_id, count) in rows.filter_map(Result::ok) {
+        counts.insert(session_id, u32::try_from(count.max(0)).unwrap_or(u32::MAX));
+    }
+    counts
 }
 
 fn lightweight_opencode_session_summary(row: &OpenCodeSessionRow) -> OpenCodeSessionSummary {
@@ -5224,15 +5537,9 @@ fn scan_zcode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<
         return cached_sessions;
     }
 
-    let Ok(connection) = Connection::open_with_flags(
-        &db_path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    ) else {
+    let Some(connection) = open_readonly_sqlite(&db_path, ZCODE_SQLITE_BUSY_TIMEOUT_MS) else {
         return Vec::new();
     };
-    let _ = connection.busy_timeout(Duration::from_millis(ZCODE_SQLITE_BUSY_TIMEOUT_MS));
-    let _ = connection.pragma_update(None, "query_only", "ON");
-    let _ = connection.pragma_update(None, "temp_store", "MEMORY");
 
     let mut statement = match connection.prepare(
         "select id, title, directory, task_type, time_created, time_updated, time_archived \
@@ -5255,18 +5562,7 @@ fn scan_zcode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<
             active_cutoff_ms,
             hide_archived
         ],
-        |row| {
-            let time_archived: Option<i64> = row.get(6)?;
-            Ok(ZcodeSessionRow {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                directory: row.get(2)?,
-                task_type: row.get(3)?,
-                time_created: sqlite_millis_to_u64(row.get::<_, i64>(4)?),
-                time_updated: sqlite_millis_to_u64(row.get::<_, i64>(5)?),
-                time_archived: time_archived.map(sqlite_millis_to_u64),
-            })
-        },
+        zcode_session_row_from_sql,
     ) {
         Ok(rows) => rows,
         Err(_) => return Vec::new(),
@@ -5293,11 +5589,27 @@ fn scan_zcode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<
             .map(|row| row.id.clone())
             .collect::<Vec<_>>(),
     );
+    let batch_counts = if is_full_history(options) {
+        batch_message_counts(
+            &connection,
+            candidate_rows
+                .iter()
+                .map(|row| row.id.as_str())
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        HashMap::new()
+    };
 
     let mut sessions = Vec::new();
     let mut summary_fetch_budget = ZCODE_SUMMARY_FETCH_BUDGET.min(options.max_sessions);
     for row in &candidate_rows {
-        let summary = cached_or_read_zcode_session_summary(&connection, row, &mut summary_fetch_budget);
+        let summary = cached_or_read_zcode_session_summary(
+            &connection,
+            row,
+            &mut summary_fetch_budget,
+            batch_counts.get(&row.id).copied(),
+        );
         let usage = usage_by_session.get(&row.id).cloned();
         if let Some(session) = read_zcode_session_row(row, summary, scan_time_ms, options, usage) {
             sessions.push(session);
@@ -5608,12 +5920,15 @@ fn cached_or_read_zcode_session_summary(
     connection: &Connection,
     row: &ZcodeSessionRow,
     summary_fetch_budget: &mut usize,
+    batch_message_count: Option<u32>,
 ) -> ZcodeSessionSummary {
     if let Some(cached) = cached_zcode_session_summary(&row.id, row.time_updated) {
         return cached;
     }
     if *summary_fetch_budget == 0 {
-        return lightweight_zcode_session_summary(row);
+        let mut summary = lightweight_zcode_session_summary(row);
+        summary.message_count = batch_message_count.unwrap_or(summary.message_count);
+        return summary;
     }
     *summary_fetch_budget = summary_fetch_budget.saturating_sub(1);
     let summary = zcode_session_summary(connection, &row.id);
@@ -8367,6 +8682,14 @@ where
 }
 
 fn read_file_prefix_text(session_path: &Path, file_len: u64, max_bytes: usize) -> Option<String> {
+    if has_extension(session_path, "zst") {
+        let (mut bytes, truncated) = read_zst_prefix_bytes(session_path, max_bytes)?;
+        if truncated && !bytes.ends_with(b"\n") {
+            truncate_after_last_newline(&mut bytes);
+        }
+        return Some(String::from_utf8_lossy(&bytes).into_owned());
+    }
+
     let mut file = File::open(session_path).ok()?;
     let read_len = file_len.min(max_bytes as u64);
     let mut bytes = Vec::with_capacity(read_len as usize);
@@ -8383,6 +8706,14 @@ fn read_file_prefix_text(session_path: &Path, file_len: u64, max_bytes: usize) -
 }
 
 fn read_file_suffix_text(session_path: &Path, file_len: u64, max_bytes: usize) -> Option<String> {
+    if has_extension(session_path, "zst") {
+        let (mut bytes, dropped_earlier_bytes) = read_zst_suffix_bytes(session_path, max_bytes)?;
+        if dropped_earlier_bytes {
+            drop_partial_first_line(&mut bytes);
+        }
+        return Some(String::from_utf8_lossy(&bytes).into_owned());
+    }
+
     let mut file = File::open(session_path).ok()?;
     let read_len = file_len.min(max_bytes as u64);
     let start_offset = file_len.saturating_sub(read_len);
@@ -8399,6 +8730,45 @@ fn read_file_suffix_text(session_path: &Path, file_len: u64, max_bytes: usize) -
     }
 
     Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+// Codex 归档目录里的 .jsonl.zst：头部走流式解压，解够 max_bytes 就停；
+// 尾部没有便宜的向后定位，全流解压 + 滚动窗口只保留最后 max_bytes，内存有界。
+fn read_zst_prefix_bytes(session_path: &Path, max_bytes: usize) -> Option<(Vec<u8>, bool)> {
+    let mut decoder = ruzstd::decoding::StreamingDecoder::new(File::open(session_path).ok()?).ok()?;
+    let mut bytes = vec![0u8; max_bytes];
+    let mut filled = 0usize;
+    while filled < max_bytes {
+        let read = decoder.read(&mut bytes[filled..]).ok()?;
+        if read == 0 {
+            bytes.truncate(filled);
+            return Some((bytes, false));
+        }
+        filled += read;
+    }
+    let mut probe = [0u8; 1];
+    let extra = decoder.read(&mut probe).ok()?;
+    Some((bytes, extra > 0))
+}
+
+fn read_zst_suffix_bytes(session_path: &Path, max_bytes: usize) -> Option<(Vec<u8>, bool)> {
+    let mut decoder = ruzstd::decoding::StreamingDecoder::new(File::open(session_path).ok()?).ok()?;
+    let mut window: Vec<u8> = Vec::with_capacity(max_bytes.saturating_mul(2));
+    let mut chunk = vec![0u8; 64 * 1024];
+    let mut dropped_earlier_bytes = false;
+    loop {
+        let read = decoder.read(&mut chunk).ok()?;
+        if read == 0 {
+            break;
+        }
+        window.extend_from_slice(&chunk[..read]);
+        if window.len() > max_bytes {
+            let excess = window.len() - max_bytes;
+            window.drain(..excess);
+            dropped_earlier_bytes = true;
+        }
+    }
+    Some((window, dropped_earlier_bytes))
 }
 
 fn truncate_after_last_newline(bytes: &mut Vec<u8>) {
@@ -9469,16 +9839,30 @@ fn resolve_scan_options(options: Option<ScanOptions>) -> ResolvedScanOptions {
         include_zcode: None,
         workspace_path_blacklist: None,
     });
-    let active_days = options
+    // 0 是显式的全历史开关（不限时间）；非 0 值维持 1–30 天夹取。GUI 调用方不会传 0，
+    // 默认路径的解析结果与历史行为逐字段一致。
+    let requested_active_days = options
         .active_window_days
-        .unwrap_or(DEFAULT_ACTIVE_SESSION_DAYS)
-        .clamp(1, 30);
+        .unwrap_or(DEFAULT_ACTIVE_SESSION_DAYS);
+    let full_history = requested_active_days == 0;
+    let active_days = if full_history {
+        u64::MAX
+    } else {
+        requested_active_days.clamp(1, ACTIVE_SESSION_DAYS_LIMIT)
+    };
 
     ResolvedScanOptions {
         max_sessions: options
             .max_sessions
             .unwrap_or(DEFAULT_MAX_ACTIVE_SESSIONS)
-            .clamp(1, 5000),
+            .clamp(
+                1,
+                if full_history {
+                    FULL_HISTORY_SESSIONS_LIMIT
+                } else {
+                    MAX_ACTIVE_SESSIONS_LIMIT
+                },
+            ),
         active_window_ms: active_days.saturating_mul(24 * 60 * 60 * 1000),
         hide_archived: options.hide_archived.unwrap_or(true),
         include_copilot: options.include_copilot.unwrap_or(true),
@@ -13052,12 +13436,13 @@ mod tests {
 
         let mut no_budget = 0usize;
         let lightweight =
-            cached_or_read_opencode_session_summary(&connection, &row, &mut no_budget);
+            cached_or_read_opencode_session_summary(&connection, &row, &mut no_budget, None);
         assert_eq!(lightweight.message_count, 0);
         assert_eq!(lightweight.latest_part_ms, 1_000);
 
         let mut one_fetch = 1usize;
-        let full = cached_or_read_opencode_session_summary(&connection, &row, &mut one_fetch);
+        let full =
+            cached_or_read_opencode_session_summary(&connection, &row, &mut one_fetch, Some(7));
         assert_eq!(one_fetch, 0);
         assert_eq!(full.message_count, 1);
         assert_eq!(
@@ -13066,8 +13451,12 @@ mod tests {
         );
 
         let mut no_budget_after_cache = 0usize;
-        let cached =
-            cached_or_read_opencode_session_summary(&connection, &row, &mut no_budget_after_cache);
+        let cached = cached_or_read_opencode_session_summary(
+            &connection,
+            &row,
+            &mut no_budget_after_cache,
+            None,
+        );
         assert_eq!(cached.message_count, 1);
         assert_eq!(no_budget_after_cache, 0);
     }
@@ -14262,4 +14651,80 @@ mod tests {
             }
         }
     }
+
+        // ---- 全历史（--active-days 0）与归档可见性 ----
+
+        fn scan_options_with(active_days: Option<u64>, max: Option<usize>) -> ScanOptions {
+            ScanOptions {
+                max_sessions: max,
+                active_window_days: active_days,
+                hide_archived: None,
+                include_copilot: None,
+                include_copilot_cli: None,
+                include_claude: None,
+                include_codex: None,
+                include_open_code: None,
+                include_zcode: None,
+                workspace_path_blacklist: None,
+            }
+        }
+
+        #[test]
+        fn test_resolve_scan_options_defaults_preserved() {
+            // GUI/默认路径：与历史行为逐字段一致（AC-005 的机器验证锚点）。
+            let defaults = resolve_scan_options(None);
+            assert_eq!(defaults.max_sessions, DEFAULT_MAX_ACTIVE_SESSIONS);
+            assert_eq!(
+                defaults.active_window_ms,
+                DEFAULT_ACTIVE_SESSION_DAYS * 24 * 60 * 60 * 1000
+            );
+            assert!(defaults.hide_archived);
+            assert!(!is_full_history(&defaults));
+            assert_eq!(
+                sqlite_session_scan_limit(&defaults, OPENCODE_SESSION_SCAN_LIMIT_MAX),
+                240
+            );
+
+            let clamped = resolve_scan_options(Some(scan_options_with(Some(90), Some(9_999))));
+            assert_eq!(clamped.active_window_ms, 30 * 24 * 60 * 60 * 1000);
+            assert_eq!(clamped.max_sessions, MAX_ACTIVE_SESSIONS_LIMIT);
+            assert_eq!(
+                sqlite_session_scan_limit(&clamped, ZCODE_SESSION_SCAN_LIMIT_MAX),
+                240
+            );
+        }
+
+        #[test]
+        fn test_resolve_scan_options_full_history_mode() {
+            let full = resolve_scan_options(Some(scan_options_with(Some(0), Some(20_000))));
+            assert_eq!(full.active_window_ms, u64::MAX);
+            assert!(is_full_history(&full));
+            assert_eq!(full.max_sessions, FULL_HISTORY_SESSIONS_LIMIT);
+            assert_eq!(
+                sqlite_session_scan_limit(&full, OPENCODE_SESSION_SCAN_LIMIT_MAX),
+                60_000
+            );
+            // is_active_session 在全历史模式下永真
+            assert!(is_active_session(0, current_time_ms(), &full));
+
+            // 全历史模式的 max_sessions 上限同样被夹住
+            let over = resolve_scan_options(Some(scan_options_with(Some(0), Some(99_999))));
+            assert_eq!(over.max_sessions, FULL_HISTORY_SESSIONS_LIMIT);
+        }
+
+        #[test]
+        fn test_codex_file_base_name_strips_double_extension() {
+            let uuid = "019e83a4-eb13-74e0-8356-59d7a654c7f2";
+            let plain = PathBuf::from(format!(r"C:\codex\rollout-2026-06-01T22-44-48-{uuid}.jsonl"));
+            let archived = PathBuf::from(format!(
+                r"C:\codex\archived_sessions\rollout-2026-06-01T22-44-48-{uuid}.jsonl.zst"
+            ));
+            assert_eq!(codex_session_id_from_path(&plain).as_deref(), Some(uuid));
+            assert_eq!(codex_session_id_from_path(&archived).as_deref(), Some(uuid));
+            assert_eq!(
+                codex_rollout_session_id_candidates(&archived),
+                vec![uuid.to_string()]
+            );
+        }
+
 }

@@ -2,8 +2,8 @@
 
 use crate::output;
 use agentwatcher_lib::{
-    prepare_handoff_source_context_blocking, scan_sessions_blocking, session_usage_detail,
-    AgentSession, HandoffSourceContextRequest, ScanOptions,
+    lookup_session_full_history, prepare_handoff_source_context_blocking, scan_sessions_blocking,
+    session_usage_detail, AgentSession, HandoffSourceContextRequest, ScanOptions,
 };
 
 /// 列表只暴露卡片级元数据；最后输入/输出等预览文本一律不进 list。
@@ -26,11 +26,12 @@ fn scan_options(
     provider: &[String],
     limit: Option<usize>,
     active_days: Option<u64>,
+    include_archived: bool,
 ) -> ScanOptions {
     let mut options = ScanOptions {
         max_sessions: limit,
         active_window_days: active_days,
-        hide_archived: None,
+        hide_archived: Some(!include_archived),
         include_copilot: None,
         include_copilot_cli: None,
         include_claude: None,
@@ -97,8 +98,10 @@ pub fn session_list(
     workspace: Option<&str>,
     limit: Option<usize>,
     active_days: Option<u64>,
+    include_archived: bool,
 ) {
-    let sessions = scan_sessions_blocking(Some(scan_options(provider, limit, active_days)));
+    let sessions =
+        scan_sessions_blocking(Some(scan_options(provider, limit, active_days, include_archived)));
     let filtered: Vec<&AgentSession> = sessions
         .iter()
         .filter(|session| {
@@ -148,8 +151,15 @@ fn session_time_label(session: &AgentSession) -> String {
 }
 
 fn find_session(id: &str) -> Option<AgentSession> {
-    let sessions = scan_sessions_blocking(None);
-    sessions.into_iter().find(|session| session.id == id.trim())
+    let trimmed = id.trim();
+    if let Some(session) = scan_sessions_blocking(None)
+        .into_iter()
+        .find(|session| session.id == trimmed)
+    {
+        return Some(session);
+    }
+    // 默认参数查不到：会话可能已归档或在 30 天窗口外，定向兜底再查一次。
+    lookup_session_full_history(trimmed)
 }
 
 fn handoff_request_for(session: &AgentSession) -> HandoffSourceContextRequest {
@@ -211,6 +221,21 @@ fn content_block_for(session: &AgentSession) -> serde_json::Value {
             Err(message) => serde_json::json!({ "warning": message }),
         };
     }
+    // Codex 归档的 .zst 对调用方不可读，--content 给解压后的 JSONL 副本。
+    if let Some(path) = session.session_path.as_deref() {
+        if path.to_ascii_lowercase().ends_with(".zst") {
+            return match agentwatcher_lib::export_codex_zst_transcript(path) {
+                Ok(decompressed) => serde_json::json!({
+                    "rawSessionPath": decompressed,
+                    "rawSessionArchive": path,
+                }),
+                Err(message) => serde_json::json!({
+                    "rawSessionPath": path,
+                    "warning": format!("解压归档失败：{message}"),
+                }),
+            };
+        }
+    }
     serde_json::json!({ "rawSessionPath": session.session_path })
 }
 
@@ -245,7 +270,15 @@ pub fn handoff_export(id: &str) {
     };
     let request = handoff_request_for(&session);
     match prepare_handoff_source_context_blocking(request) {
-        Ok(context) => {
+        Ok(mut context) => {
+            // zst 归档换成解压副本路径，接续方才能读到内容；原始归档路径留在 CLI 层换，GUI 不受影响。
+            if let Some(path) = context.primary_source_file.clone() {
+                if path.to_ascii_lowercase().ends_with(".zst") {
+                    if let Ok(decompressed) = agentwatcher_lib::export_codex_zst_transcript(&path) {
+                        context.primary_source_file = Some(decompressed);
+                    }
+                }
+            }
             let human = context
                 .primary_source_file
                 .as_deref()
