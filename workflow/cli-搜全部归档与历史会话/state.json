@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "protocol": "1.3.0",
-  "generated_at": "2026-10-20T09:20:08Z",
+  "generated_at": "2026-10-20T09:29:00Z",
   "generated_by": {
     "tool_revision": "awf-0.1.0"
   },
@@ -11,7 +11,7 @@
     "slug": "cli-搜全部归档与历史会话",
     "title": "cli 搜全部归档与历史会话",
     "kind": "feature",
-    "status": "in_review",
+    "status": "done",
     "branch": "feature/cli-搜全部归档与历史会话",
     "home_repository": "https://github.com/pb763396199/AgentWatcher.git",
     "contract_digest": "sha256:66c5eb385a5e74388b6cd2c4a87f41f8d92e69603379b6bb23da5196597a30de",
@@ -56,6 +56,15 @@
       "type": "delivery",
       "path": "delivery/delivery-v2.md",
       "outcome": "ready_to_land",
+      "freshness": "superseded",
+      "stage": 80,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_01M5CA2C0C0007J1ZZ1HX0793J",
+      "type": "delivery",
+      "path": "delivery/delivery-v3.md",
+      "outcome": "delivered",
       "freshness": "stale-subject",
       "stage": 80,
       "depends_on": []
@@ -100,21 +109,22 @@
     "next_skill": "aes-finish",
     "waiting_on": null
   },
-  "next": "这些记录已经跟不上代码了，要重做：delivery",
+  "next": "已收口",
   "computed_from": {
     "documents": {
       "builds/1.md": "sha256:e34dbc3163aeb3098276f84d4ba00a4bafcd645b266052e991487a76aaff403c",
       "builds/2.md": "sha256:0a9d43f8973e2df4ad9e4990e677c788d4dd9044df4c9ee46a060423f05768fb",
       "delivery.md": "sha256:1a42aa00fefc4b40f3c19d375139dfc05917e7f94884c54dcd6721fb624a9c8e",
       "delivery/delivery-v2.md": "sha256:7d020d1ee8800d58d3f8a183a3697ce7e518eb457219f88e548f54e21787e1fa",
+      "delivery/delivery-v3.md": "sha256:4c51bacd8771cd8be79669f3a9439435828ff9069bf3fafe7dc45084b459a4d8",
       "evidence/code-review.md": "sha256:50a5f834f038788185b779ef8da6a81d7e42d002d7508f77f893c3ea90b904cf",
       "evidence/validation.md": "sha256:aed2e24d900a362ff500618dd2f78139067adc408d9fd0acef357c03d0339bf9",
       "manual-test.md": "sha256:50c9f550e9311161ddd100fd7a88ce2a48c81fa541b4059c8e1c847e37048278",
-      "work-item.md": "sha256:9a3f5f7cd77cb352eb1b7da1bf311bd9623c25b186feeb91ca17b50e2be60488"
+      "work-item.md": "sha256:1f6323db6dac61cb29cffebe04f53feb30f2c84f9a82ce5a0fe4792ab139d6b9"
     },
     "change_set": {
-      "revision": "141fb7659875fa25e8fd4bc6aa8e6b437ff8c005",
-      "tree": "2643cb3d75443fcef94c66610224b62d8cb6a45b",
+      "revision": "4c3caf6d11c48d28ce5a4661d1341c5d1e597f75",
+      "tree": "2b3064244b753e7f25e2ea7d47303a5e795817d0",
       "content_digest": "sha256:68936f4abf691126f5248afd9ab8c9f71fd367080f73ecc32efad556d376e159"
     }
   }
