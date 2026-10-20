@@ -2343,15 +2343,17 @@
     .analytics-chartbox svg { display: block; }
     .analytics-chartbox svg text { font-size: 11px; }
     /* ===== 轨迹泳道（子代理派发与模型归因） ===== */
-    .analytics-traj-panel { border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); overflow: hidden; }
+    .analytics-traj-panel { border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); overflow: hidden; min-width: 0; }
     .analytics-traj-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 12px 6px; }
     .analytics-traj-head strong { font-size: 13px; }
     .analytics-traj-note { font-size: 11px; color: var(--muted); }
     .analytics-traj-head .spring { flex: 1; }
     .analytics-traj-toggle { display: inline-flex; gap: 6px; align-items: center; padding: 3px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-3); color: var(--text); cursor: pointer; font-size: 11.5px; }
     .analytics-traj-toggle:hover { border-color: var(--accent); color: var(--accent); }
-    .analytics-traj-lanes { position: relative; padding: 2px 12px 10px; min-width: 0; }
-    .analytics-traj-row { display: grid; grid-template-columns: 190px minmax(0, 1fr) 22px; gap: 8px; align-items: center; min-height: 26px; cursor: pointer; border-radius: 4px; padding: 1px 4px; }
+    .analytics-traj-lanes { position: relative; padding: 2px 12px 10px; min-width: 0; overflow-x: hidden; }
+    .analytics-traj-lane { min-width: 0; }
+    .analytics-traj-label { min-width: 0; }
+    .analytics-traj-row { display: grid; grid-template-columns: 190px minmax(0, 1fr) 22px; gap: 8px; align-items: center; height: 28px; min-height: 28px; max-height: 28px; cursor: pointer; border-radius: 4px; padding: 1px 4px; overflow: hidden; }
     @media (max-width: 720px) {
       .analytics-traj-row, .analytics-traj-detail, .analytics-traj-axis { grid-template-columns: 128px minmax(0, 1fr) 20px; gap: 6px; }
     }
@@ -2366,7 +2368,7 @@
     .analytics-traj-label .d { width: 8px; height: 8px; border-radius: 2px; flex: none; }
     .analytics-traj-label .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
     .analytics-traj-label .cost { font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .analytics-traj-track { position: relative; height: 16px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+    .analytics-traj-track { position: relative; height: 16px; min-height: 16px; max-height: 16px; min-width: 0; border-radius: 3px; background: var(--surface-3); overflow: hidden; flex: none; }
     .analytics-traj-track .seg { position: absolute; top: 0; bottom: 0; border-radius: 2px; min-width: 2px; }
     .analytics-traj-track .mk-spawn { position: absolute; top: 2px; bottom: 2px; width: 2px; background: var(--soft); opacity: .9; }
     .analytics-traj-track .mk-send { position: absolute; top: 4px; bottom: 4px; width: 1.5px; background: var(--soft); opacity: .5; }
@@ -2374,7 +2376,8 @@
     .analytics-traj-track .hatch { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(45deg, transparent 0 3px, color-mix(in srgb, var(--text) 22%, transparent) 3px 6px); }
     .analytics-traj-chevron { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 10px; padding: 2px; transition: transform .12s ease; }
     .analytics-traj-chevron[aria-expanded="true"] { transform: rotate(90deg); color: var(--accent); }
-    .analytics-traj-detail { padding: 2px 4px 4px; border-top: 1px dotted color-mix(in srgb, var(--border) 45%, transparent); display: grid; grid-template-columns: 190px minmax(0, 1fr) 22px; gap: 8px; }
+    .analytics-traj-detail { padding: 2px 4px 4px; border-top: 1px dotted color-mix(in srgb, var(--border) 45%, transparent); display: grid; grid-template-columns: 190px minmax(0, 1fr) 22px; gap: 8px; align-items: start; }
+    .analytics-traj-detail-chart { min-width: 0; min-height: 46px; }
     .analytics-traj-detail .cap { font-size: 9.5px; color: var(--muted); line-height: 1.35; padding-right: 6px; }
     .analytics-traj-detail .cap .peak { font-variant-numeric: tabular-nums; color: var(--text); }
     .analytics-traj-detail-chart { position: relative; min-width: 0; }
@@ -2382,7 +2385,8 @@
     .analytics-traj-readout { position: absolute; top: 0; right: 2px; font-size: 9.5px; color: var(--text); background: color-mix(in srgb, var(--surface-3) 88%, transparent); border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; pointer-events: none; display: none; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .analytics-traj-switch { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1.5px dashed var(--c-astra); z-index: 3; pointer-events: none; }
     .analytics-traj-switch .tag { position: absolute; top: -2px; left: 4px; font-size: 9.5px; color: var(--c-astra); white-space: nowrap; }
-    .analytics-traj-axis { display: grid; grid-template-columns: 190px minmax(0, 1fr) 22px; gap: 8px; padding: 0 12px 4px; }
+    .analytics-traj-axis { display: grid; grid-template-columns: 190px minmax(0, 1fr) 22px; gap: 8px; padding: 0 12px 4px; min-width: 0; }
+    .analytics-traj-axis-track { min-width: 0; }
     .analytics-traj-axis-track { position: relative; height: 14px; font-size: 10.5px; color: var(--muted); }
     .analytics-traj-axis-track span { position: absolute; transform: translateX(-50%); }
     .analytics-traj-parallel { padding: 0 12px 8px; }
@@ -14880,6 +14884,15 @@
       // 绘制后自校验：svg 实际渲染宽与宿主宽失配超过 2px（任何原因导致的陈旧
       // viewBox / 漏掉的 resize 事件）就用新鲜测量值立即重绘一次，兜死
       // 「内容被压成一条竖线」这类失配失败的呈现
+      const analyticsTrajGeometryBroken = () => {
+        const panel = document.getElementById('analyticsTrajPanel');
+        if (!panel || panel.hidden) return false;
+        const row = panel.querySelector('.analytics-traj-row');
+        const track = panel.querySelector('.analytics-traj-track');
+        if (!row || !track) return false;
+        return row.getBoundingClientRect().height < 20
+          || track.getBoundingClientRect().width < 40;
+      };
       const analyticsChartsWidthMismatched = () => {
         return ['analyticsUsageChart', 'analyticsCtxChart', 'analyticsRhythmChart'].some(id => {
           const host = document.getElementById(id);
@@ -14894,6 +14907,9 @@
         drawAnalyticsChartsOnce();
         if (analyticsChartsWidthMismatched()) {
           drawAnalyticsChartsOnce();
+        }
+        if (analyticsTrajGeometryBroken()) {
+          renderAnalyticsTrajectory();
         }
       };
       const scheduleAnalyticsResizeRedraw = () => {
