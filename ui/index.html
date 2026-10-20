@@ -2352,6 +2352,14 @@
     .analytics-traj-toggle:hover { border-color: var(--accent); color: var(--accent); }
     .analytics-traj-lanes { position: relative; padding: 2px 12px 10px; min-width: 0; }
     .analytics-traj-row { display: grid; grid-template-columns: 190px minmax(0, 1fr) 22px; gap: 8px; align-items: center; min-height: 26px; cursor: pointer; border-radius: 4px; padding: 1px 4px; }
+    @media (max-width: 720px) {
+      .analytics-traj-row, .analytics-traj-detail, .analytics-traj-axis { grid-template-columns: 128px minmax(0, 1fr) 20px; gap: 6px; }
+    }
+    @media (max-width: 600px) {
+      .analytics-traj-row, .analytics-traj-detail, .analytics-traj-axis { grid-template-columns: 96px minmax(0, 1fr) 18px; gap: 5px; }
+      .analytics-traj-label .name { font-size: 10px; }
+      .analytics-traj-label .cost { font-size: 10px; }
+    }
     .analytics-traj-row:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
     .analytics-traj-lane + .analytics-traj-lane .analytics-traj-row { border-top: 1px dashed color-mix(in srgb, var(--border) 55%, transparent); }
     .analytics-traj-label { display: flex; gap: 6px; align-items: center; font-size: 11px; min-width: 0; }
@@ -2380,6 +2388,13 @@
     .analytics-traj-parallel { padding: 0 12px 8px; }
     .analytics-traj-parallel .cap { font-size: 10.5px; color: var(--muted); margin-bottom: 2px; }
     .analytics-agents-panel { border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); overflow: hidden; }
+    .analytics-agents-scroll { overflow-x: auto; scrollbar-width: thin; scrollbar-color: #5f5f5f #252526; }
+    .analytics-agents-scroll::-webkit-scrollbar { height: 8px; }
+    .analytics-agents-scroll::-webkit-scrollbar-track { background: #252526; }
+    .analytics-agents-scroll::-webkit-scrollbar-thumb { border-radius: 999px; background: #5f5f5f; }
+    body[data-theme="light"] .analytics-agents-scroll { scrollbar-color: #c8c8c8 #f3f3f3; }
+    body[data-theme="light"] .analytics-agents-scroll::-webkit-scrollbar-track { background: #f3f3f3; }
+    body[data-theme="light"] .analytics-agents-scroll::-webkit-scrollbar-thumb { background: #c8c8c8; }
     .analytics-agents-table { width: 100%; border-collapse: collapse; }
     .analytics-agents-table th { text-align: left; font-size: 11px; font-weight: 500; color: var(--muted); padding: 6px 10px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); white-space: nowrap; }
     .analytics-agents-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 11.5px; }
@@ -6168,7 +6183,7 @@
             <span class="spring"></span>
             <button type="button" class="analytics-traj-toggle" id="analyticsAgentsToggle"></button>
           </div>
-          <table class="analytics-agents-table">
+          <div class="analytics-agents-scroll"><table class="analytics-agents-table">
             <thead>
               <tr>
                 <th data-i18n="analyticsAgentsColAgent">Agent</th>
@@ -6182,7 +6197,7 @@
               </tr>
             </thead>
             <tbody id="analyticsAgentsRows"></tbody>
-          </table>
+          </table></div>
         </section>
         <div class="analytics-breakdown">
           <div class="analytics-bd">
@@ -14257,6 +14272,18 @@
         .sort((left, right) => (left.startMs || 0) - (right.startMs || 0));
     }
 
+    // 子代理可能用主会话没出现过的模型；并入取色序列，避免全部回退成主模型色
+    function analyticsTrajEnsureModelOrder() {
+      const agents = analyticsState.lifecycle?.agents || [];
+      agents.forEach(agent => {
+        if (agent.model && !analyticsState.modelOrder.includes(agent.model)) {
+          analyticsState.modelOrder.push(agent.model);
+        }
+      });
+      // 取色序列变了，模型徽章占比重算
+      if (agents.length) renderAnalyticsIdentity();
+    }
+
     function analyticsTrajGuardians() {
       return (analyticsState.lifecycle?.agents || []).filter(agent => agent.role === 'guardian');
     }
@@ -14312,8 +14339,21 @@
       const W = 320, H = 46, padT = 3, padB = 3;
       if (!calls.length) return host;
       let maxIn = 0;
+      let activeStart = Infinity;
+      let activeEnd = 0;
+      calls.forEach(call => {
+        const ms = Number(call.tMs) || 0;
+        if (ms > 0) {
+          activeStart = Math.min(activeStart, ms);
+          activeEnd = Math.max(activeEnd, ms);
+        }
+      });
+      if (activeStart === Infinity) activeStart = span.start;
+      if (activeEnd <= 0) activeEnd = span.end;
+      // 按该代理自身活跃跨度分桶（短命 worker 也有可辨的波形），
+      // 桶位置仍映射到主时间域，与其他泳道对齐
       const buckets = new Map();
-      const bucketMs = Math.max(60000, (span.end - span.start) / 48);
+      const bucketMs = Math.max(30000, (activeEnd - activeStart) / 16);
       calls.forEach(call => {
         const ms = Number(call.tMs) || 0;
         if (ms <= 0) return;
@@ -14389,13 +14429,11 @@
       const readout = document.createElement('div');
       readout.className = 'analytics-traj-readout';
       chart.appendChild(readout);
-      const bucketMs = Math.max(60000, (span.end - span.start) / 48);
       chart.onmousemove = event => {
         const rect = chart.getBoundingClientRect();
         const frac = Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width)));
         const ms = span.start + frac * (span.end - span.start);
-        const key = Math.floor((ms - span.start) / bucketMs) * bucketMs + span.start;
-        const bucketValue = analyticsTrajBucketAt(lifecycle?.calls || [], key, bucketMs);
+        const bucketValue = analyticsTrajCtxAt(lifecycle?.calls || [], ms, 'inputTokens');
         const ctxValue = analyticsTrajCtxAt(lifecycle?.calls || [], ms);
         readout.textContent = analyticsClockLabel(ms) + '  ' +
           t('analyticsTipIn') + ' ' + formatUsageTokens(bucketValue) + ' · ' +
@@ -14407,24 +14445,16 @@
       return wrapper;
     }
 
-    function analyticsTrajBucketAt(calls, key, bucketMs) {
-      let sum = 0;
-      calls.forEach(call => {
-        const ms = Number(call.tMs) || 0;
-        if (ms >= key && ms < key + bucketMs) sum += Number(call.inputTokens) || 0;
-      });
-      return sum;
-    }
-
-    function analyticsTrajCtxAt(calls, ms) {
+    function analyticsTrajCtxAt(calls, ms, field) {
       let best = null;
       let bestDistance = Infinity;
       calls.forEach(call => {
-        if (call.contextTokens == null) return;
+        const value = field ? call[field] : call.contextTokens;
+        if (value == null) return;
         const distance = Math.abs((Number(call.tMs) || 0) - ms);
         if (distance < bestDistance) {
           bestDistance = distance;
-          best = Number(call.contextTokens);
+          best = Number(value);
         }
       });
       return best;
@@ -14474,6 +14504,7 @@
       if (!hasAgents) return;
       const span = analyticsTrajSpan();
       if (!span) return;
+      analyticsTrajEnsureModelOrder();
       const host = document.getElementById('analyticsTrajLanes');
       host.replaceChildren();
 
@@ -14481,8 +14512,7 @@
       if (switchAt) {
         const line = document.createElement('div');
         line.className = 'analytics-traj-switch';
-        const leftPct = analyticsTrajPct(switchAt.tMs, span) * 100;
-        line.style.left = 'calc(206px + (100% - 236px) * ' + (leftPct / 100).toFixed(4) + ')';
+        line.dataset.leftPct = String(analyticsTrajPct(switchAt.tMs, span) * 100);
         line.innerHTML = '<span class="tag">' + analyticsClockLabel(switchAt.tMs) + ' → ' + escHtml(switchAt.to || '') + '</span>';
         host.appendChild(line);
       }
@@ -14554,11 +14584,23 @@
           }));
         }
       }
+      positionAnalyticsTrajSwitch();
       wireAnalyticsTrajLanes();
       renderAnalyticsTrajAxis(span);
       renderAnalyticsTrajParallel(span);
       renderAnalyticsTrajToggle();
       renderAnalyticsAgentsRanking();
+    }
+
+    function positionAnalyticsTrajSwitch() {
+      const host = document.getElementById('analyticsTrajLanes');
+      const line = host && host.querySelector('.analytics-traj-switch');
+      const firstTrack = host && host.querySelector('.analytics-traj-lane .analytics-traj-track');
+      if (!line || !firstTrack) return;
+      const hostRect = host.getBoundingClientRect();
+      const trackRect = firstTrack.getBoundingClientRect();
+      const leftPx = trackRect.left - hostRect.left + (Number(line.dataset.leftPct) / 100) * trackRect.width;
+      line.style.left = Math.round(leftPx) + 'px';
     }
 
     function wireAnalyticsTrajLanes() {
