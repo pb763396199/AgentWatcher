@@ -210,6 +210,11 @@ struct SessionLifecycle {
     #[serde(skip_serializing_if = "Option::is_none")]
     context_window_tokens: Option<u64>,
     degraded: bool,
+    agents: Vec<TrajectoryAgent>,
+    agents_truncated: bool,
+    orchestration: Vec<OrchestrationEvent>,
+    /// 主代理被子代理阻塞的估算区间（spawn 到其后最近一次 wait_agent）
+    wait_intervals: Vec<(u64, u64)>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -218,6 +223,36 @@ struct SessionLifecycleRequest {
     id: String,
     provider: Option<String>,
     session_path: Option<String>,
+}
+
+/// 轨迹泳道的子代理条目：Codex 多智能体会话里每个子 rollout 一条。
+/// worker 由 thread_spawn.parent_thread_id 精确归属；guardian 由工作区加
+/// 时间窗近似归属（approximated = true），UI 需标注估算。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TrajectoryAgent {
+    id: String,
+    role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    start_ms: u64,
+    end_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    turns: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<u32>,
+    approximated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct OrchestrationEvent {
+    t_ms: u64,
+    kind: String,
 }
 
 /// 超预算时按「同模型的序列位置」分段合并：每个模型各自按顺序每 N 个点
@@ -1405,6 +1440,45 @@ where
     Some(entry)
 }
 
+/// 预算外版本：命中缓存直接复用，未命中也现读并回填缓存。
+/// 供用户显式动作（如子代理发现）使用，避免 10 文件/轮的扫描预算
+/// 截断多子代理会话的用量归集。
+fn cached_jsonl_usage_for_path_unbudgeted<F>(path: &Path, compute: F) -> Option<CachedJsonlUsage>
+where
+    F: FnOnce(&str) -> Option<(SessionUsage, Vec<(String, u32)>)>,
+{
+    let metadata = fs::metadata(path).ok()?;
+    let modified_ms = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64)?;
+    let cache_key = path_to_string(path);
+    {
+        let cache = jsonl_usage_cache().lock().ok()?;
+        if let Some(hit) = cache.get(&cache_key) {
+            if hit.size == metadata.len() && hit.modified_ms == modified_ms {
+                return Some(hit.clone());
+            }
+        }
+    }
+    let bytes = fs::read(path).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let (usage, top_tools) = compute(&text)?;
+    let entry = CachedJsonlUsage {
+        size: metadata.len(),
+        modified_ms,
+        usage,
+        top_tools,
+    };
+    let mut cache = jsonl_usage_cache().lock().ok()?;
+    if cache.len() >= JSONL_USAGE_CACHE_CAPACITY {
+        cache.clear();
+    }
+    cache.insert(cache_key, entry.clone());
+    Some(entry)
+}
+
 fn store_jsonl_usage_detail(session_key: &str, entry: &CachedJsonlUsage) {
     if let Ok(mut cache) = jsonl_usage_detail_by_session().lock() {
         if cache.len() >= JSONL_USAGE_CACHE_CAPACITY {
@@ -1432,6 +1506,7 @@ struct CachedJsonlTimeline {
     turn_timestamps: Vec<u64>,
     tool_timestamps: Vec<u64>,
     context_window_tokens: Option<u64>,
+    orchestration: Vec<OrchestrationEvent>,
 }
 
 static JSONL_TIMELINE_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlTimeline>>> =
@@ -1443,7 +1518,7 @@ fn jsonl_timeline_cache() -> &'static Mutex<HashMap<String, CachedJsonlTimeline>
 
 fn cached_jsonl_timeline_for_path<F>(path: &Path, compute: F) -> Option<CachedJsonlTimeline>
 where
-    F: FnOnce(&str) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>)>,
+    F: FnOnce(&str) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>, Vec<OrchestrationEvent>)>,
 {
     let metadata = fs::metadata(path).ok()?;
     let modified_ms = metadata
@@ -1462,13 +1537,16 @@ where
     }
     let bytes = fs::read(path).ok()?;
     let text = String::from_utf8_lossy(&bytes);
-    let (calls, turn_timestamps, tool_timestamps, context_window_tokens) = compute(&text)?;
+    let (calls, turn_timestamps, tool_timestamps, context_window_tokens, orchestration) =
+        compute(&text)?;
     let mut sorted_calls = calls;
     sorted_calls.sort_by_key(|point| point.t_ms);
     let mut turns = turn_timestamps;
     turns.sort_unstable();
     let mut tools = tool_timestamps;
     tools.sort_unstable();
+    let mut events = orchestration;
+    events.sort_by_key(|event| event.t_ms);
     let entry = CachedJsonlTimeline {
         size: metadata.len(),
         modified_ms,
@@ -1476,6 +1554,7 @@ where
         turn_timestamps: turns,
         tool_timestamps: tools,
         context_window_tokens,
+        orchestration: events,
     };
     let mut cache = jsonl_timeline_cache().lock().ok()?;
     if cache.len() >= JSONL_USAGE_CACHE_CAPACITY {
@@ -1713,7 +1792,7 @@ fn parse_codex_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u32)>)> {
 /// 一个点，毛输入 = input+cache_creation+cache_read，当前上下文同口径。
 fn parse_claude_timeline(
     text: &str,
-) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>)> {
+) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>, Vec<OrchestrationEvent>)> {
     let mut calls: Vec<LifecycleCallPoint> = Vec::new();
     let mut turn_timestamps: Vec<u64> = Vec::new();
     let mut tool_timestamps: Vec<u64> = Vec::new();
@@ -1798,7 +1877,13 @@ fn parse_claude_timeline(
     if calls.is_empty() && turn_timestamps.is_empty() && tool_timestamps.is_empty() {
         return None;
     }
-    Some((calls, turn_timestamps, tool_timestamps, None))
+    Some((
+        calls,
+        turn_timestamps,
+        tool_timestamps,
+        None,
+        Vec::new(),
+    ))
 }
 
 fn claude_user_turn_text(value: &Value) -> Option<String> {
@@ -2043,7 +2128,7 @@ fn copilot_chat_collapsed_requests(
 /// 工具调用没有独立时间戳，按所属轮的 timestamp 计入密度。
 fn parse_copilot_chat_timeline(
     text: &str,
-) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>)> {
+) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>, Vec<OrchestrationEvent>)> {
     let requests = copilot_chat_collapsed_requests(text)?;
     let mut calls: Vec<LifecycleCallPoint> = Vec::new();
     let mut turn_timestamps: Vec<u64> = Vec::new();
@@ -2097,7 +2182,13 @@ fn parse_copilot_chat_timeline(
     if calls.is_empty() && turn_timestamps.is_empty() && tool_timestamps.is_empty() {
         return None;
     }
-    Some((calls, turn_timestamps, tool_timestamps, None))
+    Some((
+        calls,
+        turn_timestamps,
+        tool_timestamps,
+        None,
+        Vec::new(),
+    ))
 }
 
 fn parse_copilot_chat_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u32)>)> {
@@ -2356,12 +2447,13 @@ fn merge_codex_usage_segments(
 /// 上下文 = 非零 input+output。模型名跟随最近一次 turn_context。
 fn parse_codex_timeline(
     text: &str,
-) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>)> {
+) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>, Vec<OrchestrationEvent>)> {
     let mut calls: Vec<LifecycleCallPoint> = Vec::new();
     let mut turn_timestamps: Vec<u64> = Vec::new();
     let mut tool_timestamps: Vec<u64> = Vec::new();
     let mut context_window_tokens: Option<u64> = None;
     let mut current_model: Option<String> = None;
+    let mut orchestration: Vec<OrchestrationEvent> = Vec::new();
 
     for line in jsonl_lines(text) {
         let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
@@ -2422,6 +2514,19 @@ fn parse_codex_timeline(
                 if let Some(t_ms) = timestamp_ms {
                     tool_timestamps.push(t_ms);
                 }
+                // 多智能体编排调用单列：spawn_agent / send_message / wait_agent
+                let kind = match payload.get("name").and_then(Value::as_str) {
+                    Some("spawn_agent") => Some("spawn"),
+                    Some("send_message") => Some("send"),
+                    Some("wait_agent") | Some("wait") => Some("wait"),
+                    _ => None,
+                };
+                if let (Some(kind), Some(t_ms)) = (kind, timestamp_ms) {
+                    orchestration.push(OrchestrationEvent {
+                        t_ms,
+                        kind: kind.to_string(),
+                    });
+                }
             }
             (Some("response_item"), Some("message")) => {
                 if payload.get("role").and_then(Value::as_str) == Some("user") {
@@ -2459,6 +2564,7 @@ fn parse_codex_timeline(
         turn_timestamps,
         tool_timestamps,
         context_window_tokens,
+        orchestration,
     ))
 }
 
@@ -2672,6 +2778,185 @@ pub fn session_usage_detail(id: String) -> SessionUsageDetail {
     }
 }
 
+/// Codex 子代理发现预算：超过后按毛输入截断并在返回上标记 truncated。
+const CODEX_SUBAGENT_BUDGET: usize = 40;
+const CODEX_SUBAGENT_TAIL_BYTES: u64 = 64 * 1024;
+
+/// 只读 rollout 首行（session_meta），带 64KB 上限防御超长行。
+fn rollout_first_meta(path: &Path) -> Option<Value> {
+    use std::io::Read;
+    let mut file = fs::File::open(path).ok()?;
+    let mut buf = vec![0_u8; CODEX_SUBAGENT_TAIL_BYTES as usize];
+    let read = file.read(&mut buf).ok()?;
+    let end = buf[..read]
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .unwrap_or(read);
+    let line = String::from_utf8_lossy(&buf[..end]);
+    serde_json::from_str::<Value>(line.trim()).ok()
+}
+
+/// 时间跨度取首行时间戳 + 尾部最后一个可解析时间戳（尾行可能是超大压缩行，
+/// 找不到就退回首行时间戳）。文件级精度对泳道足够。
+fn rollout_time_bounds(path: &Path) -> Option<(u64, u64)> {
+    use std::io::{Read, Seek, SeekFrom};
+    let first = rollout_first_meta(path)?;
+    let first_ms = first
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .and_then(iso_timestamp_ms)?;
+    let meta = fs::metadata(path).ok()?;
+    let len = meta.len();
+    let tail_len = len.min(CODEX_SUBAGENT_TAIL_BYTES);
+    let mut file = fs::File::open(path).ok()?;
+    file.seek(SeekFrom::Start(len - tail_len)).ok()?;
+    let mut buf = Vec::with_capacity(tail_len as usize);
+    file.read_to_end(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf);
+    let mut last_ms = first_ms;
+    for line in text.lines().rev() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with('{') {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+            if let Some(stamp) = value
+                .get("timestamp")
+                .and_then(Value::as_str)
+                .and_then(iso_timestamp_ms)
+            {
+                if stamp >= first_ms {
+                    last_ms = stamp;
+                    break;
+                }
+            }
+        }
+    }
+    Some((first_ms, last_ms))
+}
+
+/// 子代理归属：thread_spawn 按 parent_thread_id 精确；guardian 按 cwd 相同
+/// 且首条时间戳落在父会话窗口（前后各放宽）近似，approximated 置位。
+fn codex_subagents(
+    parent_thread_id: &str,
+    parent_segments: &[PathBuf],
+    parent_cwd: &str,
+    parent_start_ms: u64,
+    parent_end_ms: u64,
+) -> (Vec<TrajectoryAgent>, bool) {
+    let mut agents: Vec<TrajectoryAgent> = Vec::new();
+    let Some(directory) = parent_segments.first().and_then(|path| path.parent()) else {
+        return (agents, false);
+    };
+    let window_low = parent_start_ms.saturating_sub(5 * 60_000);
+    let window_high = parent_end_ms.saturating_add(10 * 60_000);
+    for entry in read_directory(directory) {
+        let path = entry.path();
+        if !has_extension(&path, "jsonl") || parent_segments.iter().any(|s| s == &path) {
+            continue;
+        }
+        let Some(meta) = rollout_first_meta(&path) else {
+            continue;
+        };
+        let payload = meta.get("payload");
+        let source = payload
+            .and_then(|payload| payload.get("source"))
+            .filter(|source| source.is_object());
+        let subagent = source
+            .and_then(|source| source.get("subagent"))
+            .filter(|value| value.is_object());
+        let Some(subagent) = subagent else {
+            continue;
+        };
+        let first_ms = meta
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(iso_timestamp_ms)
+            .unwrap_or(0);
+        let spawn_parent = subagent
+            .get("thread_spawn")
+            .and_then(|spawn| spawn.get("parent_thread_id"))
+            .and_then(Value::as_str);
+        let (role, approximated) = match spawn_parent {
+            Some(parent) if parent == parent_thread_id => ("worker", false),
+            _ => {
+                let guardian = subagent
+                    .get("other")
+                    .and_then(Value::as_str)
+                    .is_some_and(|role| role == "guardian");
+                if !guardian {
+                    continue;
+                }
+                let cwd_matches = payload
+                    .and_then(|payload| payload.get("cwd"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|cwd| cwd == parent_cwd);
+                let in_window = first_ms >= window_low && first_ms <= window_high;
+                if !(cwd_matches && in_window) {
+                    continue;
+                }
+                ("guardian", true)
+            }
+        };
+        let Some((start_ms, end_ms)) = rollout_time_bounds(&path) else {
+            continue;
+        };
+        // 子代理发现是用户点开分析时的按需动作，不走每轮扫描 10 文件的预算；
+        // 与扫描共用同一份缓存（同键），只是预算外允许现读。
+        let usage = cached_jsonl_usage_for_path_unbudgeted(&path, parse_codex_usage)
+            .map(|entry| entry.usage)
+            .unwrap_or_default();
+        let id = codex_rollout_session_id_candidates(&path)
+            .pop()
+            .map(|thread| format!("codex:{}", thread))
+            .unwrap_or_default();
+        if id.is_empty() {
+            continue;
+        }
+        agents.push(TrajectoryAgent {
+            id,
+            role: role.to_string(),
+            model: usage.models.first().cloned(),
+            start_ms,
+            end_ms,
+            input_tokens: usage.total_input_tokens,
+            output_tokens: usage.total_output_tokens,
+            turns: usage.user_turns,
+            tool_calls: usage.tool_calls,
+            approximated,
+        });
+    }
+    agents.sort_by(|left, right| {
+        right
+            .input_tokens
+            .unwrap_or(0)
+            .cmp(&left.input_tokens.unwrap_or(0))
+    });
+    let truncated = agents.len() > CODEX_SUBAGENT_BUDGET;
+    agents.truncate(CODEX_SUBAGENT_BUDGET);
+    (agents, truncated)
+}
+
+/// 估算等待区间：每个 wait 事件回溯最近一次 spawn，间隔 30 分钟内算阻塞段。
+fn codex_wait_intervals(orchestration: &[OrchestrationEvent]) -> Vec<(u64, u64)> {
+    let mut intervals = Vec::new();
+    let mut last_spawn: Option<u64> = None;
+    for event in orchestration {
+        match event.kind.as_str() {
+            "spawn" => last_spawn = Some(event.t_ms),
+            "wait" => {
+                if let Some(spawn) = last_spawn {
+                    if event.t_ms > spawn && event.t_ms - spawn <= 30 * 60_000 {
+                        intervals.push((spawn, event.t_ms));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    intervals
+}
+
 /// 单会话生命周期分发：前端带 id + provider + sessionPath（来自扫描结果，
 /// 与 open_session 同一来源约定）。JSONL 源逐文件现读并进时序缓存；
 /// Codex 按 rollout 链拼接；SQLite 源会话内查询；Copilot CLI 数据源没有
@@ -2693,15 +2978,27 @@ fn session_lifecycle(request: SessionLifecycleRequest) -> SessionLifecycle {
         tool_timestamps: Vec::new(),
         context_window_tokens: None,
         degraded: false,
+        agents: Vec::new(),
+        agents_truncated: false,
+        orchestration: Vec::new(),
+        wait_intervals: Vec::new(),
     };
 
+    let mut codex_segments: Vec<PathBuf> = Vec::new();
     let timeline = if let Some(session_id) = id.strip_prefix("zcode:") {
         zcode_session_timeline(session_id)
     } else if let Some(session_id) = id.strip_prefix("opencode:") {
         opencode_session_timeline(session_id)
     } else if provider == "codex" || id.starts_with("codex:") {
         let thread_id = id.strip_prefix("codex:").unwrap_or(&id).to_string();
-        codex_thread_timeline(&thread_id, request.session_path.as_deref().map(Path::new))
+        let session_path = request.session_path.as_deref().map(Path::new);
+        codex_segments = match session_path {
+            Some(path) => vec![path.to_path_buf()],
+            None => codex_rollout_file_index()
+                .and_then(|index| index.get(&thread_id).cloned())
+                .unwrap_or_default(),
+        };
+        codex_thread_timeline(&thread_id, session_path)
     } else if provider == "copilot-cli" || id.starts_with("copilot-cli:") {
         None
     } else {
@@ -2721,17 +3018,53 @@ fn session_lifecycle(request: SessionLifecycleRequest) -> SessionLifecycle {
                     entry.turn_timestamps,
                     entry.tool_timestamps,
                     entry.context_window_tokens,
+                    entry.orchestration,
                 )
             })
     };
 
-    if let Some((calls, turns, tools, context_window)) = timeline {
+    if let Some((calls, turns, tools, context_window, orchestration)) = timeline {
         let (calls, degraded) = downsample_lifecycle_calls(calls, TIMELINE_POINT_BUDGET);
         lifecycle.calls = calls;
         lifecycle.turn_timestamps = turns;
         lifecycle.tool_timestamps = tools;
         lifecycle.context_window_tokens = context_window;
         lifecycle.degraded = degraded;
+        lifecycle.orchestration = orchestration;
+
+        // 轨迹泳道：Codex 会话在同目录里发现子代理并估算等待区间
+        if !codex_segments.is_empty() {
+            let thread_id = id.strip_prefix("codex:").unwrap_or(&id).to_string();
+            let parent_cwd = codex_segments
+                .first()
+                .and_then(|path| rollout_first_meta(path))
+                .and_then(|meta| {
+                    meta.pointer("/payload/cwd")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .unwrap_or_default();
+            let mut stamps: Vec<u64> = lifecycle.turn_timestamps.clone();
+            stamps.extend(lifecycle.tool_timestamps.iter().copied());
+            if let Some(first) = lifecycle.calls.first() {
+                stamps.push(first.t_ms);
+            }
+            if let Some(last) = lifecycle.calls.last() {
+                stamps.push(last.t_ms);
+            }
+            let window_start = stamps.iter().min().copied().unwrap_or(0);
+            let window_end = stamps.iter().max().copied().unwrap_or(0);
+            let (agents, truncated) = codex_subagents(
+                &thread_id,
+                &codex_segments,
+                &parent_cwd,
+                window_start,
+                window_end,
+            );
+            lifecycle.agents = agents;
+            lifecycle.agents_truncated = truncated;
+            lifecycle.wait_intervals = codex_wait_intervals(&lifecycle.orchestration);
+        }
     }
 
     // 指标行沿用既有的 usage 聚合口径（卡片/预览同源），时间轴只负责分布。
@@ -2745,7 +3078,13 @@ fn session_lifecycle(request: SessionLifecycleRequest) -> SessionLifecycle {
 fn codex_thread_timeline(
     thread_id: &str,
     session_path: Option<&Path>,
-) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>)> {
+) -> Option<(
+    Vec<LifecycleCallPoint>,
+    Vec<u64>,
+    Vec<u64>,
+    Option<u64>,
+    Vec<OrchestrationEvent>,
+)> {
     let segment_paths: Vec<PathBuf> = if let Some(path) = session_path {
         vec![path.to_path_buf()]
     } else {
@@ -2755,11 +3094,13 @@ fn codex_thread_timeline(
     let mut turns: Vec<u64> = Vec::new();
     let mut tools: Vec<u64> = Vec::new();
     let mut context_window_tokens: Option<u64> = None;
+    let mut orchestration: Vec<OrchestrationEvent> = Vec::new();
     for path in segment_paths {
         let entry = cached_jsonl_timeline_for_path(&path, parse_codex_timeline)?;
         calls.extend(entry.calls);
         turns.extend(entry.turn_timestamps);
         tools.extend(entry.tool_timestamps);
+        orchestration.extend(entry.orchestration);
         if entry.context_window_tokens.is_some() {
             context_window_tokens = entry.context_window_tokens;
         }
@@ -2767,7 +3108,13 @@ fn codex_thread_timeline(
     if calls.is_empty() && turns.is_empty() && tools.is_empty() {
         return None;
     }
-    Some((calls, turns, tools, context_window_tokens))
+    Some((
+        calls,
+        turns,
+        tools,
+        context_window_tokens,
+        orchestration,
+    ))
 }
 
 #[tauri::command]
@@ -6430,7 +6777,7 @@ fn cached_zcode_scan(
 /// 走 part 表 data.tool，用户轮次走 message 的 semantics.origin='real_user'。
 fn zcode_session_timeline(
     session_id: &str,
-) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>)> {
+) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>, Vec<OrchestrationEvent>)> {
     let db_path = zcode_db_path().filter(|path| path.exists())?;
     let Ok(connection) = Connection::open_with_flags(
         &db_path,
@@ -6446,7 +6793,7 @@ fn zcode_session_timeline(
 fn zcode_session_timeline_on(
     connection: &Connection,
     session_id: &str,
-) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>)> {
+) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>, Vec<OrchestrationEvent>)> {
     let mut calls: Vec<LifecycleCallPoint> = Vec::new();
     if let Ok(mut statement) = connection.prepare(
         "select started_at, model_id, input_tokens, output_tokens, cache_read_input_tokens \
@@ -6522,7 +6869,13 @@ fn zcode_session_timeline_on(
     if calls.is_empty() && turn_timestamps.is_empty() && tool_timestamps.is_empty() {
         return None;
     }
-    Some((calls, turn_timestamps, tool_timestamps, None))
+    Some((
+        calls,
+        turn_timestamps,
+        tool_timestamps,
+        None,
+        Vec::new(),
+    ))
 }
 
 /// OpenCode 的逐调用时间轴：assistant 消息逐条带 tokens 与 modelID。
@@ -6530,7 +6883,7 @@ fn zcode_session_timeline_on(
 /// 不含在 input 里，与 ZCode 相反），当前上下文取 total。
 fn opencode_session_timeline(
     session_id: &str,
-) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>)> {
+) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>, Vec<OrchestrationEvent>)> {
     let db_path = opencode_db_path().filter(|path| path.exists())?;
     let Ok(connection) = Connection::open_with_flags(
         &db_path,
@@ -6547,7 +6900,7 @@ fn opencode_session_timeline(
 fn opencode_session_timeline_on(
     connection: &Connection,
     session_id: &str,
-) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>)> {
+) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>, Vec<OrchestrationEvent>)> {
     let mut calls: Vec<LifecycleCallPoint> = Vec::new();
     if let Ok(mut statement) = connection.prepare(
         "select time_created, \
@@ -6630,7 +6983,13 @@ fn opencode_session_timeline_on(
     if calls.is_empty() && turn_timestamps.is_empty() && tool_timestamps.is_empty() {
         return None;
     }
-    Some((calls, turn_timestamps, tool_timestamps, None))
+    Some((
+        calls,
+        turn_timestamps,
+        tool_timestamps,
+        None,
+        Vec::new(),
+    ))
 }
 
 fn cache_zcode_scan(
@@ -15548,7 +15907,7 @@ mod tests {
             "\n",
         );
         let (usage, _) = parse_claude_usage(text).unwrap();
-        let (calls, turns, tools, window) = parse_claude_timeline(text).unwrap();
+        let (calls, turns, tools, window, _) = parse_claude_timeline(text).unwrap();
 
         assert_eq!(calls.len(), 2);
         assert_eq!(
@@ -15592,7 +15951,7 @@ mod tests {
             r#"{"timestamp":"2026-09-14T09:47:30.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":42000,"cached_input_tokens":40000,"output_tokens":600},"last_token_usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":200},"model_context_window":258400}}}"#,
             "\n",
         );
-        let (calls, turns, tools, window) = parse_codex_timeline(text).unwrap();
+        let (calls, turns, tools, window, _) = parse_codex_timeline(text).unwrap();
 
         // 全零 input 的压缩摘要调用不进时间轴
         assert_eq!(calls.len(), 1);
@@ -15624,7 +15983,7 @@ mod tests {
             r#"{"kind":1,"k":["requests",1,"result"],"v":{"metadata":{"resolvedModel":"gpt-5.6-sol","toolCallRounds":[{"toolCalls":[{"toolName":"grep_search"},{"toolName":"read_file"}]},{"toolCalls":[{"toolName":"run_in_terminal"}]}]}}}"#,
             "\n",
         );
-        let (calls, turns, tools, window) = parse_copilot_chat_timeline(text).unwrap();
+        let (calls, turns, tools, window, _) = parse_copilot_chat_timeline(text).unwrap();
 
         assert_eq!(calls.len(), 2);
         assert_eq!(
@@ -15694,7 +16053,7 @@ mod tests {
             )
             .unwrap();
 
-        let (calls, turns, tools, window) =
+        let (calls, turns, tools, window, _) =
             zcode_session_timeline_on(&connection, "sess_z").unwrap();
 
         assert_eq!(calls.len(), 3);
@@ -15765,7 +16124,7 @@ mod tests {
             )
             .unwrap();
 
-        let (calls, turns, tools, window) =
+        let (calls, turns, tools, window, _) =
             opencode_session_timeline_on(&connection, "s1").unwrap();
 
         assert_eq!(calls.len(), 2);
@@ -15776,6 +16135,122 @@ mod tests {
         assert_eq!(turns, vec![199_900]);
         assert_eq!(tools, vec![200_300]);
         assert!(window.is_none());
+    }
+
+    #[test]
+    fn codex_subagents_discovers_workers_and_guardians_with_linkage() {
+        reset_usage_scan_budget();
+        let dir = std::env::temp_dir().join(format!("aw-subagent-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, source: &str, model: &str| {
+            let path = dir.join(name);
+            let content = format!(
+                concat!(
+                    r#"{{"timestamp":"2026-10-20T04:19:00.000Z","type":"session_meta","payload":{{"cwd":"X:/Demo","source":{{"subagent":{source}}}}}}}"#,
+                    "
+",
+                    r#"{{"timestamp":"2026-10-20T04:20:00.000Z","type":"turn_context","payload":{{"model":"{model}"}}}}"#,
+                    "
+",
+                    r#"{{"timestamp":"2026-10-20T04:21:00.000Z","type":"event_msg","payload":{{"type":"token_count","info":{{"total_token_usage":{{"input_tokens":1000,"output_tokens":50}},"last_token_usage":{{"input_tokens":1000,"output_tokens":50}}}}}}}}"#,
+                    "
+",
+                ),
+                source = source,
+                model = model,
+            );
+            fs::write(&path, content).unwrap();
+            path
+        };
+        let parent = write(
+            "rollout-2026-10-20T04-18-00-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl",
+            "null",
+            "gpt-main",
+        );
+        // 归属本父会话的 worker
+        write(
+            "rollout-2026-10-20T04-19-10-11111111-2222-3333-4444-555555555555.jsonl",
+            r#"{"thread_spawn":{"parent_thread_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}}"#,
+            "gpt-worker",
+        );
+        // 属于别的父会话的 worker：不得混入
+        write(
+            "rollout-2026-10-20T04-19-20-99999999-8888-7777-6666-555555555555.jsonl",
+            r#"{"thread_spawn":{"parent_thread_id":"other-parent"}}"#,
+            "gpt-other",
+        );
+        // guardian：cwd 相同 + 窗口内 → 近似归属
+        write(
+            "rollout-2026-10-20T04-19-30-77777777-6666-5555-4444-333333333333.jsonl",
+            r#"{"other":"guardian"}"#,
+            "codex-auto-review",
+        );
+
+        let (agents, truncated) = codex_subagents(
+            "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            &[parent.clone()],
+            "X:/Demo",
+            1_792_469_880_000,
+            1_792_470_480_000,
+        );
+
+        assert!(!truncated);
+        let workers: Vec<&TrajectoryAgent> =
+            agents.iter().filter(|agent| agent.role == "worker").collect();
+        let guardians: Vec<&TrajectoryAgent> = agents
+            .iter()
+            .filter(|agent| agent.role == "guardian")
+            .collect();
+        assert_eq!(workers.len(), 1);
+        assert_eq!(guardians.len(), 1);
+        assert_eq!(workers[0].id, "codex:11111111-2222-3333-4444-555555555555");
+        assert_eq!(workers[0].model.as_deref(), Some("gpt-worker"));
+        assert_eq!(workers[0].input_tokens, Some(1000));
+        assert!(!workers[0].approximated);
+        assert_eq!(guardians[0].model.as_deref(), Some("codex-auto-review"));
+        assert!(guardians[0].approximated);
+        // 父文件自身不得被当成子代理
+        assert!(agents.iter().all(|agent| !agent.id.contains("aaaaaaaa")));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn codex_wait_intervals_pair_spawn_with_next_wait() {
+        let events = [
+            OrchestrationEvent { t_ms: 100, kind: "spawn".to_string() },
+            OrchestrationEvent { t_ms: 200, kind: "send".to_string() },
+            OrchestrationEvent { t_ms: 300, kind: "wait".to_string() },
+            OrchestrationEvent { t_ms: 50, kind: "spawn".to_string() },
+            OrchestrationEvent { t_ms: 3_700_000, kind: "wait".to_string() },
+        ];
+        let intervals = codex_wait_intervals(&events);
+        assert_eq!(intervals, vec![(100, 300)]);
+    }
+
+    #[test]
+    fn parse_codex_timeline_collects_orchestration_events() {
+        let text = concat!(
+            r#"{"timestamp":"2026-10-20T04:19:16.765Z","type":"response_item","payload":{"type":"function_call","name":"spawn_agent","arguments":"{}"}}"#,
+            "
+",
+            r#"{"timestamp":"2026-10-20T04:19:17.000Z","type":"response_item","payload":{"type":"function_call","name":"send_message","arguments":"{}"}}"#,
+            "
+",
+            r#"{"timestamp":"2026-10-20T04:26:00.000Z","type":"response_item","payload":{"type":"function_call","name":"wait_agent","arguments":"{}"}}"#,
+            "
+",
+            r#"{"timestamp":"2026-10-20T04:26:01.000Z","type":"response_item","payload":{"type":"function_call","name":"exec","arguments":"{}"}}"#,
+            "
+",
+        );
+        let (_, _, tools, _, orchestration) = parse_codex_timeline(text).unwrap();
+        assert_eq!(tools.len(), 4);
+        assert_eq!(orchestration.len(), 3);
+        assert_eq!(orchestration[0].kind, "spawn");
+        assert_eq!(orchestration[1].kind, "send");
+        assert_eq!(orchestration[2].kind, "wait");
+        assert_eq!(orchestration[2].t_ms > orchestration[0].t_ms, true);
     }
 }
 }
