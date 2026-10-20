@@ -2240,7 +2240,8 @@
     .analytics-titlebar .spring { flex: 1; }
     .analytics-close {
       border: 0; border-radius: 4px; background: transparent; color: var(--muted);
-      font-size: 14px; line-height: 1; padding: 3px 8px; cursor: pointer;
+      font-size: 14px; line-height: 1; padding: 6px 12px; cursor: pointer;
+      min-width: 32px; min-height: 26px;
     }
     .analytics-close:hover { background: #c42b1c; color: #fff; }
     .analytics-body {
@@ -14275,12 +14276,26 @@
           document.getElementById('analyticsClose')?.click();
         }
       });
-      // 标题栏拖拽要避开按钮：startDragging 会进入系统移动循环，
-      // 吞掉真实鼠标在按钮上的 click（与 startWindowDrag 的守卫同口径）
-      document.getElementById('analyticsTitlebar')?.addEventListener('pointerdown', event => {
+      // 标题栏拖拽：按下不动不算拖拽，移动超过 4px 才进入系统移动循环。
+      // 只在 pointerdown 上判断按钮命中会在高 DPI 下点偏时吞掉关闭按钮的
+      // click（按像素间歇复现），改成移动阈值后点按与拖拽互不干扰。
+      const analyticsTitlebar = document.getElementById('analyticsTitlebar');
+      let analyticsTitlebarDragArmed = null;
+      analyticsTitlebar?.addEventListener('pointerdown', event => {
         if (event.button !== 0 || event.target.closest('button')) return;
-        if (tauriWindow) tauriWindow.startDragging().catch(() => {});
+        analyticsTitlebarDragArmed = { x: event.clientX, y: event.clientY };
       });
+      analyticsTitlebar?.addEventListener('pointermove', event => {
+        if (!analyticsTitlebarDragArmed) return;
+        const deltaX = Math.abs(event.clientX - analyticsTitlebarDragArmed.x);
+        const deltaY = Math.abs(event.clientY - analyticsTitlebarDragArmed.y);
+        if (deltaX + deltaY > 4) {
+          analyticsTitlebarDragArmed = null;
+          if (tauriWindow) tauriWindow.startDragging().catch(() => {});
+        }
+      });
+      analyticsTitlebar?.addEventListener('pointerup', () => { analyticsTitlebarDragArmed = null; });
+      analyticsTitlebar?.addEventListener('pointerleave', () => { analyticsTitlebarDragArmed = null; });
       let analyticsResizeRedrawFrame = 0;
       const drawAnalyticsChartsOnce = () => {
         drawAnalyticsUsageChart();
