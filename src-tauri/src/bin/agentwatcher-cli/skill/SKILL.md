@@ -25,6 +25,8 @@ description: 查询本机 AI 助手（VS Code Copilot、Copilot CLI、Claude Cod
 
 会话 ID 形如 `opencode:abc123`，从 `session list` 的输出里拿，跨次调用稳定。
 
+`session list` 的 `data` 形如 `{ "sessions": [...], "total": <条数> }`。每个条目的时间有两份口径：`timeLabel` 是相对天数（如 `140d`，给人看的），`updatedMs` 是最后更新的毫秒时间戳（给程序用的）。要按日期范围搜会话（比如某个月），用 `updatedMs` 过滤，别拿 `timeLabel` 换算。
+
 ## 时间窗口与归档
 
 默认只列最近 7 天的活跃会话，归档会话不出现。要搜全历史：

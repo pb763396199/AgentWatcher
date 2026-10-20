@@ -16,7 +16,7 @@ const LIST_KEYS: &[&str] = &[
     "workspacePath",
     "status",
     "timeLabel",
-    "updatedAtMs",
+    "updatedMs",
     "messageCount",
     "branch",
     "usage",
