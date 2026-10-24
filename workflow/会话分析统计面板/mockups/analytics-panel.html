@@ -1,0 +1,921 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentWatcher 会话分析面板 · 原型稿</title>
+<style>
+  html, body { margin: 0; padding: 16px; background: #1b1b1b; }
+  body { min-height: 100vh; }
+  @media (prefers-color-scheme: light) { html, body { background: #ececec; } }
+</style>
+</head>
+<body>
+<div id="aw-analytics-mockup" data-theme="dark" data-lang="zh">
+<style>
+  #aw-analytics-mockup {
+    --surface: #202020; --surface-2: #252526; --surface-3: #2d2d30;
+    --border: #3c3c3c; --text: #d4d4d4; --muted: #9a9a9a; --soft: #6f6f6f;
+    --accent: #0078d4; --focus: #0e639c; --card: #1f1f1f; --pop: #1f1f1f;
+    --c-gh: #4ec9b0; --c-cli: #4fb3d8; --c-cl: #ce9178; --c-cx: #75beff;
+    --c-oc: #d7ba7d; --c-zc: #c586c0;
+    font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 13px; color: var(--text); line-height: 1.45;
+  }
+  #aw-analytics-mockup[data-theme="light"] {
+    --surface: #f8f8f8; --surface-2: #ffffff; --surface-3: #eeeeee;
+    --border: #d0d0d0; --text: #1f1f1f; --muted: #616161; --soft: #767676;
+    --card: #ffffff; --pop: #ffffff;
+  }
+  #aw-analytics-mockup * { box-sizing: border-box; }
+  #aw-analytics-mockup button { font-family: inherit; }
+
+  .aw-proto-bar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 0 2px 10px; color: var(--muted); font-size: 12px;
+  }
+  .aw-proto-bar .aw-proto-label { font-weight: 500; color: var(--muted); }
+  .aw-proto-btn {
+    padding: 3px 10px; border: 1px solid var(--border); border-radius: 5px;
+    background: var(--surface-2); color: var(--text); cursor: pointer; font-size: 12px;
+  }
+  .aw-proto-btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  .aw-window {
+    max-width: 980px; margin: 0 auto; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--surface); overflow: hidden;
+    box-shadow: 0 12px 34px rgba(0,0,0,.32);
+  }
+  .aw-head {
+    display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 12px;
+    background: var(--surface-2); border-bottom: 1px solid var(--border);
+    user-select: none;
+  }
+  .aw-head .aw-title { font-size: 12px; font-weight: 600; letter-spacing: .02em; }
+  .aw-head .aw-sub { font-size: 11px; color: var(--muted); }
+  .aw-head .aw-spring { flex: 1; }
+  .aw-win-btn {
+    width: 24px; height: 20px; display: inline-flex; align-items: center; justify-content: center;
+    border: 0; border-radius: 4px; background: transparent; color: var(--muted);
+    cursor: pointer; font-size: 12px;
+  }
+  .aw-win-btn:hover { background: var(--surface-3); color: var(--text); }
+  .aw-win-btn.aw-close:hover { background: #c42b1c; color: #fff; }
+
+  .aw-toolbar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 10px 12px; border-bottom: 1px solid var(--border);
+  }
+  .aw-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .aw-seg button {
+    padding: 4px 12px; border: 0; background: var(--surface-2); color: var(--muted);
+    cursor: pointer; font-size: 12px;
+  }
+  .aw-seg button + button { border-left: 1px solid var(--border); }
+  .aw-seg button[aria-pressed="true"] { background: var(--focus); color: #fff; }
+  .aw-nav { display: inline-flex; align-items: center; gap: 4px; }
+  .aw-nav-btn {
+    width: 26px; height: 26px; border: 1px solid var(--border); border-radius: 5px;
+    background: var(--surface-2); color: var(--text); cursor: pointer; font-size: 12px;
+  }
+  .aw-nav-btn:disabled { opacity: .35; cursor: default; }
+  .aw-nav-label { font-size: 12px; color: var(--text); min-width: 128px; text-align: center; }
+  .aw-nav-label .aw-today { color: var(--accent); cursor: pointer; }
+  .aw-select {
+    height: 26px; padding: 0 8px; border: 1px solid var(--border); border-radius: 5px;
+    background: var(--surface-2); color: var(--text); font-size: 12px; max-width: 220px;
+  }
+  .aw-updated { margin-left: auto; font-size: 11px; color: var(--soft); white-space: nowrap; }
+
+  .aw-body { padding: 12px; display: grid; gap: 12px; }
+  .aw-cards { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 8px; }
+  @media (max-width: 720px) { .aw-cards { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+  .aw-stat {
+    border: 1px solid var(--border); border-radius: 6px; background: var(--card);
+    padding: 8px 10px; min-width: 0;
+  }
+  .aw-stat .aw-k { font-size: 11px; color: var(--muted); margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .aw-stat .aw-v { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .aw-stat .aw-s { font-size: 11px; color: var(--soft); margin-top: 2px; white-space: nowrap; }
+
+  .aw-panel { border: 1px solid var(--border); border-radius: 6px; background: var(--card); overflow: hidden; }
+  .aw-panel-head {
+    display: flex; align-items: baseline; gap: 8px; padding: 10px 12px 8px;
+  }
+  .aw-panel-title { font-size: 13px; font-weight: 600; }
+  .aw-panel-note { font-size: 11px; color: var(--muted); }
+  .aw-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 0 12px 8px; }
+  .aw-legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+  .aw-legend-dot { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+  .aw-legend-item b { color: var(--text); font-weight: 500; }
+  .aw-chart-wrap { padding: 0 8px 6px; position: relative; }
+  .aw-tip {
+    position: absolute; z-index: 5; pointer-events: none; display: none;
+    min-width: 168px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--pop); box-shadow: 0 6px 18px rgba(0,0,0,.28); font-size: 11px;
+  }
+  #aw-analytics-mockup[data-theme="light"] .aw-tip { box-shadow: 0 6px 18px rgba(0,0,0,.14); }
+  .aw-tip .aw-tip-date { font-weight: 600; margin-bottom: 4px; }
+  .aw-tip-row { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+  .aw-tip-row .aw-dot { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+  .aw-tip-row .aw-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .aw-tip-row .aw-num { font-variant-numeric: tabular-nums; }
+
+  .aw-table { width: 100%; border-collapse: collapse; }
+  .aw-table th {
+    text-align: left; font-size: 11px; font-weight: 500; color: var(--muted);
+    padding: 6px 10px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .aw-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .aw-table tr:last-child td { border-bottom: 0; }
+  .aw-num-col, .aw-table .aw-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .aw-row-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .aw-badge {
+    display: inline-flex; align-items: center; gap: 5px; flex: none;
+    font-size: 10px; padding: 1px 7px; border: 1px solid; border-radius: 999px; white-space: nowrap;
+  }
+  .aw-title-cell { min-width: 0; }
+  .aw-title-text { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .aw-ws { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .aw-share { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+  .aw-share-track { width: 120px; height: 4px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
+  .aw-share-bar { height: 100%; border-radius: 2px; background: var(--accent); }
+  .aw-chevron {
+    flex: none; width: 22px; height: 22px; border: 0; border-radius: 4px;
+    background: transparent; color: var(--muted); cursor: pointer; font-size: 10px;
+    transition: transform .12s ease;
+  }
+  .aw-chevron[aria-expanded="true"] { transform: rotate(90deg); color: var(--text); }
+  .aw-detail td { background: var(--surface-2); padding: 10px 12px 12px; }
+  .aw-detail-grid { display: grid; grid-template-columns: minmax(220px, 1.2fr) minmax(180px, 1fr); gap: 12px; }
+  @media (max-width: 720px) { .aw-detail-grid { grid-template-columns: 1fr; } }
+  .aw-model-row { display: flex; align-items: center; gap: 8px; margin-top: 5px; font-size: 11.5px; }
+  .aw-model-name { width: 110px; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+  .aw-model-track { flex: 1; height: 8px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+  .aw-model-fill { height: 100%; }
+  .aw-model-pct { width: 42px; flex: none; text-align: right; font-variant-numeric: tabular-nums; }
+  .aw-kv { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 6px 16px; font-size: 12px; }
+  .aw-kv .aw-k { color: var(--muted); }
+  .aw-kv .aw-v { font-variant-numeric: tabular-nums; text-align: right; }
+  .aw-kv-line { display: flex; justify-content: space-between; gap: 12px; }
+  .aw-tools-line { grid-column: 1 / -1; color: var(--muted); font-size: 11.5px; }
+  .aw-open-btn {
+    margin-top: 8px; padding: 4px 14px; border: 1px solid var(--border); border-radius: 5px;
+    background: var(--surface-3); color: var(--text); cursor: pointer; font-size: 12px;
+  }
+  .aw-open-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .aw-na { color: var(--soft); }
+  .aw-empty { padding: 26px 12px; text-align: center; color: var(--muted); font-size: 12px; }
+
+  .aw-toast {
+    position: relative; margin: 10px auto 0; max-width: 480px; text-align: center;
+    padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--surface-2); font-size: 12px; color: var(--text); display: none;
+  }
+  .aw-toast.aw-show { display: block; }
+  .aw-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+
+<div class="aw-proto-bar" id="awProtoBar">
+  <span class="aw-proto-label" data-i18n="protoBar">原型控制</span>
+  <button type="button" class="aw-proto-btn" id="awLangBtn">EN</button>
+  <button type="button" class="aw-proto-btn" id="awThemeBtn" aria-pressed="false">☀ / ☾</button>
+</div>
+
+<div class="aw-window" role="application" aria-label="AgentWatcher 会话分析面板原型">
+  <div class="aw-head">
+    <span class="aw-title" data-i18n="panelTitle">会话分析</span>
+    <span class="aw-sub" data-i18n="panelSub">六源会话用量统计</span>
+    <span class="aw-spring"></span>
+    <button type="button" class="aw-win-btn" aria-label="minimize">&#x2013;</button>
+    <button type="button" class="aw-win-btn aw-close" id="awCloseBtn" aria-label="close">&#x2715;</button>
+  </div>
+
+  <div class="aw-toolbar">
+    <div class="aw-seg" role="group" aria-label="time range">
+      <button type="button" id="awRange7" aria-pressed="true">7<span data-i18n="dayUnit"> 天</span></button>
+      <button type="button" id="awRange30" aria-pressed="false">30<span data-i18n="dayUnit"> 天</span></button>
+    </div>
+    <div class="aw-nav">
+      <button type="button" class="aw-nav-btn" id="awPrevBtn" aria-label="previous period">&#x2039;</button>
+      <span class="aw-nav-label" id="awRangeLabel"></span>
+      <button type="button" class="aw-nav-btn" id="awNextBtn" aria-label="next period">&#x203a;</button>
+    </div>
+    <select class="aw-select" id="awGroupSel" aria-label="group by">
+      <option value="provider" data-i18n="groupByProvider">按提供商分组</option>
+      <option value="model" data-i18n="groupByModel">按模型分组</option>
+    </select>
+    <select class="aw-select" id="awWsSel" aria-label="workspace filter"></select>
+    <span class="aw-updated" id="awUpdated"></span>
+  </div>
+
+  <div class="aw-body">
+    <div class="aw-cards" id="awCards"></div>
+
+    <div class="aw-panel">
+      <div class="aw-panel-head">
+        <span class="aw-panel-title" data-i18n="historyTitle">用量历史</span>
+        <span class="aw-panel-note" data-i18n="historyNote">按毛输入 token 堆叠（含缓存读取）</span>
+      </div>
+      <div class="aw-legend" id="awLegend"></div>
+      <div class="aw-chart-wrap">
+        <div class="aw-tip" id="awTip" role="tooltip"></div>
+        <div id="awChartHost"></div>
+      </div>
+    </div>
+
+    <div class="aw-panel">
+      <div class="aw-panel-head">
+        <span class="aw-panel-title" data-i18n="rankTitle">会话用量排行</span>
+        <span class="aw-panel-note" data-i18n="rankNote">按区间毛输入排序，点行展开明细</span>
+      </div>
+      <table class="aw-table">
+        <thead>
+          <tr>
+            <th style="width:26px"></th>
+            <th data-i18n="colSession">会话</th>
+            <th class="aw-num-col" style="width:130px" data-i18n="colInput">毛输入</th>
+            <th class="aw-num-col" style="width:96px" data-i18n="colOutput">输出</th>
+            <th class="aw-num-col" style="width:150px" data-i18n="colShare">区间占比</th>
+          </tr>
+        </thead>
+        <tbody id="awRows"></tbody>
+      </table>
+      <div class="aw-empty" id="awEmpty" hidden></div>
+    </div>
+  </div>
+
+  <div class="aw-toast" id="awToast" role="status" aria-live="polite"></div>
+</div>
+
+<script>
+(function () {
+  var root = document.getElementById('aw-analytics-mockup');
+  if (!root) return;
+
+  var DAYS = 30;
+  var END = new Date(2026, 9, 14);
+  function dateKey(i) {
+    var d = new Date(END.getTime() - (DAYS - 1 - i) * 86400000);
+    return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+  }
+
+  function spread(weights, total) {
+    var s = 0, i;
+    for (i = 0; i < weights.length; i++) s += weights[i];
+    var out = [];
+    for (i = 0; i < DAYS; i++) out.push(0);
+    for (i = 0; i < DAYS; i++) {
+      var wi = weights[Math.min(weights.length - 1, Math.floor(i * weights.length / DAYS))];
+      out[i] = Math.round(total * wi / s);
+    }
+    return out;
+  }
+
+  var PROVIDERS = {
+    gh:  { key: 'gh',  color: '#4ec9b0' },
+    cli: { key: 'cli', color: '#4fb3d8' },
+    cl:  { key: 'cl',  color: '#ce9178' },
+    cx:  { key: 'cx',  color: '#75beff' },
+    oc:  { key: 'oc',  color: '#d7ba7d' },
+    zc:  { key: 'zc',  color: '#c586c0' }
+  };
+
+  var SESSIONS = [
+    {
+      id: 'zc:1', provider: 'zc', ws: 'F:\\AiProject\\aes-workflow',
+      titleZh: 'AES Workflow 协议 1.4 收口', titleEn: 'AES Workflow protocol 1.4 closeout',
+      input: 286400000, cacheRatio: 0.98, output: 412000, calls: 1180, activeH: 4.7,
+      turns: 34, toolCalls: 2247, tools: [['Bash', 724], ['Edit', 64], ['Read', 41]],
+      models: [['glm-5.3', 0.78], ['glm-5.3-flash', 0.22]],
+      days: spread([1, 0, 2, 3, 0, 2, 4, 1, 0, 3, 5, 2, 0, 4, 6, 2, 1, 0, 5, 3, 6, 2, 0, 4, 5, 3, 1, 6, 4, 7], 286400000),
+      outDays: null, jumpable: false
+    },
+    {
+      id: 'cl:1', provider: 'cl', ws: 'F:\\AiProject\\AgentWatcher',
+      titleZh: '重构 bridge 安装清理逻辑', titleEn: 'Refactor bridge install cleanup',
+      input: 64200000, cacheRatio: 0.91, output: 158000, calls: 402, activeH: 2.1,
+      turns: 21, toolCalls: 887, tools: [['Bash', 511], ['Read', 201], ['Edit', 96]],
+      models: [['claude-sonnet-4.6', 1.0]],
+      days: spread([0, 0, 0, 0, 1, 2, 0, 3, 4, 0, 0, 2, 5, 3, 0, 0, 4, 2, 0, 0, 3, 5, 4, 0, 0, 2, 1, 0, 3, 2], 64200000),
+      jumpable: true
+    },
+    {
+      id: 'cx:1', provider: 'cx', ws: 'F:\\AiProject\\aes-workflow',
+      titleZh: '用量指标口径调研', titleEn: 'Usage metric semantics research',
+      input: 31800000, cacheRatio: 0.95, output: 96000, calls: 233, activeH: 1.4,
+      turns: 12, toolCalls: 301, tools: [['Read', 143], ['Bash', 88], ['Grep', 40]],
+      models: [['gpt-6-astra', 1.0]],
+      days: spread([0, 0, 0, 0, 0, 0, 2, 0, 3, 1, 0, 0, 0, 4, 2, 0, 0, 0, 1, 3, 0, 0, 2, 0, 0, 0, 0, 3, 1, 2], 31800000),
+      jumpable: true
+    },
+    {
+      id: 'gh:1', provider: 'gh', ws: 'F:\\AiProject\\AgentWatcher',
+      titleZh: '卡片布局与紧凑用量行微调', titleEn: 'Card layout and compact usage row',
+      input: 12400000, cacheRatio: 0.88, output: 41000, calls: 96, activeH: 0.8,
+      turns: 15, toolCalls: 63, tools: [['Edit', 30], ['Read', 21]],
+      models: [['gpt-5.2', 1.0]],
+      days: spread([0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 3, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0, 1, 3, 0, 0, 0, 2, 0, 0, 1], 12400000),
+      credits: 41.5, jumpable: true
+    },
+    {
+      id: 'oc:1', provider: 'oc', ws: 'F:\\Tools\\opencode-migrate',
+      titleZh: 'opencode 会话迁移脚本', titleEn: 'opencode session migration script',
+      input: 8900000, cacheRatio: 0.82, output: 33000, calls: 74, activeH: 0.6,
+      turns: 9, toolCalls: 118, tools: [['Bash', 60], ['Write', 33]],
+      models: [['glm-5.3', 1.0]],
+      days: spread([0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 1, 0, 0, 2], 8900000),
+      costUsd: 2.31, jumpable: true
+    },
+    {
+      id: 'zc:2', provider: 'zc', ws: 'F:\\AiProject\\aes-workflow',
+      titleZh: '周报数据核对', titleEn: 'Weekly report data check',
+      input: 18700000, cacheRatio: 0.97, output: 64000, calls: 141, activeH: 0.9,
+      turns: 8, toolCalls: 180, tools: [['Read', 92], ['Bash', 51]],
+      models: [['glm-5.3', 1.0]],
+      days: spread([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 3, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 2, 3], 18700000),
+      jumpable: false
+    },
+    {
+      id: 'cx:2', provider: 'cx', ws: 'F:\\AiProject\\AgentWatcher',
+      titleZh: 'Codex resume 去重修复', titleEn: 'Codex resume dedup fix',
+      input: 9600000, cacheRatio: 0.93, output: 38000, calls: 88, activeH: 0.7,
+      turns: 7, toolCalls: 122, tools: [['Bash', 58], ['Read', 37]],
+      models: [['gpt-6-astra', 0.7], ['gpt-6-mini', 0.3]],
+      days: spread([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1, 3, 0, 0, 0, 0, 2, 0, 0, 4, 1], 9600000),
+      jumpable: true
+    },
+    {
+      id: 'gh:2', provider: 'gh', ws: 'F:\\AiProject\\AgentWatcher',
+      titleZh: 'Bridge ack 路由测试补齐', titleEn: 'Bridge ack routing tests',
+      input: 3200000, cacheRatio: 0.86, output: 12000, calls: 31, activeH: 0.3,
+      turns: 5, toolCalls: 24, tools: [['Edit', 14], ['Read', 8]],
+      models: [['gpt-5.2', 1.0]],
+      days: spread([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 3, 0], 3200000),
+      credits: 9.8, jumpable: true
+    },
+    {
+      id: 'cli:1', provider: 'cli', ws: 'F:\\AiProject\\AgentWatcher',
+      titleZh: '终端问答：批量替换历史口径', titleEn: 'Terminal Q&A: bulk replace',
+      input: null, cacheRatio: null, output: null, calls: null, activeH: 0.2,
+      turns: 12, toolCalls: null, tools: [],
+      models: [],
+      days: spread([0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1], 0),
+      noUsage: true, jumpable: true
+    }
+  ];
+
+  var MODEL_COLORS = ['#75beff', '#4ec9b0', '#d7ba7d', '#c586c0', '#ce9178', '#4fb3d8', '#9cdcfe'];
+
+  var I18N = {
+    zh: {
+      protoBar: '原型控制',
+      panelTitle: '会话分析', panelSub: '六源会话用量统计',
+      dayUnit: ' 天', groupByProvider: '按提供商分组', groupByModel: '按模型分组',
+      allWs: '全部工作区',
+      historyTitle: '用量历史', historyNote: '按毛输入 token 堆叠（含缓存读取）',
+      rankTitle: '会话用量排行', rankNote: '按区间毛输入排序，点行展开明细',
+      colSession: '会话', colInput: '毛输入', colOutput: '输出', colShare: '区间占比',
+      statInput: '区间毛输入', statOutput: '累计输出', statCalls: '模型调用', statActive: '活跃时长', statSessions: '涉及会话',
+      cacheNote: function (r) { return '缓存 ' + Math.round(r * 100) + '%'; },
+      sessionsUnit: ' 个', turns: '对话轮次', toolCalls: '工具调用', modelCalls: '模型调用', activeDur: '活跃时长',
+      models: '模型分布', tools: '高频工具', openSession: '打开会话', openZcode: '打开会话（ZCode 暂不支持）',
+      zcodeToast: 'ZCode 会话跳转暂不支持：上游没有会话级深链（扫描 / 预览 / 导出不受影响）',
+      jumpToast: function (p) { return '已请求跳转到 ' + p + ' 会话（原型示意，不会真的打开）'; },
+      noUsageNote: '数据源没有用量字段，仅轮次与时长可用',
+      cachedShort: '缓存', outShort: '输出', callsShort: '调用',
+      empty: '当前过滤条件下没有会话',
+      updated: '数据时间 10-14 16:42 · 随会话扫描自动刷新',
+      rangeLabel: function (a, b) { return (a.getMonth() + 1) + '/' + a.getDate() + ' – ' + (b.getMonth() + 1) + '/' + b.getDate(); },
+      today: '回到今天',
+      na: '—', hoursUnit: ' 小时', closeAria: '关闭'
+    },
+    en: {
+      protoBar: 'Prototype controls',
+      panelTitle: 'Session Analytics', panelSub: 'Usage across 6 providers',
+      dayUnit: 'd', groupByProvider: 'Group by provider', groupByModel: 'Group by model',
+      allWs: 'All workspaces',
+      historyTitle: 'Usage history', historyNote: 'Stacked by gross input tokens (incl. cache reads)',
+      rankTitle: 'Session usage ranking', rankNote: 'Sorted by gross input; click a row to expand',
+      colSession: 'Session', colInput: 'Gross input', colOutput: 'Output', colShare: 'Share of range',
+      statInput: 'Gross input', statOutput: 'Total output', statCalls: 'Model calls', statActive: 'Active time', statSessions: 'Sessions',
+      cacheNote: function (r) { return Math.round(r * 100) + '% cached'; },
+      sessionsUnit: '', turns: 'User turns', toolCalls: 'Tool calls', modelCalls: 'Model calls', activeDur: 'Active time',
+      models: 'Model mix', tools: 'Top tools', openSession: 'Open session', openZcode: 'Open session (ZCode N/A)',
+      zcodeToast: 'ZCode session jump is not supported yet: no upstream session-level deep link (scan / preview / export unaffected)',
+      jumpToast: function (p) { return 'Requested jump to ' + p + ' session (mock, nothing opens)'; },
+      noUsageNote: 'Source has no usage fields; only turns and duration available',
+      cachedShort: 'cached', outShort: 'out', callsShort: 'calls',
+      empty: 'No sessions under the current filter',
+      updated: 'Data as of 10-14 16:42 · auto-refreshes with session scans',
+      rangeLabel: function (a, b) { return (a.getMonth() + 1) + '/' + a.getDate() + ' – ' + (b.getMonth() + 1) + '/' + b.getDate(); },
+      today: 'Back to today',
+      na: '—', hoursUnit: 'h', closeAria: 'Close'
+    }
+  };
+
+  var P_LABEL = {
+    zh: { gh: 'Copilot Chat', cli: 'Copilot CLI', cl: 'Claude', cx: 'Codex', oc: 'OpenCode', zc: 'ZCode' },
+    en: { gh: 'Copilot Chat', cli: 'Copilot CLI', cl: 'Claude', cx: 'Codex', oc: 'OpenCode', zc: 'ZCode' }
+  };
+
+  var state = { lang: 'zh', theme: 'dark', range: 7, offset: 0, groupBy: 'provider', ws: 'all', expanded: {} };
+  try {
+    var saved = window.zcode && window.zcode.widgetState && window.zcode.widgetState.privateContent;
+    if (saved && typeof saved === 'object') {
+      if (saved.lang === 'en' || saved.lang === 'zh') state.lang = saved.lang;
+      if (saved.theme === 'dark' || saved.theme === 'light') state.theme = saved.theme;
+    }
+  } catch (e) { /* host state optional */ }
+
+  function t(key) { return I18N[state.lang][key]; }
+  function fmtTokens(v) {
+    if (v === null || v === undefined) return t('na');
+    if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+    if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+    if (v >= 1e3) return (v / 1e3).toFixed(0) + 'k';
+    return String(v);
+  }
+  function fmtInt(v) { return v === null || v === undefined ? t('na') : v.toLocaleString('en-US'); }
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+  function persist() {
+    try {
+      if (window.zcode && window.zcode.setWidgetState) {
+        window.zcode.setWidgetState({ privateContent: { lang: state.lang, theme: state.theme } }).catch(function () {});
+      }
+    } catch (e) { /* optional */ }
+  }
+
+  var els = {
+    langBtn: document.getElementById('awLangBtn'),
+    themeBtn: document.getElementById('awThemeBtn'),
+    closeBtn: document.getElementById('awCloseBtn'),
+    range7: document.getElementById('awRange7'),
+    range30: document.getElementById('awRange30'),
+    prev: document.getElementById('awPrevBtn'),
+    next: document.getElementById('awNextBtn'),
+    rangeLabel: document.getElementById('awRangeLabel'),
+    groupSel: document.getElementById('awGroupSel'),
+    wsSel: document.getElementById('awWsSel'),
+    updated: document.getElementById('awUpdated'),
+    cards: document.getElementById('awCards'),
+    legend: document.getElementById('awLegend'),
+    chartHost: document.getElementById('awChartHost'),
+    tip: document.getElementById('awTip'),
+    rows: document.getElementById('awRows'),
+    empty: document.getElementById('awEmpty'),
+    toast: document.getElementById('awToast')
+  };
+
+  function filteredSessions() {
+    if (state.ws === 'all') return SESSIONS;
+    return SESSIONS.filter(function (s) { return s.ws === state.ws; });
+  }
+
+  function windowIndices() {
+    var start = DAYS - state.range - state.offset;
+    var out = [];
+    for (var i = start; i < start + state.range; i++) out.push(i);
+    return out;
+  }
+
+  function groupDefs(sessions) {
+    if (state.groupBy === 'provider') {
+      var order = ['zc', 'cl', 'gh', 'cx', 'oc', 'cli'];
+      var present = {};
+      sessions.forEach(function (s) { present[s.provider] = true; });
+      return order.filter(function (k) { return present[k]; }).map(function (k) {
+        return { key: k, label: P_LABEL[state.lang][k], color: PROVIDERS[k].color };
+      });
+    }
+    var seen = {}, list = [];
+    sessions.forEach(function (s) {
+      s.models.forEach(function (m) {
+        if (!seen[m[0]]) { seen[m[0]] = true; list.push(m[0]); }
+      });
+    });
+    list.sort();
+    return list.map(function (m, i) {
+      return { key: m, label: m, color: MODEL_COLORS[i % MODEL_COLORS.length] };
+    });
+  }
+
+  function buildStacks(sessions, idxs, groups) {
+    var stacks = {};
+    idxs.forEach(function () { /* placeholder */ });
+    var dayRows = idxs.map(function (idx) {
+      var row = { idx: idx, values: {} };
+      groups.forEach(function (g) { row.values[g.key] = { in: 0, out: 0, calls: 0 }; });
+      return row;
+    });
+    sessions.forEach(function (s) {
+      idxs.forEach(function (idx, pos) {
+        var dayIn = s.days[idx] || 0;
+        if (dayIn <= 0) return;
+        var dayOut = s.output === null ? 0 : Math.round((s.output / Math.max(1, s.input)) * dayIn);
+        var dayCalls = s.calls === null ? 0 : Math.round((s.calls / Math.max(1, s.input)) * dayIn);
+        if (state.groupBy === 'provider') {
+          var cell = dayRows[pos].values[s.provider];
+          cell.in += dayIn; cell.out += dayOut; cell.calls += dayCalls;
+        } else {
+          s.models.forEach(function (m) {
+            var cellm = dayRows[pos].values[m[0]];
+            if (!cellm) return;
+            cellm.in += Math.round(dayIn * m[1]);
+            cellm.out += Math.round(dayOut * m[1]);
+            cellm.calls += Math.round(dayCalls * m[1]);
+          });
+        }
+      });
+    });
+    stacks.dayRows = dayRows;
+    return stacks;
+  }
+
+  function rangeTotals(sessions, idxs) {
+    var tin = 0, tout = 0, tcalls = 0, tcached = 0, tactive = 0, count = 0, hasAny = 0;
+    sessions.forEach(function (s) {
+      var rin = 0;
+      idxs.forEach(function (idx) { rin += s.days[idx] || 0; });
+      if (rin <= 0 && s.noUsage) { count++; tactive += s.activeH; return; }
+      if (rin <= 0) return;
+      count++;
+      tin += rin;
+      if (s.input !== null) {
+        tout += Math.round((s.output / Math.max(1, s.input)) * rin);
+        tcalls += Math.round((s.calls / Math.max(1, s.input)) * rin);
+        tcached += Math.round(rin * (s.cacheRatio || 0));
+      } else { hasAny++; }
+      tactive += s.activeH;
+    });
+    return { tin: tin, tout: tout, tcalls: tcalls, tcached: tcached, tactive: tactive, count: count };
+  }
+
+  function drawChart(sessions, idxs, groups, stacks) {
+    var host = els.chartHost;
+    host.innerHTML = '';
+    var W = Math.max(300, host.clientWidth || 640);
+    var H = 210, padL = 46, padR = 8, padT = 10, padB = 22;
+    var svgns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(svgns, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    svg.setAttribute('width', '100%');
+    svg.setAttribute('height', H);
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', t('historyTitle'));
+
+    var maxV = 0;
+    stacks.dayRows.forEach(function (row) {
+      var sum = 0;
+      groups.forEach(function (g) { sum += row.values[g.key].in; });
+      if (sum > maxV) maxV = sum;
+    });
+    var ceil = Math.max(1, Math.ceil((maxV * 1.08) / 5e7) * 5e7);
+
+    var gridG = document.createElementNS(svgns, 'g');
+    var tickCount = 4;
+    for (var ti = 0; ti <= tickCount; ti++) {
+      var v = ceil * ti / tickCount;
+      var y = padT + (H - padT - padB) * (1 - ti / tickCount);
+      var line = document.createElementNS(svgns, 'line');
+      line.setAttribute('x1', padL); line.setAttribute('x2', W - padR);
+      line.setAttribute('y1', y); line.setAttribute('y2', y);
+      line.setAttribute('stroke', 'var(--border)');
+      line.setAttribute('stroke-width', '1');
+      gridG.appendChild(line);
+      var label = document.createElementNS(svgns, 'text');
+      label.setAttribute('x', padL - 6); label.setAttribute('y', y + 3.5);
+      label.setAttribute('text-anchor', 'end');
+      label.setAttribute('font-size', '11');
+      label.setAttribute('fill', 'var(--muted)');
+      label.textContent = fmtTokens(v);
+      gridG.appendChild(label);
+    }
+    svg.appendChild(gridG);
+
+    var innerW = W - padL - padR;
+    var slot = innerW / idxs.length;
+    var barW = Math.max(3, Math.min(30, slot * 0.66));
+
+    stacks.dayRows.forEach(function (row, pos) {
+      var cx = padL + slot * pos + slot / 2;
+      var yBase = H - padB;
+      groups.forEach(function (g) {
+        var val = row.values[g.key].in;
+        if (val <= 0) return;
+        var h = (H - padT - padB) * (val / ceil);
+        var rect = document.createElementNS(svgns, 'rect');
+        rect.setAttribute('x', cx - barW / 2);
+        rect.setAttribute('y', yBase - h);
+        rect.setAttribute('width', barW);
+        rect.setAttribute('height', Math.max(1, h));
+        rect.setAttribute('fill', g.color);
+        svg.appendChild(rect);
+        yBase -= h;
+      });
+      var hit = document.createElementNS(svgns, 'rect');
+      hit.setAttribute('x', cx - slot / 2); hit.setAttribute('y', padT);
+      hit.setAttribute('width', Math.max(slot, 8)); hit.setAttribute('height', H - padT - padB);
+      hit.setAttribute('fill', 'transparent');
+      hit.setAttribute('data-chart-hit', '');
+      hit.style.cursor = 'pointer';
+      hit.addEventListener('mousemove', function (ev) { showTip(row, groups, ev); });
+      hit.addEventListener('mouseleave', hideTip);
+      hit.addEventListener('click', function (ev) { showTip(row, groups, ev); });
+      svg.appendChild(hit);
+
+      if (state.range === 7 || pos % 5 === Math.floor(idxs.length / 2) % 5 || pos === 0 || pos === idxs.length - 1) {
+        var d = new Date(END.getTime() - (DAYS - 1 - row.idx) * 86400000);
+        var xlab = document.createElementNS(svgns, 'text');
+        xlab.setAttribute('x', cx); xlab.setAttribute('y', H - 7);
+        xlab.setAttribute('text-anchor', 'middle');
+        xlab.setAttribute('font-size', '10.5');
+        xlab.setAttribute('fill', 'var(--muted)');
+        xlab.textContent = (d.getMonth() + 1) + '/' + d.getDate();
+        if (state.range === 30 && pos % 5 !== 0 && pos !== idxs.length - 1) { /* sparse labels */ }
+        if (state.range === 7 || pos % 5 === 0 || pos === idxs.length - 1) svg.appendChild(xlab);
+      }
+    });
+    host.appendChild(svg);
+  }
+
+  function showTip(row, groups, ev) {
+    var wrap = els.tip;
+    var parts = [];
+    var d = new Date(END.getTime() - (DAYS - 1 - row.idx) * 86400000);
+    parts.push('<div class="aw-tip-date">' + (d.getMonth() + 1) + '/' + d.getDate() + '</div>');
+    groups.forEach(function (g) {
+      var v = row.values[g.key];
+      if (v.in <= 0) return;
+      parts.push(
+        '<div class="aw-tip-row"><span class="aw-dot" style="background:' + g.color + '"></span>' +
+        '<span class="aw-name">' + esc(g.label) + '</span>' +
+        '<span class="aw-num">' + fmtTokens(v.in) + ' · ' + t('outShort') + ' ' + fmtTokens(v.out) + '</span></div>'
+      );
+    });
+    if (parts.length === 1) parts.push('<div class="aw-tip-row">' + esc(t('na')) + '</div>');
+    wrap.innerHTML = parts.join('');
+    wrap.style.display = 'block';
+    var chartWrap = root.querySelector('.aw-chart-wrap');
+    var rect = chartWrap.getBoundingClientRect();
+    var target = ev && (ev.currentTarget || ev.target);
+    var tipW = wrap.offsetWidth || 180;
+    var left = 12;
+    if (target && target.getBBox) {
+      try { left = target.getBBox().x + target.getBBox().width / 2 - tipW / 2; } catch (e) { left = 12; }
+    }
+    if (left < 4) left = 4;
+    if (left + tipW > rect.width - 4) left = rect.width - tipW - 4;
+    wrap.style.left = left + 'px';
+    wrap.style.top = '6px';
+  }
+  function hideTip() { els.tip.style.display = 'none'; }
+
+  function renderCards(totals) {
+    var cards = [
+      { k: t('statInput'), v: fmtTokens(totals.tin), s: totals.tin > 0 ? t('cacheNote')(totals.tcached / Math.max(1, totals.tin)) : '' },
+      { k: t('statOutput'), v: fmtTokens(totals.tout), s: '' },
+      { k: t('statCalls'), v: fmtInt(totals.tcalls), s: '' },
+      { k: t('statActive'), v: totals.tactive.toFixed(1) + t('hoursUnit'), s: '' },
+      { k: t('statSessions'), v: totals.count + t('sessionsUnit'), s: '' }
+    ];
+    els.cards.innerHTML = cards.map(function (c) {
+      return '<div class="aw-stat"><div class="aw-k">' + esc(c.k) + '</div><div class="aw-v">' + esc(c.v) +
+        '</div>' + (c.s ? '<div class="aw-s">' + esc(c.s) + '</div>' : '') + '</div>';
+    }).join('');
+  }
+
+  function renderLegend(groups, stacks) {
+    var totalsBy = {};
+    var grand = 0;
+    groups.forEach(function (g) { totalsBy[g.key] = 0; });
+    stacks.dayRows.forEach(function (row) {
+      groups.forEach(function (g) { totalsBy[g.key] += row.values[g.key].in; grand += row.values[g.key].in; });
+    });
+    els.legend.innerHTML = groups.map(function (g) {
+      var pct = grand > 0 ? Math.round(totalsBy[g.key] * 100 / grand) : 0;
+      if (totalsBy[g.key] <= 0) return '';
+      return '<span class="aw-legend-item"><span class="aw-legend-dot" style="background:' + g.color +
+        '"></span><b>' + esc(g.label) + '</b>' + pct + '%</span>';
+    }).join('');
+  }
+
+  function renderRows(sessions, idxs, totals) {
+    var rowsHtml = [];
+    var ranked = sessions.slice().sort(function (a, b) {
+      var ra = 0, rb = 0;
+      idxs.forEach(function (i) { ra += a.days[i] || 0; rb += b.days[i] || 0; });
+      return rb - ra;
+    });
+    ranked.forEach(function (s) {
+      var rin = 0;
+      idxs.forEach(function (i) { rin += s.days[i] || 0; });
+      var rout = s.input === null ? null : Math.round((s.output / Math.max(1, s.input)) * rin);
+      var pct = totals.tin > 0 && rin > 0 ? Math.min(100, rin * 100 / totals.tin) : 0;
+      var prov = PROVIDERS[s.provider];
+      var plabel = P_LABEL[state.lang][s.provider];
+      var title = state.lang === 'zh' ? s.titleZh : s.titleEn;
+      var wsName = s.ws.split('\\').pop();
+      var open = !!state.expanded[s.id];
+      rowsHtml.push(
+        '<tr class="aw-row" data-sid="' + esc(s.id) + '">' +
+        '<td><button type="button" class="aw-chevron" aria-expanded="' + open + '" aria-label="' + esc(title) + '">&#x25B6;</button></td>' +
+        '<td class="aw-title-cell"><div class="aw-row-main">' +
+        '<span class="aw-badge" style="color:' + prov.color + ';border-color:' + prov.color + '">' + esc(plabel) + '</span>' +
+        '<span style="min-width:0;flex:1">' +
+        '<div class="aw-title-text" title="' + esc(title) + '">' + esc(title) + '</div>' +
+        '<div class="aw-ws" title="' + esc(s.ws) + '">' + esc(wsName) + '</div></span></div></td>' +
+        '<td class="aw-num">' + fmtTokens(rin > 0 ? rin : null) + '</td>' +
+        '<td class="aw-num">' + fmtTokens(rout) + '</td>' +
+        '<td><div class="aw-share"><span class="aw-num" style="font-size:11.5px">' +
+        (rin > 0 ? pct.toFixed(1) + '%' : t('na')) + '</span>' +
+        '<span class="aw-share-track"><span class="aw-share-bar" style="width:' + pct.toFixed(1) + '%"></span></span></div></td>' +
+        '</tr>'
+      );
+      if (open) {
+        var modelRows = s.models.map(function (m, mi) {
+          var color = state.groupBy === 'model' ? findModelColor(m[0]) : MODEL_COLORS[mi % MODEL_COLORS.length];
+          return '<div class="aw-model-row"><span class="aw-model-name">' + esc(m[0]) + '</span>' +
+            '<span class="aw-model-track"><span class="aw-model-fill" style="width:' + Math.round(m[1] * 100) + '%;background:' + color + '"></span></span>' +
+            '<span class="aw-model-pct">' + Math.round(m[1] * 100) + '%</span></div>';
+        }).join('');
+        if (!modelRows) modelRows = '<div class="aw-model-row"><span class="aw-model-name aw-na">' + esc(t('na')) + '</span></div>';
+        var toolLine = s.tools.length
+          ? s.tools.map(function (tt) { return esc(tt[0]) + ' ' + tt[1]; }).join(' · ')
+          : t('na');
+        rowsHtml.push(
+          '<tr class="aw-detail"><td colspan="5"><div class="aw-detail-grid">' +
+          '<div><div class="aw-k" style="color:var(--muted);font-size:11px">' + esc(t('models')) + '</div>' + modelRows + '</div>' +
+          '<div><div class="aw-kv">' +
+          kvLine(t('turns'), fmtInt(s.turns)) +
+          kvLine(t('toolCalls'), fmtInt(s.toolCalls)) +
+          kvLine(t('modelCalls'), fmtInt(s.calls)) +
+          kvLine(t('activeDur'), s.activeH.toFixed(1) + t('hoursUnit')) +
+          '<div class="aw-tools-line">' + esc(t('tools')) + '：' + toolLine + '</div>' +
+          '</div>' +
+          (s.noUsage ? '<div class="aw-tools-line aw-na">' + esc(t('noUsageNote')) + '</div>' : '') +
+          (s.costUsd ? '<div class="aw-tools-line">' + esc('cost $' + s.costUsd.toFixed(2)) + '</div>' : '') +
+          (s.credits ? '<div class="aw-tools-line">' + esc('credits ' + s.credits) + '</div>' : '') +
+          '<button type="button" class="aw-open-btn" data-jump="' + esc(s.provider) + '">' +
+          esc(s.provider === 'zc' ? t('openZcode') : t('openSession')) + '</button>' +
+          '</div></div></td></tr>'
+        );
+      }
+    });
+    els.rows.innerHTML = rowsHtml.join('');
+    els.empty.hidden = ranked.length > 0;
+    els.empty.textContent = t('empty');
+  }
+
+  function findModelColor(model) {
+    var host = els.chartHost;
+    var groups = host._groups || [];
+    for (var i = 0; i < groups.length; i++) if (groups[i].key === model) return groups[i].color;
+    return '#75beff';
+  }
+  function kvLine(k, v) {
+    return '<div class="aw-kv-line" style="display:flex;justify-content:space-between;gap:12px"><span class="aw-k">' + esc(k) + '</span><span class="aw-v">' + esc(v) + '</span></div>';
+  }
+
+  var toastTimer = null;
+  function showToast(msg) {
+    els.toast.textContent = msg;
+    els.toast.classList.add('aw-show');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { els.toast.classList.remove('aw-show'); }, 3200);
+  }
+
+  function renderRangeLabel() {
+    var idxs = windowIndices();
+    var a = new Date(END.getTime() - (DAYS - 1 - idxs[0]) * 86400000);
+    var b = new Date(END.getTime() - (DAYS - 1 - idxs[idxs.length - 1]) * 86400000);
+    var label = t('rangeLabel')(a, b);
+    if (state.offset > 0) label += ' · <span class="aw-today" id="awTodayLink">' + esc(t('today')) + '</span>';
+    els.rangeLabel.innerHTML = label;
+    var todayLink = document.getElementById('awTodayLink');
+    if (todayLink) todayLink.addEventListener('click', function () { state.offset = 0; render(); });
+  }
+
+  function renderNavState() {
+    var maxOffset = Math.max(0, DAYS - state.range);
+    els.prev.disabled = state.offset >= maxOffset;
+    els.next.disabled = state.offset <= 0;
+  }
+
+  function applyI18n() {
+    root.querySelectorAll('[data-i18n]').forEach(function (node) {
+      node.textContent = t(node.getAttribute('data-i18n'));
+    });
+    var optProvider = els.groupSel.querySelector('option[value="provider"]');
+    var optModel = els.groupSel.querySelector('option[value="model"]');
+    if (optProvider) optProvider.textContent = t('groupByProvider');
+    if (optModel) optModel.textContent = t('groupByModel');
+    var allOpt = els.wsSel.querySelector('option[value="all"]');
+    if (allOpt) allOpt.textContent = t('allWs');
+    els.updated.textContent = t('updated');
+    els.langBtn.textContent = state.lang === 'zh' ? 'EN' : '中文';
+    els.langBtn.setAttribute('aria-pressed', state.lang === 'en' ? 'true' : 'false');
+  }
+
+  function buildWsOptions() {
+    var seen = {};
+    var opts = ['<option value="all">' + esc(t('allWs')) + '</option>'];
+    SESSIONS.forEach(function (s) {
+      if (seen[s.ws]) return;
+      seen[s.ws] = true;
+      opts.push('<option value="' + esc(s.ws) + '">' + esc(s.ws.split('\\').pop()) + '</option>');
+    });
+    els.wsSel.innerHTML = opts.join('');
+    els.wsSel.value = state.ws;
+  }
+
+  function render() {
+    applyI18n();
+    root.setAttribute('data-theme', state.theme);
+    root.setAttribute('data-lang', state.lang);
+    els.themeBtn.setAttribute('aria-pressed', state.theme === 'light' ? 'true' : 'false');
+    els.range7.setAttribute('aria-pressed', state.range === 7 ? 'true' : 'false');
+    els.range30.setAttribute('aria-pressed', state.range === 30 ? 'true' : 'false');
+    els.groupSel.value = state.groupBy;
+    buildWsOptions();
+    renderRangeLabel();
+    renderNavState();
+
+    var sessions = filteredSessions();
+    var idxs = windowIndices();
+    var groups = groupDefs(sessions);
+    var stacks = buildStacks(sessions, idxs, groups);
+    var totals = rangeTotals(sessions, idxs);
+
+    renderCards(totals);
+    renderLegend(groups, stacks);
+    els.chartHost._groups = groups;
+    drawChart(sessions, idxs, groups, stacks);
+    renderRows(sessions, idxs, totals);
+    hideTip();
+  }
+
+  els.langBtn.addEventListener('click', function () {
+    state.lang = state.lang === 'zh' ? 'en' : 'zh';
+    persist();
+    render();
+  });
+  els.themeBtn.addEventListener('click', function () {
+    state.theme = state.theme === 'dark' ? 'light' : 'dark';
+    persist();
+    render();
+  });
+  els.closeBtn.addEventListener('click', function () {
+    showToast(state.lang === 'zh' ? '关闭窗口（原型示意）' : 'Close window (mock)');
+  });
+  els.range7.addEventListener('click', function () { state.range = 7; state.offset = Math.min(state.offset, DAYS - 7); render(); });
+  els.range30.addEventListener('click', function () { state.range = 30; state.offset = 0; render(); });
+  els.prev.addEventListener('click', function () {
+    var maxOffset = Math.max(0, DAYS - state.range);
+    state.offset = Math.min(maxOffset, state.offset + state.range);
+    render();
+  });
+  els.next.addEventListener('click', function () {
+    state.offset = Math.max(0, state.offset - state.range);
+    render();
+  });
+  els.groupSel.addEventListener('change', function () { state.groupBy = els.groupSel.value; render(); });
+  els.wsSel.addEventListener('change', function () { state.ws = els.wsSel.value; render(); });
+
+  els.rows.addEventListener('click', function (ev) {
+    var chev = ev.target.closest ? ev.target.closest('.aw-chevron') : null;
+    if (chev) {
+      var rowTr = chev.closest('tr');
+      var sid = rowTr.getAttribute('data-sid');
+      state.expanded[sid] = !state.expanded[sid];
+      render();
+      return;
+    }
+    var jump = ev.target.closest ? ev.target.closest('.aw-open-btn') : null;
+    if (jump) {
+      var p = jump.getAttribute('data-jump');
+      if (p === 'zc') showToast(t('zcodeToast'));
+      else showToast(t('jumpToast')(P_LABEL[state.lang][p]));
+    }
+  });
+
+  render();
+
+  if (window.ResizeObserver) {
+    new ResizeObserver(function () {
+      var sessions = filteredSessions();
+      var idxs = windowIndices();
+      var groups = groupDefs(sessions);
+      var stacks = buildStacks(sessions, idxs, groups);
+      els.chartHost._groups = groups;
+      drawChart(sessions, idxs, groups, stacks);
+    }).observe(els.chartHost);
+  }
+})();
+</script>
+</div>
+
+</body>
+</html>

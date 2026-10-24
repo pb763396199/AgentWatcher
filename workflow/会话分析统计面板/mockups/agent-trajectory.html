@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentWatcher 轨迹泳道视图 · 原型稿</title>
+<style>
+  html, body { margin: 0; padding: 16px; background: #1b1b1b; }
+  body { min-height: 100vh; }
+  @media (prefers-color-scheme: light) { html, body { background: #ececec; } }
+</style>
+</head>
+<body>
+<div id="aw-trajectory-mockup" data-theme="dark" data-lang="zh">
+<style>
+  #aw-trajectory-mockup {
+    --surface: #202020; --surface-2: #252526; --surface-3: #2d2d30;
+    --border: #3c3c3c; --text: #d4d4d4; --muted: #9a9a9a; --soft: #6f6f6f;
+    --accent: #0078d4; --focus: #0e639c; --card: #1f1f1f; --pop: #1f1f1f;
+    --c-sol: #75beff; --c-astra: #4ec9b0; --c-review: #d7ba7d;
+    font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 13px; color: var(--text); line-height: 1.45;
+  }
+  #aw-trajectory-mockup[data-theme="light"] {
+    --surface: #f8f8f8; --surface-2: #ffffff; --surface-3: #eeeeee;
+    --border: #d0d0d0; --text: #1f1f1f; --muted: #616161; --soft: #767676;
+    --card: #ffffff; --pop: #ffffff;
+  }
+  #aw-trajectory-mockup * { box-sizing: border-box; }
+  #aw-trajectory-mockup button { font-family: inherit; }
+  .tg-proto { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 0 2px 10px; color: var(--muted); font-size: 12px; }
+  .tg-proto button { padding: 3px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-2); color: var(--text); cursor: pointer; font-size: 12px; }
+  .tg-proto button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .tg-window { max-width: 980px; margin: 0 auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); overflow: hidden; box-shadow: 0 12px 34px rgba(0,0,0,.32); }
+  .tg-head { display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 6px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+  .tg-head strong { font-size: 12px; }
+  .tg-head .sub { font-size: 11px; color: var(--muted); }
+  .tg-head .spring { flex: 1; }
+  .tg-body { padding: 12px; display: grid; gap: 10px; }
+  .tg-kpis { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 8px; }
+  @media (max-width: 760px) { .tg-kpis { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+  .tg-kpi { border: 1px solid var(--border); border-radius: 6px; background: var(--card); padding: 8px 10px; min-width: 0; }
+  .tg-kpi .k { font-size: 11px; color: var(--muted); margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tg-kpi .v { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tg-kpi .s { font-size: 11px; color: var(--soft); margin-top: 2px; white-space: nowrap; }
+  .tg-panel { border: 1px solid var(--border); border-radius: 6px; background: var(--card); overflow: hidden; }
+  .tg-panel-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px 6px; }
+  .tg-panel-head strong { font-size: 13px; }
+  .tg-note { font-size: 11px; color: var(--muted); }
+  .tg-panel-head .spring { flex: 1; }
+  .tg-legend { display: flex; gap: 6px 14px; flex-wrap: wrap; padding: 0 12px 8px; }
+  .tg-legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); cursor: pointer; border: 0; background: none; padding: 0; font-family: inherit; }
+  .tg-legend-item .d { width: 9px; height: 9px; border-radius: 2px; }
+  .tg-legend-item[aria-pressed="false"] { opacity: .4; }
+  .tg-lanes { position: relative; padding: 2px 12px 10px; }
+  .tg-lane { display: grid; grid-template-columns: 190px 1fr; gap: 10px; align-items: center; min-height: 26px; position: relative; }
+  .tg-lane + .tg-lane { border-top: 1px dashed color-mix(in srgb, var(--border) 55%, transparent); }
+  .tg-lane-label { display: flex; align-items: center; gap: 6px; font-size: 11px; min-width: 0; }
+  .tg-lane-label .d { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+  .tg-lane-label .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+  .tg-lane-label .cost { font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap; }
+  .tg-lane-track { position: relative; height: 16px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+  .tg-lane-track .seg { position: absolute; top: 0; bottom: 0; border-radius: 2px; min-width: 2px; }
+  .tg-lane-track .mark { position: absolute; top: 2px; bottom: 2px; width: 2px; background: var(--text); opacity: .35; border-radius: 1px; }
+  .tg-axis { display: grid; grid-template-columns: 190px 1fr; gap: 10px; padding: 0 12px 4px; }
+  .tg-axis-track { position: relative; height: 14px; font-size: 10.5px; color: var(--muted); }
+  .tg-axis-track span { position: absolute; transform: translateX(-50%); }
+  .tg-tip { position: absolute; z-index: 6; display: none; pointer-events: none; min-width: 200px; max-width: 280px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--pop); box-shadow: 0 6px 18px rgba(0,0,0,.28); font-size: 11px; }
+  #aw-trajectory-mockup[data-theme="light"] .tg-tip { box-shadow: 0 6px 18px rgba(0,0,0,.14); }
+  .tg-tip .t { font-weight: 600; margin-bottom: 4px; }
+  .tg-tip-row { display: flex; gap: 8px; margin-top: 2px; }
+  .tg-tip-row .k { color: var(--muted); flex: 1; }
+  .tg-tip-row .x { font-variant-numeric: tabular-nums; }
+  .tg-table { width: 100%; border-collapse: collapse; }
+  .tg-table th { text-align: left; font-size: 11px; font-weight: 500; color: var(--muted); padding: 6px 10px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .tg-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 11.5px; vertical-align: middle; }
+  .tg-table tr:last-child td { border-bottom: 0; }
+  .tg-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tg-role { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; padding: 1px 7px; border: 1px solid; border-radius: 999px; white-space: nowrap; }
+  .tg-total td { font-weight: 600; background: var(--surface-2); }
+</style>
+
+<div class="tg-proto">
+  <span>原型控制</span>
+  <button type="button" id="tgLangBtn">EN</button>
+  <button type="button" id="tgThemeBtn" aria-pressed="false">&#x2600; / &#x263E;</button>
+</div>
+
+<div class="tg-window" role="application" aria-label="轨迹泳道视图原型">
+  <div class="tg-head">
+    <strong data-i18n="title">会话分析 · 轨迹泳道</strong>
+    <span class="sub">Codex · adt-scene-agent · 10/20 12:18 – 15:04</span>
+    <span class="spring"></span>
+    <span class="sub" data-i18n="protoTag">设计原型（真实数据）</span>
+  </div>
+  <div class="tg-body">
+    <div class="tg-kpis" id="tgKpis"></div>
+
+    <div class="tg-panel">
+      <div class="tg-panel-head">
+        <strong data-i18n="laneTitle">轨迹泳道</strong>
+        <span class="tg-note" data-i18n="laneNote">每个子代理一条泳道，颜色=模型；主代理泳道上的竖线是 spawn/send/wait 编排调用</span>
+        <span class="spring"></span>
+        <button type="button" class="tg-legend-item" id="tgGuardToggle" aria-pressed="true"></button>
+      </div>
+      <div class="tg-legend" id="tgLegend"></div>
+      <div class="tg-lanes" id="tgLanes">
+        <div class="tg-tip" id="tgTip" role="tooltip"></div>
+      </div>
+      <div class="tg-axis" id="tgAxis"></div>
+    </div>
+
+    <div class="tg-panel">
+      <div class="tg-panel-head">
+        <strong data-i18n="rankTitle">子代理开销排行</strong>
+        <span class="tg-note" data-i18n="rankNote">按毛输入排序</span>
+      </div>
+      <table class="tg-table">
+        <thead>
+          <tr>
+            <th data-i18n="colAgent">子代理</th>
+            <th data-i18n="colModel">模型</th>
+            <th class="tg-num" data-i18n="colIn">毛输入</th>
+            <th class="tg-num" data-i18n="colOut">输出</th>
+            <th class="tg-num" data-i18n="colTurns">轮次</th>
+            <th class="tg-num" data-i18n="colTools">工具</th>
+            <th class="tg-num" data-i18n="colSpan">活跃</th>
+          </tr>
+        </thead>
+        <tbody id="tgRows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var root = document.getElementById('aw-trajectory-mockup');
+  if (!root) return;
+
+  // 真实数据：codex:01a15784（父）+ 16 个 thread_spawn 子代理 + 11 个 guardian 审查者
+  // 时间单位：分钟（自 04:18 起）
+  var T0 = 4 * 60 + 18, T1 = 7 * 60 + 6;
+  function m(hhmm) { var p = hhmm.split(':'); return (+p[0]) * 60 + (+p[1]); }
+
+  var MODELS = {
+    'gpt-6.1-sol': '#75beff',
+    'gpt-6-astra': '#4ec9b0',
+    'codex-auto-review': '#d7ba7d'
+  };
+
+  var PARENT = { model: 'gpt-6.1-sol', start: m('4:18'), end: m('7:04') };
+  var ORCHESTRATION = [
+    ['4:19'], ['4:19'], ['4:19'], ['4:26'], ['5:59'], ['6:27'], ['6:27'], ['6:27'],
+    ['6:34'], ['6:36'], ['6:37'], ['6:43'], ['6:48'], ['6:48'], ['6:49'], ['6:53'], ['6:54'], ['6:56'], ['6:59']
+  ].map(function (x) { return m(x[0]); });
+
+  var WORKERS = [
+    { start: '4:19', end: '6:26', model: 'gpt-6.1-sol', inTok: 15027211, out: 46775, turns: 4, tools: 67 },
+    { start: '4:19', end: '6:25', model: 'gpt-6.1-sol', inTok: 14749769, out: 49775, turns: 4, tools: 73 },
+    { start: '4:19', end: '6:15', model: 'gpt-6.1-sol', inTok: 7859814, out: 20636, turns: 4, tools: 35 },
+    { start: '4:26', end: '4:26', model: 'gpt-6.1-sol', inTok: 105336, out: 1568, turns: 1, tools: 1 },
+    { start: '5:59', end: '6:01', model: 'gpt-6.1-sol', inTok: 1243002, out: 5211, turns: 6, tools: 14 },
+    { start: '6:27', end: '6:33', model: 'gpt-6.1-sol', inTok: 2036926, out: 23043, turns: 1, tools: 20 },
+    { start: '6:27', end: '6:34', model: 'gpt-6.1-sol', inTok: 2348413, out: 26873, turns: 1, tools: 23 },
+    { start: '6:27', end: '6:38', model: 'gpt-6.1-sol', inTok: 1592752, out: 31041, turns: 1, tools: 19 },
+    { start: '6:34', end: '6:43', model: 'gpt-6.1-sol', inTok: 5564328, out: 23268, turns: 1, tools: 38 },
+    { start: '6:36', end: '7:04', model: 'gpt-6-astra', inTok: 14460913, out: 36182, turns: 4, tools: 103 },
+    { start: '6:37', end: '7:05', model: 'gpt-6-astra', inTok: 7971501, out: 22667, turns: 4, tools: 66 },
+    { start: '6:43', end: '7:05', model: 'gpt-6-astra', inTok: 9649029, out: 34648, turns: 5, tools: 61 },
+    { start: '6:48', end: '6:53', model: 'gpt-6.1-sol', inTok: 1985228, out: 15413, turns: 1, tools: 21 },
+    { start: '6:48', end: '6:55', model: 'gpt-6.1-sol', inTok: 3499903, out: 17201, turns: 1, tools: 34 },
+    { start: '6:49', end: '6:54', model: 'gpt-6.1-sol', inTok: 3671393, out: 17405, turns: 1, tools: 25 },
+    { start: '6:53', end: '6:58', model: 'gpt-6.1-sol', inTok: 1272021, out: 14454, turns: 1, tools: 15 }
+  ];
+  var GUARDIANS = [
+    { start: '4:18', end: '6:03', inTok: 1128268, turns: 34 },
+    { start: '4:25', end: '4:25', inTok: 24714, turns: 5 },
+    { start: '6:11', end: '6:11', inTok: 25901, turns: 7 },
+    { start: '6:18', end: '6:25', inTok: 76053, turns: 10 },
+    { start: '6:28', end: '6:52', inTok: 4332016, turns: 63 },
+    { start: '6:28', end: '6:39', inTok: 895311, turns: 25 },
+    { start: '6:33', end: '7:10', inTok: 4124360, turns: 81 },
+    { start: '6:55', end: '7:04', inTok: 228542, turns: 15 },
+    { start: '6:54', end: '7:05', inTok: 176930, turns: 14 },
+    { start: '7:04', end: '7:04', inTok: 22934, turns: 5 }
+  ];
+
+  var I18N = {
+    zh: {
+      title: '会话分析 · 轨迹泳道', protoTag: '设计原型（真实数据）',
+      laneTitle: '轨迹泳道', laneNote: '每个子代理一条泳道，颜色=模型；主代理泳道上的竖线是 spawn/send/wait 编排调用',
+      rankTitle: '子代理开销排行', rankNote: '按毛输入排序',
+      colAgent: '子代理', colModel: '模型', colIn: '毛输入', colOut: '输出', colTurns: '轮次', colTools: '工具', colSpan: '活跃',
+      kpiParent: '主代理', kpiWorkers: '派生子代理', kpiGuardians: 'guardian 审查', kpiPeak: '并行峰值', kpiSubTotal: '子代理合计毛输入',
+      parentLane: '主代理 · gpt-6.1-sol', guardianLane: 'guardian 审查者', workerLane: 'worker',
+      guardShow: '含 guardian（点击隐藏）', guardHide: '已隐藏 guardian（点击显示）',
+      unitMin: ' 分钟', spawnWord: '编排调用',
+      tipSpan: '活跃区间', tipModel: '模型', tipIn: '毛输入', tipOut: '输出', tipTurns: '轮次', tipTools: '工具调用'
+    },
+    en: {
+      title: 'Session analytics · Trajectory lanes', protoTag: 'Design mockup (real data)',
+      laneTitle: 'Trajectory lanes', laneNote: 'One lane per subagent, color = model; ticks on the main lane are spawn/send/wait orchestration calls',
+      rankTitle: 'Subagent cost ranking', rankNote: 'Sorted by gross input',
+      colAgent: 'Subagent', colModel: 'Model', colIn: 'Gross input', colOut: 'Output', colTurns: 'Turns', colTools: 'Tools', colSpan: 'Active',
+      kpiParent: 'Main agent', kpiWorkers: 'Spawned workers', kpiGuardians: 'Guardian reviews', kpiPeak: 'Peak parallel', kpiSubTotal: 'Subagent total input',
+      parentLane: 'Main · gpt-6.1-sol', guardianLane: 'Guardian reviewers', workerLane: 'worker',
+      guardShow: 'incl. guardians (click to hide)', guardHide: 'guardians hidden (click to show)',
+      unitMin: ' min', spawnWord: 'orchestration',
+      tipSpan: 'Active span', tipModel: 'Model', tipIn: 'Gross input', tipOut: 'Output', tipTurns: 'Turns', tipTools: 'Tool calls'
+    }
+  };
+  var state = { lang: 'zh', theme: 'dark', showGuardians: true, hiddenModels: {} };
+  try {
+    var saved = window.zcode && window.zcode.widgetState && window.zcode.widgetState.privateContent;
+    if (saved && typeof saved === 'object') {
+      if (saved.lang === 'zh' || saved.lang === 'en') state.lang = saved.lang;
+      if (saved.theme === 'dark' || saved.theme === 'light') state.theme = saved.theme;
+    }
+  } catch (e) { /* optional */ }
+  function t(k) { return I18N[state.lang][k]; }
+  function fmt(v) {
+    if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+    if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+    if (v >= 1e3) return (v / 1e3).toFixed(0) + 'k';
+    return String(v);
+  }
+  function fmtT(ts) { var h = Math.floor(ts / 60), mm = ts % 60; return String(h).padStart(2, '0') + ':' + String(mm).padStart(2, '0'); }
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+  function persist() {
+    try {
+      if (window.zcode && window.zcode.setWidgetState) window.zcode.setWidgetState({ privateContent: { lang: state.lang, theme: state.theme } }).catch(function () {});
+    } catch (e) { /* optional */ }
+  }
+
+  function peakParallel() {
+    var events = [];
+    WORKERS.forEach(function (w) { events.push([m(w.start), 1], [m(w.end) + 0.5, -1]); });
+    events.sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; });
+    var cur = 0, peak = 0;
+    events.forEach(function (e) { cur += e[1]; if (cur > peak) peak = cur; });
+    return peak;
+  }
+
+  function renderKpis() {
+    var workersIn = WORKERS.reduce(function (a, w) { return a + w.inTok; }, 0);
+    var guardIn = GUARDIANS.reduce(function (a, g) { return a + g.inTok; }, 0);
+    var cards = [
+      { k: t('kpiParent'), v: 'gpt-6.1-sol', s: '326 calls' },
+      { k: t('kpiWorkers'), v: String(WORKERS.length), s: '2 models' },
+      { k: t('kpiGuardians'), v: String(GUARDIANS.length), s: 'codex-auto-review' },
+      { k: t('kpiPeak'), v: String(peakParallel()), s: '' },
+      { k: t('kpiSubTotal'), v: fmt(workersIn + guardIn), s: fmt(workersIn) + ' + ' + fmt(guardIn) }
+    ];
+    document.getElementById('tgKpis').innerHTML = cards.map(function (c) {
+      return '<div class="tg-kpi"><div class="k">' + esc(c.k) + '</div><div class="tg-v v">' + esc(c.v) + '</div>' + (c.s ? '<div class="s">' + esc(c.s) + '</div>' : '') + '</div>';
+    }).join('');
+  }
+
+  function renderLegend() {
+    var entries = Object.keys(MODELS).map(function (model) {
+      return '<button type="button" class="tg-legend-item" data-model="' + model + '" aria-pressed="' + (!state.hiddenModels[model]) + '">' +
+        '<span class="d" style="background:' + MODELS[model] + '"></span>' + model + '</button>';
+    }).join('');
+    document.getElementById('tgLegend').innerHTML = entries;
+    root.querySelectorAll('[data-model]').forEach(function (btn) {
+      btn.onclick = function () {
+        var model = btn.getAttribute('data-model');
+        var others = Object.keys(MODELS).filter(function (x) { return x !== model && !state.hiddenModels[x]; });
+        if (!state.hiddenModels[model] && others.length === 0) return;
+        state.hiddenModels[model] = !state.hiddenModels[model];
+        renderLanes(); renderLegend(); renderRows();
+      };
+    });
+  }
+
+  function renderLanes() {
+    var host = document.getElementById('tgLanes');
+    var rows = [];
+    function laneHtml(label, cost, segments, marks, tip) {
+      var segHtml = segments.map(function (s) {
+        var left = (s.start - T0) / (T1 - T0) * 100;
+        var width = Math.max(0.35, (s.end - s.start) / (T1 - T0) * 100);
+        return '<span class="seg" data-tip="' + esc(tip) + '" style="left:' + left.toFixed(2) + '%;width:' + width.toFixed(2) + '%;background:' + s.color + '"></span>';
+      }).join('');
+      var markHtml = (marks || []).map(function (mk) {
+        var left = (mk - T0) / (T1 - T0) * 100;
+        return '<span class="mark" style="left:' + left.toFixed(2) + '%"></span>';
+      }).join('');
+      return '<div class="tg-lane">' +
+        '<div class="tg-lane-label">' + label + '<span class="cost">' + cost + '</span></div>' +
+        '<div class="tg-lane-track">' + segHtml + markHtml + '</div></div>';
+    }
+
+    // 主代理
+    var parentColor = MODELS[PARENT.model];
+    var parentVisible = !state.hiddenModels[PARENT.model];
+    if (parentVisible) {
+      rows.push(laneHtml(
+        '<span class="d" style="background:' + parentColor + '"></span><span class="name">' + esc(t('parentLane')) + '</span>',
+        '',
+        [{ start: PARENT.start, end: PARENT.end, color: parentColor }],
+        ORCHESTRATION,
+        'parent'
+      ));
+    }
+    // worker 泳道（按开始时间排序）
+    WORKERS.slice().sort(function (a, b) { return m(a.start) - m(b.start); }).forEach(function (w, i) {
+      if (state.hiddenModels[w.model]) return;
+      var label = '<span class="d" style="background:' + MODELS[w.model] + '"></span><span class="name">#' + (i + 1) + ' ' + w.model + '</span>';
+      rows.push(laneHtml(label, fmt(w.inTok), [{ start: m(w.start), end: m(w.end), color: MODELS[w.model] }], null,
+        'w' + i));
+    });
+    // guardian 聚合泳道
+    if (state.showGuardians && !state.hiddenModels['codex-auto-review']) {
+      var guardIn = GUARDIANS.reduce(function (a, g) { return a + g.inTok; }, 0);
+      var segs = GUARDIANS.map(function (g) {
+        return { start: m(g.start), end: m(g.end), color: MODELS['codex-auto-review'] };
+      });
+      rows.push(laneHtml(
+        '<span class="d" style="background:' + MODELS['codex-auto-review'] + '"></span><span class="name">' + esc(t('guardianLane')) + ' ×' + GUARDIANS.length + '</span>',
+        fmt(guardIn), segs, null, 'guardians'
+      ));
+    }
+    host.querySelectorAll('.tg-lane').forEach(function (n) { n.remove(); });
+    host.insertAdjacentHTML('beforeend', rows.join(''));
+    wireTips();
+  }
+
+  function renderAxis() {
+    var host = document.getElementById('tgAxis');
+    var ticks = [];
+    for (var ts = 4 * 60 + 30; ts <= 7 * 60; ts += 30) {
+      var left = (ts - T0) / (T1 - T0) * 100;
+      ticks.push('<span style="left:' + left.toFixed(2) + '%">' + fmtT(ts) + '</span>');
+    }
+    host.innerHTML = '<div></div><div class="tg-axis-track">' + ticks.join('') + '</div>';
+  }
+
+  function renderRows() {
+    var all = [];
+    WORKERS.forEach(function (w, i) {
+      if (state.hiddenModels[w.model]) return;
+      all.push({ kind: 'worker', idx: i, start: m(w.start), end: m(w.end), model: w.model, inTok: w.inTok, out: w.out, turns: w.turns, tools: w.tools });
+    });
+    if (state.showGuardians && !state.hiddenModels['codex-auto-review']) {
+      GUARDIANS.forEach(function (g, i) {
+        all.push({ kind: 'guardian', idx: i, start: m(g.start), end: m(g.end), model: 'codex-auto-review', inTok: g.inTok, out: null, turns: g.turns, tools: 0 });
+      });
+    }
+    all.sort(function (a, b) { return b.inTok - a.inTok; });
+    var rows = all.map(function (a) {
+      var role = a.kind === 'worker' ? ('#' + (a.idx + 1)) : ('g' + (a.idx + 1));
+      var color = MODELS[a.model];
+      return '<tr><td><span class="tg-role" style="color:' + color + ';border-color:' + color + '">' +
+        (a.kind === 'worker' ? 'worker' : 'guardian') + ' ' + role + '</span></td>' +
+        '<td>' + a.model + '</td>' +
+        '<td class="tg-num">' + fmt(a.inTok) + '</td>' +
+        '<td class="tg-num">' + (a.out != null ? fmt(a.out) : '—') + '</td>' +
+        '<td class="tg-num">' + a.turns + '</td>' +
+        '<td class="tg-num">' + (a.tools || '—') + '</td>' +
+        '<td class="tg-num">' + fmtT(a.start) + '–' + fmtT(a.end) + '</td></tr>';
+    });
+    var totalIn = all.reduce(function (s, a) { return s + a.inTok; }, 0);
+    rows.push('<tr class="tg-total"><td>' + esc(t('kpiSubTotal')) + '</td><td></td><td class="tg-num">' + fmt(totalIn) + '</td><td colspan="4"></td></tr>');
+    document.getElementById('tgRows').innerHTML = rows.join('');
+  }
+
+  function wireTips() {
+    var tip = document.getElementById('tgTip');
+    root.querySelectorAll('.tg-lane .seg').forEach(function (seg) {
+      seg.onmousemove = function (ev) {
+        var kind = seg.getAttribute('data-tip');
+        var html = '';
+        if (kind === 'parent') {
+          html = '<div class="t">' + esc(t('parentLane')) + '</div>' +
+            '<div class="tg-tip-row"><span class="k">' + esc(t('tipSpan')) + '</span><span class="x">12:18 – 15:04</span></div>' +
+            '<div class="tg-tip-row"><span class="k">' + esc(t('spawnWord')) + '</span><span class="x">17 spawn · 27 send · 17 wait</span></div>';
+        } else if (kind === 'guardians') {
+          html = '<div class="t">' + esc(t('guardianLane')) + ' ×' + GUARDIANS.length + '</div>' +
+            '<div class="tg-tip-row"><span class="k">codex-auto-review</span><span class="x">' + fmt(GUARDIANS.reduce(function (a, g) { return a + g.inTok; }, 0)) + '</span></div>';
+        } else {
+          var i = parseInt(kind.slice(1), 10);
+          var w = WORKERS[i];
+          html = '<div class="t">worker #' + (i + 1) + '</div>' +
+            '<div class="tg-tip-row"><span class="k">' + esc(t('tipModel')) + '</span><span class="x">' + w.model + '</span></div>' +
+            '<div class="tg-tip-row"><span class="k">' + esc(t('tipSpan')) + '</span><span class="x">' + fmtT(m(w.start)) + ' – ' + fmtT(m(w.end)) + '</span></div>' +
+            '<div class="tg-tip-row"><span class="k">' + esc(t('tipIn')) + '</span><span class="x">' + fmt(w.inTok) + '</span></div>' +
+            '<div class="tg-tip-row"><span class="k">' + esc(t('tipOut')) + '</span><span class="x">' + fmt(w.out) + '</span></div>' +
+            '<div class="tg-tip-row"><span class="k">' + esc(t('tipTools')) + '</span><span class="x">' + w.tools + '</span></div>';
+        }
+        tip.innerHTML = html;
+        tip.style.display = 'block';
+        var host = document.getElementById('tgLanes');
+        var rect = host.getBoundingClientRect();
+        var segRect = seg.getBoundingClientRect();
+        var x = segRect.left - rect.left + segRect.width / 2 - 110;
+        x = Math.max(2, Math.min(x, rect.width - 230));
+        tip.style.left = x + 'px';
+        tip.style.top = Math.max(2, segRect.top - rect.top - 8) + 'px';
+      };
+      seg.onmouseleave = function () { tip.style.display = 'none'; };
+    });
+  }
+
+  function renderGuardToggle() {
+    var btn = document.getElementById('tgGuardToggle');
+    btn.textContent = state.showGuardians ? t('guardShow') : t('guardHide');
+    btn.setAttribute('aria-pressed', String(state.showGuardians));
+  }
+
+  function applyI18n() {
+    root.querySelectorAll('[data-i18n]').forEach(function (node) {
+      node.textContent = t(node.getAttribute('data-i18n'));
+    });
+  }
+
+  function render() {
+    applyI18n();
+    root.setAttribute('data-theme', state.theme);
+    root.setAttribute('data-lang', state.lang);
+    document.getElementById('tgLangBtn').textContent = state.lang === 'zh' ? 'EN' : '中文';
+    document.getElementById('tgThemeBtn').setAttribute('aria-pressed', state.theme === 'light' ? 'true' : 'false');
+    renderKpis();
+    renderLegend();
+    renderLanes();
+    renderAxis();
+    renderRows();
+    renderGuardToggle();
+  }
+
+  document.getElementById('tgLangBtn').onclick = function () { state.lang = state.lang === 'zh' ? 'en' : 'zh'; persist(); render(); };
+  document.getElementById('tgThemeBtn').onclick = function () { state.theme = state.theme === 'dark' ? 'light' : 'dark'; persist(); render(); };
+  document.getElementById('tgGuardToggle').onclick = function () { state.showGuardians = !state.showGuardians; renderLanes(); renderRows(); renderGuardToggle(); };
+
+  render();
+})();
+</script>
+</div>
+
+</body>
+</html>

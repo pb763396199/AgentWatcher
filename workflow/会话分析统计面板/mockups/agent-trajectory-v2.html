@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentWatcher 轨迹泳道 v2.4 · 原型稿</title>
+<style>
+  html, body { margin: 0; padding: 16px; background: #1b1b1b; }
+  body { min-height: 100vh; }
+  @media (prefers-color-scheme: light) { html, body { background: #ececec; } }
+</style>
+</head>
+<body>
+<div id="aw-trajectory-v2" data-theme="dark" data-lang="zh">
+<style>
+  #aw-trajectory-v2 {
+    --surface: #202020; --surface-2: #252526; --surface-3: #2d2d30;
+    --border: #3c3c3c; --text: #d4d4d4; --muted: #9a9a9a; --soft: #6f6f6f;
+    --accent: #0078d4; --focus: #0e639c; --card: #1f1f1f; --pop: #1f1f1f;
+    --c-sol: #75beff; --c-astra: #4ec9b0; --c-review: #d7ba7d; --c-ctx: #c586c0;
+    font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 13px; color: var(--text); line-height: 1.45;
+  }
+  #aw-trajectory-v2[data-theme="light"] {
+    --surface: #f8f8f8; --surface-2: #ffffff; --surface-3: #eeeeee;
+    --border: #d0d0d0; --text: #1f1f1f; --muted: #616161; --soft: #767676;
+    --card: #ffffff; --pop: #ffffff;
+  }
+  #aw-trajectory-v2 * { box-sizing: border-box; }
+  #aw-trajectory-v2 button { font-family: inherit; }
+  .tv-proto { display: flex; gap: 8px; align-items: center; padding: 0 2px 10px; color: var(--muted); font-size: 12px; }
+  .tv-proto button { padding: 3px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-2); color: var(--text); cursor: pointer; font-size: 12px; }
+  .tv-proto button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .tv-window { max-width: 980px; margin: 0 auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); overflow: hidden; box-shadow: 0 12px 34px rgba(0,0,0,.32); }
+  .tv-head { display: flex; gap: 10px; align-items: center; min-height: 34px; padding: 6px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+  .tv-head strong { font-size: 12px; }
+  .tv-head .sub { font-size: 11px; color: var(--muted); }
+  .tv-head .spring { flex: 1; }
+  .tv-body { padding: 12px; display: grid; gap: 10px; }
+  .tv-kpis { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 8px; }
+  @media (max-width: 760px) { .tv-kpis { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+  .tv-kpi { border: 1px solid var(--border); border-radius: 6px; background: var(--card); padding: 8px 10px; min-width: 0; }
+  .tv-kpi .k { font-size: 11px; color: var(--muted); margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tv-kpi .v { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tv-kpi .s { font-size: 11px; color: var(--soft); margin-top: 2px; white-space: nowrap; }
+  .tv-panel { border: 1px solid var(--border); border-radius: 6px; background: var(--card); overflow: hidden; }
+  .tv-panel-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 12px 6px; }
+  .tv-panel-head strong { font-size: 13px; }
+  .tv-note { font-size: 11px; color: var(--muted); }
+  .tv-panel-head .spring { flex: 1; }
+  .tv-collapse-btn { display: inline-flex; gap: 6px; align-items: center; padding: 3px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-3); color: var(--text); cursor: pointer; font-size: 11.5px; }
+  .tv-collapse-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* 三列网格：标签 200px | 轨道 1fr | 折钮 22px。泳道与明细共用，
+     明细图占轨道列，与所有泳道像素对齐 */
+  .tv-row-grid { display: grid; grid-template-columns: 200px minmax(0, 1fr) 22px; gap: 8px; align-items: center; }
+  .tv-lane { position: relative; }
+  .tv-lane-row { min-height: 26px; cursor: pointer; border-radius: 4px; padding: 1px 4px; }
+  .tv-lane-row:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .tv-lane + .tv-lane .tv-lane-row { border-top: 1px dashed color-mix(in srgb, var(--border) 55%, transparent); }
+  .tv-lane-label { display: flex; gap: 6px; align-items: center; font-size: 11px; min-width: 0; }
+  .tv-lane-label .d { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+  .tv-lane-label .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+  .tv-lane-label .cost { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tv-lane-track { position: relative; height: 16px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+  .tv-lane-track .seg { position: absolute; top: 0; bottom: 0; border-radius: 2px; min-width: 2px; }
+  .tv-lane-track .mk-spawn { position: absolute; top: 2px; bottom: 2px; width: 2px; background: var(--c-review); opacity: .9; }
+  .tv-lane-track .mk-wait { position: absolute; top: 5px; bottom: 5px; width: 2px; background: var(--soft); opacity: .9; }
+  .tv-lane-track .hatch { position: absolute; top: 0; bottom: 0; background: repeating-linear-gradient(45deg, transparent 0 3px, color-mix(in srgb, var(--text) 22%, transparent) 3px 6px); }
+  .tv-chevron { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 10px; padding: 2px; transition: transform .12s ease; }
+  .tv-chevron[aria-expanded="true"] { transform: rotate(90deg); color: var(--accent); }
+
+  /* 明细：与泳道同网格；左列放峰值刻度说明，轨道列放合并图（面积=毛输入，折线=上下文） */
+  .tv-detail { padding: 2px 4px 4px; border-top: 1px dotted color-mix(in srgb, var(--border) 45%, transparent); }
+  .tv-detail-caption { font-size: 9.5px; color: var(--muted); line-height: 1.35; padding-right: 6px; }
+  .tv-detail-caption .peak { font-variant-numeric: tabular-nums; color: var(--text); }
+  .tv-detail-chart { position: relative; }
+  .tv-detail-chart svg { display: block; width: 100%; height: 46px; }
+  .tv-readout { position: absolute; top: 0; right: 2px; font-size: 9.5px; color: var(--text); background: color-mix(in srgb, var(--pop) 85%, transparent); border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; pointer-events: none; display: none; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tv-modelswitch { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1.5px dashed var(--c-astra); z-index: 3; pointer-events: none; }
+  .tv-modelswitch .tag { position: absolute; top: -2px; left: 4px; font-size: 9.5px; color: var(--c-astra); white-space: nowrap; }
+  .tv-axis { display: grid; grid-template-columns: 200px minmax(0, 1fr) 22px; gap: 8px; padding: 0 12px 4px; }
+  .tv-axis-track { position: relative; height: 14px; font-size: 10.5px; color: var(--muted); }
+  .tv-axis-track span { position: absolute; transform: translateX(-50%); }
+  .tv-parallel { padding: 0 12px 8px; }
+  .tv-parallel .cap { font-size: 10.5px; color: var(--muted); margin-bottom: 2px; }
+  .tv-table { width: 100%; border-collapse: collapse; }
+  .tv-table th { text-align: left; font-size: 11px; font-weight: 500; color: var(--muted); padding: 6px 10px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .tv-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 11.5px; }
+  .tv-table tr:last-child td { border-bottom: 0; }
+  .tv-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tv-role { display: inline-flex; gap: 5px; align-items: center; font-size: 10.5px; padding: 1px 7px; border: 1px solid; border-radius: 999px; white-space: nowrap; }
+  .tv-total td { font-weight: 600; background: var(--surface-2); }
+  .tv-tip { position: absolute; z-index: 6; display: none; pointer-events: none; min-width: 200px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--pop); box-shadow: 0 6px 18px rgba(0,0,0,.28); font-size: 11px; }
+  #aw-trajectory-v2[data-theme="light"] .tv-tip { box-shadow: 0 6px 18px rgba(0,0,0,.14); }
+  .tv-tip .t { font-weight: 600; margin-bottom: 4px; }
+  .tv-tip-row { display: flex; gap: 8px; margin-top: 2px; }
+  .tv-tip-row .k { color: var(--muted); flex: 1; }
+  .tv-tip-row .x { font-variant-numeric: tabular-nums; }
+</style>
+
+<div class="tv-proto">
+  <span>原型控制</span>
+  <button type="button" id="tvLangBtn">EN</button>
+  <button type="button" id="tvThemeBtn" aria-pressed="false">&#x2600; / &#x263E;</button>
+</div>
+
+<div class="tv-window" role="application" aria-label="轨迹泳道 v2 原型">
+  <div class="tv-head">
+    <strong>会话分析 · 轨迹泳道</strong>
+    <span class="sub">Codex · adt-scene-agent · 10/20 12:18 – 15:04</span>
+    <span class="spring"></span>
+    <span class="sub">设计原型 v2.1（合并明细 · 对齐 · 刻度）</span>
+  </div>
+  <div class="tv-body">
+    <div class="tv-kpis" id="tvKpis"></div>
+
+    <div class="tv-panel">
+      <div class="tv-panel-head">
+        <strong>轨迹泳道</strong>
+        <span class="tv-note">点泳道展开合并明细（面积=毛输入 · 折线=上下文）；所有明细与泳道共用时间轴</span>
+        <span class="spring"></span>
+        <button type="button" class="tv-collapse-btn" id="tvSubToggle">子代理 27 条 · 合计 99M · 峰值并行 6 ▸</button>
+      </div>
+      <div class="tv-lanes" id="tvLanes" style="position:relative; padding: 2px 12px 10px;">
+        <div class="tv-tip" id="tvTip" role="tooltip"></div>
+      </div>
+      <div class="tv-axis" id="tvAxis"></div>
+      <div class="tv-parallel" id="tvParallel"></div>
+    </div>
+
+    <div class="tv-panel">
+      <div class="tv-panel-head">
+        <strong>子代理开销排行</strong>
+        <span class="tv-note">按毛输入排序 · 含效率（输出/毛输入）</span>
+        <span class="spring"></span>
+        <button type="button" class="tv-collapse-btn" id="tvRankToggle">展开 27 条 ▸</button>
+      </div>
+      <table class="tv-table">
+        <thead>
+          <tr>
+            <th>子代理</th><th>模型</th>
+            <th class="tv-num">毛输入</th><th class="tv-num">输出</th>
+            <th class="tv-num">效率</th><th class="tv-num">轮次</th>
+            <th class="tv-num">工具</th><th class="tv-num">活跃</th>
+          </tr>
+        </thead>
+        <tbody id="tvRows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var root = document.getElementById('aw-trajectory-v2');
+  if (!root) return;
+
+  var T0 = 4 * 60 + 18, T1 = 7 * 60 + 6;
+  function m(hhmm) { var p = hhmm.split(':'); return (+p[0]) * 60 + (+p[1]); }
+  function fmtT(ts) { var h = Math.floor(ts / 60), mm = Math.floor(ts % 60); return String(h).padStart(2, '0') + ':' + String(mm).padStart(2, '0'); }
+  var MODELS = { 'gpt-6.1-sol': '#75beff', 'gpt-6-astra': '#4ec9b0', 'codex-auto-review': '#d7ba7d' };
+  var C_CTX = '#c586c0';
+  var SWITCH_AT = m('6:36');
+
+  var WORKERS = [
+    { start: '4:19', end: '6:26', model: 'gpt-6.1-sol', inTok: 15027211, out: 46775, turns: 4, tools: 67 },
+    { start: '4:19', end: '6:25', model: 'gpt-6.1-sol', inTok: 14749769, out: 49775, turns: 4, tools: 73 },
+    { start: '4:19', end: '6:15', model: 'gpt-6.1-sol', inTok: 7859814, out: 20636, turns: 4, tools: 35 },
+    { start: '4:26', end: '4:26', model: 'gpt-6.1-sol', inTok: 105336, out: 1568, turns: 1, tools: 1 },
+    { start: '5:59', end: '6:01', model: 'gpt-6.1-sol', inTok: 1243002, out: 5211, turns: 6, tools: 14 },
+    { start: '6:27', end: '6:33', model: 'gpt-6.1-sol', inTok: 2036926, out: 23043, turns: 1, tools: 20 },
+    { start: '6:27', end: '6:34', model: 'gpt-6.1-sol', inTok: 2348413, out: 26873, turns: 1, tools: 23 },
+    { start: '6:27', end: '6:38', model: 'gpt-6.1-sol', inTok: 1592752, out: 31041, turns: 1, tools: 19 },
+    { start: '6:34', end: '6:43', model: 'gpt-6.1-sol', inTok: 5564328, out: 23268, turns: 1, tools: 38 },
+    { start: '6:36', end: '7:04', model: 'gpt-6-astra', inTok: 14460913, out: 36182, turns: 4, tools: 103 },
+    { start: '6:37', end: '7:05', model: 'gpt-6-astra', inTok: 7971501, out: 22667, turns: 4, tools: 66 },
+    { start: '6:43', end: '7:05', model: 'gpt-6-astra', inTok: 9649029, out: 34648, turns: 5, tools: 61 },
+    { start: '6:48', end: '6:53', model: 'gpt-6.1-sol', inTok: 1985228, out: 15413, turns: 1, tools: 21 },
+    { start: '6:48', end: '6:55', model: 'gpt-6.1-sol', inTok: 3499903, out: 17201, turns: 1, tools: 34 },
+    { start: '6:49', end: '6:54', model: 'gpt-6.1-sol', inTok: 3671393, out: 17405, turns: 1, tools: 25 },
+    { start: '6:53', end: '6:58', model: 'gpt-6.1-sol', inTok: 1272021, out: 14454, turns: 1, tools: 15 }
+  ];
+  var GUARDIANS = [
+    { start: '4:18', end: '6:03', inTok: 1128268, turns: 34 },
+    { start: '4:25', end: '4:25', inTok: 24714, turns: 5 },
+    { start: '6:11', end: '6:11', inTok: 25901, turns: 7 },
+    { start: '6:18', end: '6:25', inTok: 76053, turns: 10 },
+    { start: '6:28', end: '6:52', inTok: 4332016, turns: 63 },
+    { start: '6:28', end: '6:39', inTok: 895311, turns: 25 },
+    { start: '6:33', end: '7:10', inTok: 4124360, turns: 81 },
+    { start: '6:55', end: '7:04', inTok: 228542, turns: 15 },
+    { start: '6:54', end: '7:05', inTok: 176930, turns: 14 },
+    { start: '7:04', end: '7:04', inTok: 22934, turns: 5 }
+  ];
+  var SPAWNS = ['4:19','4:19','4:19','4:26','5:59','6:27','6:27','6:27','6:34','6:36','6:37','6:43','6:48','6:48','6:49','6:53'].map(m);
+  var WAITS = ['4:26','6:01','6:33','6:34','6:38','6:43','6:53','6:54','6:55','6:58','6:59','7:00','7:02','7:04','7:05'].map(m);
+
+  function rng(seed) {
+    return function () {
+      seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+      var t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function usageSeries(startM, endM, total, buckets, seed) {
+    var r = rng(seed);
+    var weights = [], sum = 0;
+    for (var i = 0; i < buckets; i++) { var w = 0.25 + r(); weights.push(w); sum += w; }
+    var span = Math.max(1, endM - startM);
+    return weights.map(function (w, i) {
+      return { t: startM + span * (i + 0.5) / buckets, v: total * w / sum };
+    });
+  }
+  function ctxSeries(startM, endM, seed, peak) {
+    var r = rng(seed + 77);
+    var points = [];
+    var span = Math.max(1, endM - startM);
+    var n = Math.max(4, Math.min(14, Math.round(span / 8)));
+    var level = peak * 0.3;
+    for (var i = 0; i <= n; i++) {
+      level = Math.min(peak, level + peak * 0.08 + r() * peak * 0.12);
+      if (r() > 0.88) level = peak * 0.35;
+      points.push({ t: startM + span * i / n, v: level });
+    }
+    return points;
+  }
+  function fmt(v) {
+    if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+    if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+    if (v >= 1e3) return (v / 1e3).toFixed(0) + 'k';
+    return String(Math.round(v));
+  }
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+  function pct(t) { return (t - T0) / (T1 - T0); }
+
+  var state = { lang: 'zh', theme: 'dark', subOpen: false, rankOpen: false, expanded: { parent: true } };
+  try {
+    var saved = window.zcode && window.zcode.widgetState && window.zcode.widgetState.privateContent;
+    if (saved && typeof saved === 'object') {
+      if (saved.lang === 'zh' || saved.lang === 'en') state.lang = saved.lang;
+      if (saved.theme === 'dark' || saved.theme === 'light') state.theme = saved.theme;
+    }
+  } catch (e) { /* optional */ }
+  function persist() {
+    try { if (window.zcode && window.zcode.setWidgetState) window.zcode.setWidgetState({ privateContent: { lang: state.lang, theme: state.theme } }).catch(function () {}); } catch (e) {}
+  }
+
+  function kpis() {
+    var wIn = WORKERS.reduce(function (a, w) { return a + w.inTok; }, 0);
+    var gIn = GUARDIANS.reduce(function (a, g) { return a + g.inTok; }, 0);
+    var zh = state.lang === 'zh';
+    var cards = [
+      { k: zh ? '主代理' : 'Main agent', v: 'gpt-6.1-sol', s: '326 calls' },
+      { k: zh ? '派生子代理' : 'Spawned workers', v: '16', s: zh ? 'worker · 2 种模型' : 'worker · 2 models' },
+      { k: zh ? 'guardian 审查' : 'Guardian reviews', v: '10', s: 'codex-auto-review' },
+      { k: zh ? '并行峰值' : 'Peak parallel', v: '6', s: zh ? '06:49 前后' : 'around 06:49' },
+      { k: zh ? '子代理合计毛输入' : 'Subagent total input', v: fmt(wIn + gIn), s: fmt(wIn) + ' + ' + fmt(gIn) }
+    ];
+    document.getElementById('tvKpis').innerHTML = cards.map(function (c) {
+      return '<div class="tv-kpi"><div class="k">' + esc(c.k) + '</div><div class="tv-kpi v">' + esc(c.v) + '</div>' + (c.s ? '<div class="s">' + esc(c.s) + '</div>' : '') + '</div>';
+    }).join('');
+  }
+
+  // 合并明细图：面积=毛输入（模型色），折线=上下文（紫），双归一化。
+  // viewBox 固定，x 全域映射，preserveAspectRatio=none 拉伸铺满轨道列 → 与泳道/彼此像素对齐。
+  // 内含 30 分钟时间刻度、模型切换参考线、悬停游标读数。
+  function mergedDetailSvg(agent, seed, plotLeft, plotRight) {
+    var W = 320, H = 46, padT = 3, padB = 3;
+    var startM = m(agent.start), endM = m(agent.end);
+    var usage = usageSeries(startM, endM, agent.inTok, 12, seed);
+    var ctxPeak = agent.inTok > 1e7 ? 190000 : 140000;
+    var ctx = ctxSeries(startM, endM, seed, ctxPeak);
+    var maxU = Math.max.apply(null, usage.map(function (p) { return p.v; })) || 1;
+    var xOf = function (t) { return pct(t) * W; };
+    var yU = function (v) { return padT + (1 - v / maxU) * (H - padT - padB); };
+    var yC = function (v) { return padT + (1 - v / ctxPeak) * (H - padT - padB); };
+
+    var usagePts = usage.map(function (p) { return xOf(p.t).toFixed(1) + ',' + yU(p.v).toFixed(1); });
+    var area = 'M0,' + (H - padB) + ' L' + usagePts.join(' L') + ' L' + W + ',' + (H - padB) + ' Z';
+    var ctxPath = 'M' + ctx.map(function (p) { return xOf(p.t).toFixed(1) + ',' + yC(p.v).toFixed(1); }).join(' L');
+
+    var ticks = '';
+    for (var ts = 4 * 60 + 10; ts <= 7 * 60 + 6; ts += 10) {
+      var isMajor = (ts - 30) % 30 === 0;
+      var x = xOf(ts);
+      ticks += '<line x1="' + x.toFixed(1) + '" x2="' + x.toFixed(1) + '" y1="' + padT + '" y2="' + (H - padB) + '" stroke="var(--border)" stroke-width="0.4" vector-effect="non-scaling-stroke" opacity="' + (isMajor ? 0.4 : 0.18) + '"/>';
+    }
+    var swX = xOf(SWITCH_AT);
+    var model = MODELS[agent.model] || '#75beff';
+    return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="false">' +
+      ticks +
+      '<path d="' + area + '" fill="' + model + '" fill-opacity="0.4" stroke="' + model + '" stroke-width="0.7" vector-effect="non-scaling-stroke"/>' +
+      '<path d="' + ctxPath + '" fill="none" stroke="' + C_CTX + '" stroke-width="0.9" vector-effect="non-scaling-stroke"/>' +
+      '<line x1="' + swX.toFixed(1) + '" x2="' + swX.toFixed(1) + '" y1="' + padT + '" y2="' + (H - padB) + '" stroke="#4ec9b0" stroke-width="0.7" vector-effect="non-scaling-stroke" stroke-dasharray="3 3" opacity="0.7"/>' +
+      '</svg>';
+  }
+
+  function detailHtml(agent, seed) {
+    var zh = state.lang === 'zh';
+    var maxU = fmt(agent.inTok / 12 * 2);
+    var ctxPeak = agent.inTok > 1e7 ? '190k' : '140k';
+    var caption = zh
+      ? '面积=输入 · 线=上下文<br><span class="peak">峰 ' + maxU + ' / ' + ctxPeak + '</span>'
+      : 'area=input · line=ctx<br><span class="peak">pk ' + maxU + ' / ' + ctxPeak + '</span>';
+    return '<div class="tv-detail tv-row-grid">' +
+      '<div class="tv-detail-caption">' + caption + '</div>' +
+      '<div class="tv-detail-chart" data-seed="' + seed + '" data-start="' + agent.start + '" data-end="' + agent.end + '" data-intok="' + agent.inTok + '">' +
+      mergedDetailSvg(agent, seed) +
+      '<div class="tv-readout"></div>' +
+      '</div><div></div></div>';
+  }
+
+  function laneSegPct(start, end) {
+    var l = pct(start) * 100;
+    var w = Math.max(0.35, pct(end) * 100 - l);
+    return 'left:' + l.toFixed(2) + '%;width:' + w.toFixed(2) + '%';
+  }
+
+  function renderLanes() {
+    var host = document.getElementById('tvLanes');
+    // 明细嵌在泳道节点内：整lane重建，天然无残留
+    host.querySelectorAll('.tv-lane, .tv-modelswitch').forEach(function (n) { n.remove(); });
+    var html = '';
+    var swLeft = pct(SWITCH_AT) * 100;
+    html += '<div class="tv-modelswitch" style="left:calc(216px + (100% - 246px) * ' + (swLeft / 100).toFixed(4) + ')"><span class="tag">' + (state.lang === 'zh' ? '06:36 派发模型 → gpt-6-astra' : '06:36 spawn model → gpt-6-astra') + '</span></div>';
+
+    var parentOpen = !!state.expanded.parent;
+    html += '<div class="tv-lane" data-lane="parent">' +
+      '<div class="tv-lane-row tv-row-grid">' +
+      '<div class="tv-lane-label"><span class="d" style="background:' + MODELS['gpt-6.1-sol'] + '"></span><span class="name">' + (state.lang === 'zh' ? '主代理 · gpt-6.1-sol' : 'Main · gpt-6.1-sol') + '</span></div>' +
+      '<div class="tv-lane-track">' +
+      '<span class="seg" style="' + laneSegPct(m('4:18'), m('7:04')) + ';background:' + MODELS['gpt-6.1-sol'] + '"></span>' +
+      '<span class="hatch" style="' + laneSegPct(m('6:27'), m('6:34')) + '"></span>' +
+      '<span class="hatch" style="' + laneSegPct(m('6:48'), m('6:56')) + '"></span>' +
+      SPAWNS.map(function (s) { return '<span class="mk-spawn" style="left:' + (pct(s) * 100).toFixed(2) + '%"></span>'; }).join('') +
+      WAITS.map(function (s) { return '<span class="mk-wait" style="left:' + (pct(s) * 100).toFixed(2) + '%"></span>'; }).join('') +
+      '</div>' +
+      '<button type="button" class="tv-chevron" aria-expanded="' + parentOpen + '" aria-label="expand">&#x25B6;</button>' +
+      '</div>' +
+      (parentOpen ? detailHtml({ start: '4:18', end: '7:04', model: 'gpt-6.1-sol', inTok: 9253263 }, 1) : '') +
+      '</div>';
+
+    if (state.subOpen) {
+      var sorted = WORKERS.slice().sort(function (a, b) { return m(a.start) - m(b.start); });
+      sorted.forEach(function (w, i) {
+        var open = !!state.expanded['w' + i];
+        html += '<div class="tv-lane" data-lane="w' + i + '">' +
+          '<div class="tv-lane-row tv-row-grid">' +
+          '<div class="tv-lane-label"><span class="d" style="background:' + MODELS[w.model] + '"></span><span class="name">worker #' + (i + 1) + '</span><span class="cost">' + fmt(w.inTok) + '</span></div>' +
+          '<div class="tv-lane-track"><span class="seg" data-worker="' + i + '" style="' + laneSegPct(m(w.start), m(w.end)) + ';background:' + MODELS[w.model] + '"></span></div>' +
+          '<button type="button" class="tv-chevron" aria-expanded="' + open + '" aria-label="expand">&#x25B6;</button>' +
+          '</div>' +
+          (open ? detailHtml(w, 100 + i) : '') +
+          '</div>';
+      });
+      var gIn = GUARDIANS.reduce(function (a, g) { return a + g.inTok; }, 0);
+      html += '<div class="tv-lane" data-lane="guardians">' +
+        '<div class="tv-lane-row tv-row-grid">' +
+        '<div class="tv-lane-label"><span class="d" style="background:' + MODELS['codex-auto-review'] + '"></span><span class="name">' + (state.lang === 'zh' ? 'guardian 审查者' : 'Guardian reviewers') + ' ×10</span><span class="cost">' + fmt(gIn) + '</span></div>' +
+        '<div class="tv-lane-track">' + GUARDIANS.map(function (g) {
+          return '<span class="seg" style="' + laneSegPct(m(g.start), m(g.end)) + ';background:' + MODELS['codex-auto-review'] + '"></span>';
+        }).join('') + '</div>' +
+        '<span></span></div></div>';
+    }
+    host.insertAdjacentHTML('beforeend', html);
+    wireLaneEvents();
+  }
+
+  function wireLaneEvents() {
+    root.querySelectorAll('.tv-lane-row').forEach(function (row) {
+      row.onclick = function () {
+        var lane = row.closest('.tv-lane');
+        var id = lane.getAttribute('data-lane');
+        if (id === 'guardians') return;
+        state.expanded[id] = !state.expanded[id];
+        renderLanes();
+      };
+    });
+    // 合并明细图悬停：任意时刻的输入/上下文读数
+    root.querySelectorAll('.tv-detail-chart').forEach(function (chart) {
+      var readout = chart.querySelector('.tv-readout');
+      var seed = parseInt(chart.getAttribute('data-seed'), 10);
+      var startM = m(chart.getAttribute('data-start'));
+      var endM = m(chart.getAttribute('data-end'));
+      var inTok = parseFloat(chart.getAttribute('data-intok'));
+      var usage = usageSeries(startM, endM, inTok, 12, seed);
+      var ctxPeak = inTok > 1e7 ? 190000 : 140000;
+      var ctx = ctxSeries(startM, endM, seed, ctxPeak);
+      chart.onmousemove = function (ev) {
+        var rect = chart.getBoundingClientRect();
+        var frac = Math.max(0, Math.min(1, (ev.clientX - rect.left) / Math.max(1, rect.width)));
+        var ts = T0 + frac * (T1 - T0);
+        var nearestUsage = usage.reduce(function (a, p) { return Math.abs(p.t - ts) < Math.abs(a.t - ts) ? p : a; }, usage[0]);
+        var nearestCtx = ctx.reduce(function (a, p) { return Math.abs(p.t - ts) < Math.abs(a.t - ts) ? p : a; }, ctx[0]);
+        readout.textContent = fmtT(ts) + '  输入 ' + fmt(nearestUsage.v) + ' · 上下文 ' + fmt(nearestCtx.v);
+        readout.style.display = 'block';
+      };
+      chart.onmouseleave = function () { readout.style.display = 'none'; };
+    });
+    // 泳道 seg 悬停
+    var tip = document.getElementById('tvTip');
+    root.querySelectorAll('.seg[data-worker]').forEach(function (seg) {
+      seg.onmousemove = function () {
+        var i = parseInt(seg.getAttribute('data-worker'), 10);
+        var sorted = WORKERS.slice().sort(function (a, b) { return m(a.start) - m(b.start); });
+        var w = sorted[i];
+        if (!w) return;
+        tip.innerHTML = '<div class="t">worker</div>' +
+          '<div class="tv-tip-row"><span class="k">model</span><span class="x">' + w.model + '</span></div>' +
+          '<div class="tv-tip-row"><span class="k">span</span><span class="x">' + w.start + ' – ' + w.end + '</span></div>' +
+          '<div class="tv-tip-row"><span class="k">in / out</span><span class="x">' + fmt(w.inTok) + ' / ' + fmt(w.out) + '</span></div>' +
+          '<div class="tv-tip-row"><span class="k">tools</span><span class="x">' + w.tools + '</span></div>';
+        tip.style.display = 'block';
+        var host = document.getElementById('tvLanes');
+        var rect = host.getBoundingClientRect();
+        var sr = seg.getBoundingClientRect();
+        var x = Math.max(2, Math.min(sr.left - rect.left + sr.width / 2 - 100, rect.width - 220));
+        tip.style.left = x + 'px';
+        tip.style.top = Math.max(2, sr.top - rect.top - 6) + 'px';
+      };
+      seg.onmouseleave = function () { tip.style.display = 'none'; };
+    });
+  }
+
+  function renderAxis() {
+    var ticks = [];
+    for (var ts = 4 * 60 + 30; ts <= 7 * 60; ts += 30) {
+      ticks.push('<span style="left:' + (pct(ts) * 100).toFixed(2) + '%">' + fmtT(ts) + '</span>');
+    }
+    document.getElementById('tvAxis').innerHTML = '<div></div><div class="tv-axis-track">' + ticks.join('') + '</div><div></div>';
+  }
+
+  function renderParallel() {
+    var W = 560, H = 34;
+    var pts = [];
+    for (var ts = T0; ts <= T1; ts += 2) {
+      var active = WORKERS.filter(function (w) { return m(w.start) <= ts && ts <= m(w.end); }).length;
+      pts.push({ t: ts, v: active });
+    }
+    var maxV = Math.max.apply(null, pts.map(function (p) { return p.v; })) || 1;
+    var d = pts.map(function (p, i) {
+      var x = pct(p.t) * W;
+      var y = 4 + (1 - p.v / maxV) * (H - 10);
+      return (i ? 'L' : 'M') + x.toFixed(1) + ',' + y.toFixed(1);
+    }).join(' ');
+    var cap = state.lang === 'zh' ? '并行子代理数随时间（浪涌节奏 · 峰值 ' + maxV + '）' : 'Active workers over time (peak ' + maxV + ')';
+    document.getElementById('tvParallel').innerHTML = '<div class="cap">' + cap + '</div>' +
+      '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="display:block;width:100%">' +
+      '<path d="M0,' + (H - 6) + ' ' + d.replace(/^M/, 'L') + ' L' + W + ',' + (H - 6) + ' Z" fill="var(--accent)" fill-opacity="0.25"/>' +
+      '<path d="' + d + '" fill="none" stroke="var(--accent)" stroke-width="1.3"/></svg>';
+  }
+
+  function renderRows() {
+    var all = [];
+    WORKERS.forEach(function (w, i) { all.push({ kind: 'worker', idx: i, model: w.model, inTok: w.inTok, out: w.out, turns: w.turns, tools: w.tools, start: m(w.start), end: m(w.end) }); });
+    GUARDIANS.forEach(function (g, i) { all.push({ kind: 'guardian', idx: i, model: 'codex-auto-review', inTok: g.inTok, out: null, turns: g.turns, tools: 0, start: m(g.start), end: m(g.end) }); });
+    all.sort(function (a, b) { return b.inTok - a.inTok; });
+    var zh = state.lang === 'zh';
+    var rows = [];
+    if (!state.rankOpen) {
+      var totalIn = all.reduce(function (s, a) { return s + a.inTok; }, 0);
+      var top = all[0];
+      rows.push('<tr class="tv-total"><td>' + (zh ? '27 条 · 最高一条' : '27 rows · top') + '</td><td>' + top.model + '</td>' +
+        '<td class="tv-num">' + fmt(top.inTok) + '</td><td class="tv-num">' + fmt(top.out || 0) + '</td><td colspan="4"></td></tr>');
+      rows.push('<tr class="tv-total"><td>' + (zh ? '合计' : 'Total') + '</td><td></td><td class="tv-num">' + fmt(totalIn) + '</td><td colspan="5"></td></tr>');
+    } else {
+      rows = all.map(function (a) {
+        var color = MODELS[a.model];
+        var eff = a.out ? (a.out / a.inTok * 100).toFixed(2) + '%' : '—';
+        return '<tr><td><span class="tv-role" style="color:' + color + ';border-color:' + color + '">' + a.kind + ' ' + (a.idx + 1) + '</span></td>' +
+          '<td>' + a.model + '</td><td class="tv-num">' + fmt(a.inTok) + '</td>' +
+          '<td class="tv-num">' + (a.out != null ? fmt(a.out) : '—') + '</td>' +
+          '<td class="tv-num">' + eff + '</td><td class="tv-num">' + a.turns + '</td>' +
+          '<td class="tv-num">' + (a.tools || '—') + '</td>' +
+          '<td class="tv-num">' + fmtT(a.start) + '–' + fmtT(a.end) + '</td></tr>';
+      });
+      var totalIn2 = all.reduce(function (s, a) { return s + a.inTok; }, 0);
+      var totalOut = all.reduce(function (s, a) { return s + (a.out || 0); }, 0);
+      rows.push('<tr class="tv-total"><td>' + (zh ? '合计' : 'Total') + '</td><td></td><td class="tv-num">' + fmt(totalIn2) + '</td><td class="tv-num">' + fmt(totalOut) + '</td><td class="tv-num">' + (totalOut / totalIn2 * 100).toFixed(2) + '%</td><td colspan="3"></td></tr>');
+    }
+    document.getElementById('tvRows').innerHTML = rows.join('');
+  }
+
+  function renderToggles() {
+    var zh = state.lang === 'zh';
+    document.getElementById('tvSubToggle').textContent = state.subOpen
+      ? (zh ? '收起子代理 ▾' : 'Collapse subagents ▾')
+      : (zh ? '子代理 27 条 · 合计 99M · 峰值并行 6 ▸' : '27 subagents · 99M total · peak 6 ▸');
+    document.getElementById('tvRankToggle').textContent = state.rankOpen
+      ? (zh ? '收起 ▾' : 'Collapse ▾')
+      : (zh ? '展开 27 条 ▸' : 'Expand 27 rows ▸');
+  }
+
+  function render() {
+    root.setAttribute('data-theme', state.theme);
+    root.setAttribute('data-lang', state.lang);
+    document.getElementById('tvLangBtn').textContent = state.lang === 'zh' ? 'EN' : '中文';
+    document.getElementById('tvThemeBtn').setAttribute('aria-pressed', state.theme === 'light' ? 'true' : 'false');
+    kpis(); renderLanes(); renderAxis(); renderParallel(); renderRows(); renderToggles();
+  }
+
+  document.getElementById('tvLangBtn').onclick = function () { state.lang = state.lang === 'zh' ? 'en' : 'zh'; persist(); render(); };
+  document.getElementById('tvThemeBtn').onclick = function () { state.theme = state.theme === 'dark' ? 'light' : 'dark'; persist(); render(); };
+  document.getElementById('tvSubToggle').onclick = function () { state.subOpen = !state.subOpen; render(); };
+  document.getElementById('tvRankToggle').onclick = function () { state.rankOpen = !state.rankOpen; render(); };
+
+  render();
+})();
+</script>
+</div>
+
+</body>
+</html>

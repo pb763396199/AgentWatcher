@@ -1,0 +1,203 @@
+{
+  "schema_version": 1,
+  "protocol": "1.3.0",
+  "generated_at": "2026-10-24T07:11:07Z",
+  "generated_by": {
+    "tool_revision": "awf-0.1.0"
+  },
+  "work_item": {
+    "id": "wi_3KXFZQMQ9AH2XQ8PGQBW299E2P",
+    "short_id": "qk0rzhqz",
+    "slug": "会话分析统计面板",
+    "title": "会话分析统计面板",
+    "kind": "feature",
+    "status": "in_review",
+    "branch": "feature/会话分析统计面板",
+    "home_repository": "file://F:\\AiProject\\AgentWatcher",
+    "contract_digest": "sha256:3d9399399dc2ba070fc3f50d89a89b3cbd3655a22f1980b16c15899a6bc02fbc",
+    "acceptance_ids": [
+      "AC-001",
+      "AC-002",
+      "AC-003",
+      "AC-004",
+      "AC-005",
+      "AC-006",
+      "AC-007",
+      "AC-008",
+      "AC-101",
+      "AC-102",
+      "AC-103",
+      "AC-104",
+      "AC-105",
+      "AC-106",
+      "AC-107"
+    ]
+  },
+  "artifacts": [
+    {
+      "artifact_id": "ar_1HPPZXVZT7G2H0XFHPE092TTGY",
+      "type": "change-note",
+      "path": "change-note.md",
+      "outcome": "draft",
+      "freshness": "stale-contract",
+      "stage": 45,
+      "depends_on": [
+        "ar_4BNZYPTFCZ2947619P78B2X5ZY"
+      ]
+    },
+    {
+      "artifact_id": "ar_7SX5YVXYHQXB8QGCZJ2FXE2D9D",
+      "type": "delivery",
+      "path": "delivery.md",
+      "outcome": "ready_to_land",
+      "freshness": "stale-upstream",
+      "stage": 80,
+      "depends_on": [
+        "ar_3DYNYVZVSFWG2H6NW61MKVSGH9"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M4W5SNZM000D2NJH05DYPT3N",
+      "type": "design",
+      "path": "design.md",
+      "outcome": "proposed",
+      "freshness": "stale-contract",
+      "stage": 20,
+      "depends_on": [
+        "ar_01M2HX0EEVEXZEF3NZYTJFG22H"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M5C2P0V40002V014NCMW2GEC",
+      "type": "design",
+      "path": "design/agent-trajectory-design-v2.md",
+      "outcome": "accepted",
+      "freshness": "stale-contract",
+      "stage": 20,
+      "depends_on": [
+        "ar_01M5C2MDZ5000D571EWBPNCG2V"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M5C2MDZ5000D571EWBPNCG2V",
+      "type": "design",
+      "path": "design/agent-trajectory-design.md",
+      "outcome": "superseded",
+      "freshness": "superseded",
+      "stage": 20,
+      "depends_on": [
+        "ar_01M4W7K8S60002YW4JZC6E9A5E"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M4W7K8S60002YW4JZC6E9A5E",
+      "type": "design",
+      "path": "design/session-lifecycle-design.md",
+      "outcome": "accepted",
+      "freshness": "stale-contract",
+      "stage": 20,
+      "depends_on": [
+        "ar_01M2HX0EEVEXZEF3NZYTJFG22H"
+      ]
+    },
+    {
+      "artifact_id": "ar_1FNXZNBZFFDWAMW4WC06E51AVC",
+      "type": "implementation",
+      "path": "implementation.md",
+      "outcome": "complete",
+      "freshness": "stale-contract",
+      "stage": 50,
+      "depends_on": [
+        "ar_1HPPZXVZT7G2H0XFHPE092TTGY"
+      ]
+    },
+    {
+      "artifact_id": "ar_3VQFQZVZBZ1KS97P64WE8RXKXC",
+      "type": "manual-test",
+      "path": "manual-test.md",
+      "outcome": "passed",
+      "freshness": "fresh",
+      "stage": 70,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_4BNZYPTFCZ2947619P78B2X5ZY",
+      "type": "plan",
+      "path": "plan.md",
+      "outcome": "ready",
+      "freshness": "stale-contract",
+      "stage": 30,
+      "depends_on": [
+        "ar_01M4W7K8S60002YW4JZC6E9A5E"
+      ]
+    },
+    {
+      "artifact_id": "ar_75XNYVZNFZ2XQCRNQRAKRCVWDM",
+      "type": "review",
+      "path": "reviews/code-review.md",
+      "outcome": "approved",
+      "freshness": "fresh",
+      "stage": 60,
+      "depends_on": [
+        "ar_1FNXZNBZFFDWAMW4WC06E51AVC"
+      ]
+    },
+    {
+      "artifact_id": "ar_2HYWZQVZHVX0843QJN1EDJ7H41",
+      "type": "summary",
+      "path": "summary.md",
+      "outcome": "complete",
+      "freshness": "stale-contract",
+      "stage": 55,
+      "depends_on": [
+        "ar_1FNXZNBZFFDWAMW4WC06E51AVC"
+      ]
+    },
+    {
+      "artifact_id": "ar_3DYNYVZVSFWG2H6NW61MKVSGH9",
+      "type": "validation",
+      "path": "validation.md",
+      "outcome": "passed",
+      "freshness": "fresh",
+      "stage": 70,
+      "depends_on": [
+        "ar_1FNXZNBZFFDWAMW4WC06E51AVC"
+      ]
+    }
+  ],
+  "wayfinder": null,
+  "manual_test": {
+    "passed": 9,
+    "open": 2,
+    "failed": 0
+  },
+  "stage": {
+    "reached": "validation",
+    "reached_stage": 70,
+    "next_skill": "aes-finish",
+    "waiting_on": "human"
+  },
+  "next": "等人测：人工核对还有 2 条没测",
+  "computed_from": {
+    "documents": {
+      "change-note.md": "sha256:7a688391f8e83114e2edc5583113e50d6c9d15cb3fa3a3c0423a86b920ec1c80",
+      "delivery.md": "sha256:6203b189b32a504d3f564fd373d8ee54a4f7e3b73161d5ef71db503b6e960cd0",
+      "design.md": "sha256:bf7dff96123207dc7923dd6936a5d430db0877dc6e2df94a00701b99945ad07c",
+      "design/agent-trajectory-design-v2.md": "sha256:2bb790badeba565fc89e6b328615e5cb4eb40343d4bdf025282cdcae72545c79",
+      "design/agent-trajectory-design.md": "sha256:6abe813e587d24f8d7b9535c94ca41a480829948156afb71de9b7e0cb3749374",
+      "design/session-lifecycle-design.md": "sha256:9263ad2cf5daa7e06ad62cc76191e94bbba8c77ce848e8618e644db63440acc6",
+      "implementation.md": "sha256:9387fff6b4cb29b077ebef756e62332e47366d18de2a57c9c90d8306ebdde501",
+      "manual-test.md": "sha256:106e1f27b95dd1a7a35ad46eccc1584636b7cc3c6f18a79341b00c6e29452b63",
+      "plan.md": "sha256:b310002ade7fc634f58ac47d70c3909b1ebfae1ad38e823aa48a053548a61342",
+      "reviews/code-review.md": "sha256:15f3f4632f066ec5ef57ee9dda0ca8c3a84ec2fa3694710558804327bf5bc695",
+      "summary.md": "sha256:eb770189b766d8fa7680063e47c9577b7f1da8c680e41e36eebf0342bd966cd3",
+      "validation.md": "sha256:93844f8525752ed8c1556e4b90365f9effa377eac9c68c792a3e3bbda46d53b8",
+      "work-item.md": "sha256:b5015634546de967f9f2c5781e8ad7a0a5be7e53b438bfcc0913ff72d9c7654d"
+    },
+    "change_set": {
+      "revision": "916792074160f2a5ebf7a7699d08fbe7f3667dc0",
+      "tree": "aedef9176a0a93c214fd45b9f40ff3defa4982ad",
+      "content_digest": "sha256:ffd7b1adcaa56d3f41f4778d1f5216c16a3ca1db65a86be4d726468b732f139c"
+    }
+  }
+}

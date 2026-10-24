@@ -1,0 +1,785 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentWatcher 单会话生命周期分析 · 原型稿</title>
+<style>
+  html, body { margin: 0; padding: 16px; background: #1b1b1b; }
+  body { min-height: 100vh; }
+  @media (prefers-color-scheme: light) { html, body { background: #ececec; } }
+</style>
+</head>
+<body>
+<div id="aw-lifecycle-mockup" data-theme="dark" data-lang="zh">
+<style>
+  #aw-lifecycle-mockup {
+    --surface: #202020; --surface-2: #252526; --surface-3: #2d2d30;
+    --border: #3c3c3c; --text: #d4d4d4; --muted: #9a9a9a; --soft: #6f6f6f;
+    --accent: #0078d4; --focus: #0e639c; --card: #1f1f1f; --pop: #1f1f1f;
+    --c-gh: #4ec9b0; --c-cli: #4fb3d8; --c-cl: #ce9178; --c-cx: #75beff;
+    --c-oc: #d7ba7d; --c-zc: #c586c0;
+    font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 13px; color: var(--text); line-height: 1.45;
+  }
+  #aw-lifecycle-mockup[data-theme="light"] {
+    --surface: #f8f8f8; --surface-2: #ffffff; --surface-3: #eeeeee;
+    --border: #d0d0d0; --text: #1f1f1f; --muted: #616161; --soft: #767676;
+    --card: #ffffff; --pop: #ffffff;
+  }
+  #aw-lifecycle-mockup * { box-sizing: border-box; }
+  #aw-lifecycle-mockup button { font-family: inherit; }
+
+  .lw-proto-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 0 2px 10px; color: var(--muted); font-size: 12px; }
+  .lw-proto-btn { padding: 3px 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface-2); color: var(--text); cursor: pointer; font-size: 12px; }
+  .lw-proto-btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  .lw-window { max-width: 980px; margin: 0 auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); overflow: hidden; box-shadow: 0 12px 34px rgba(0,0,0,.32); }
+  .lw-head { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); user-select: none; }
+  .lw-head .lw-title { font-size: 12px; font-weight: 600; letter-spacing: .02em; }
+  .lw-head .lw-sub { font-size: 11px; color: var(--muted); }
+  .lw-head .lw-spring { flex: 1; }
+  .lw-win-btn { width: 24px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; }
+  .lw-win-btn:hover { background: var(--surface-3); color: var(--text); }
+  .lw-win-btn.lw-close:hover { background: #c42b1c; color: #fff; }
+
+  .lw-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px 0; }
+  .lw-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .lw-seg button { padding: 4px 12px; border: 0; background: var(--surface-2); color: var(--muted); cursor: pointer; font-size: 12px; }
+  .lw-seg button + button { border-left: 1px solid var(--border); }
+  .lw-seg button[aria-pressed="true"] { background: var(--focus); color: #fff; }
+  .lw-updated { margin-left: auto; font-size: 11px; color: var(--soft); white-space: nowrap; }
+
+  .lw-body { padding: 10px 12px 12px; display: grid; gap: 10px; }
+
+  .lw-identity { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; padding: 2px 2px 0; }
+  .lw-id-main { min-width: 0; flex: 1; }
+  .lw-id-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+  .lw-badge { display: inline-flex; align-items: center; gap: 5px; flex: none; font-size: 10px; padding: 1px 7px; border: 1px solid; border-radius: 999px; white-space: nowrap; }
+  .lw-id-title { font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+  .lw-id-meta { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 3px; font-size: 11.5px; color: var(--muted); }
+  .lw-id-meta .lw-status { display: inline-flex; align-items: center; gap: 5px; }
+  .lw-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .lw-model-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .lw-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); color: var(--text); cursor: pointer; font-size: 11.5px; }
+  .lw-chip .lw-swatch { width: 9px; height: 9px; border-radius: 2px; }
+  .lw-chip[aria-pressed="false"] { opacity: .45; }
+  .lw-chip b { font-weight: 500; color: var(--muted); }
+
+  .lw-cards { display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); gap: 8px; }
+  @media (max-width: 860px) { .lw-cards { grid-template-columns: repeat(4, minmax(0,1fr)); } }
+  @media (max-width: 620px) { .lw-cards { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+  .lw-stat { border: 1px solid var(--border); border-radius: 6px; background: var(--card); padding: 8px 10px; min-width: 0; }
+  .lw-stat .lw-k { font-size: 11px; color: var(--muted); margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lw-stat .lw-v { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .lw-stat .lw-s { font-size: 11px; color: var(--soft); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .lw-panel { border: 1px solid var(--border); border-radius: 6px; background: var(--card); overflow: hidden; }
+  .lw-panel-head { display: flex; align-items: baseline; gap: 8px; padding: 10px 12px 6px; }
+  .lw-panel-title { font-size: 13px; font-weight: 600; }
+  .lw-panel-note { font-size: 11px; color: var(--muted); }
+  .lw-chartbox { position: relative; padding: 0 8px 6px; }
+  .lw-tip { position: absolute; z-index: 5; pointer-events: none; display: none; min-width: 190px; max-width: 260px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--pop); box-shadow: 0 6px 18px rgba(0,0,0,.28); font-size: 11px; }
+  #aw-lifecycle-mockup[data-theme="light"] .lw-tip { box-shadow: 0 6px 18px rgba(0,0,0,.14); }
+  .lw-tip .lw-tip-t { font-weight: 600; margin-bottom: 4px; }
+  .lw-tip-row { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+  .lw-tip-row .lw-d { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+  .lw-tip-row .lw-n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lw-tip-row .lw-x { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .lw-comp-tag { position: absolute; z-index: 4; font-size: 10.5px; color: var(--muted); background: var(--pop); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; pointer-events: none; }
+
+  .lw-breakdown { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+  @media (max-width: 760px) { .lw-breakdown { grid-template-columns: 1fr; } }
+  .lw-bd { border: 1px solid var(--border); border-radius: 6px; background: var(--card); padding: 10px 12px; min-width: 0; }
+  .lw-bd-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+  .lw-segbar { display: flex; height: 10px; border-radius: 3px; overflow: hidden; background: var(--surface-3); }
+  .lw-segbar span { display: block; height: 100%; }
+  .lw-bd-list { margin-top: 8px; display: grid; gap: 4px; }
+  .lw-bd-row { display: flex; align-items: center; gap: 7px; font-size: 11.5px; min-width: 0; }
+  .lw-bd-row .lw-d { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+  .lw-bd-row .lw-n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lw-bd-row .lw-x { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted); }
+  .lw-tool-row { display: grid; grid-template-columns: minmax(60px, 90px) 1fr 48px; align-items: center; gap: 8px; font-size: 11.5px; margin-top: 5px; }
+  .lw-tool-row .lw-tn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lw-tool-track { height: 8px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
+  .lw-tool-fill { height: 100%; background: var(--accent); }
+  .lw-tool-row .lw-tc { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .lw-bd-note { margin-top: 8px; font-size: 11px; color: var(--soft); }
+  .lw-na { color: var(--soft); }
+</style>
+
+<div class="lw-proto-bar">
+  <span data-i18n="protoBar">原型控制</span>
+  <button type="button" class="lw-proto-btn" id="lwLangBtn">EN</button>
+  <button type="button" class="lw-proto-btn" id="lwThemeBtn" aria-pressed="false">&#x2600; / &#x263E;</button>
+</div>
+
+<div class="lw-window" role="application" aria-label="AgentWatcher 单会话分析原型">
+  <div class="lw-head">
+    <span class="lw-title" data-i18n="panelTitle">会话分析</span>
+    <span class="lw-sub" data-i18n="panelSub">单会话全生命周期</span>
+    <span class="lw-spring"></span>
+    <button type="button" class="lw-win-btn" aria-label="minimize">&#x2013;</button>
+    <button type="button" class="lw-win-btn lw-close" id="lwCloseBtn" aria-label="close">&#x2715;</button>
+  </div>
+
+  <div class="lw-body">
+    <div class="lw-identity">
+      <div class="lw-id-main">
+        <div class="lw-id-title-row">
+          <span class="lw-badge" id="lwProvBadge"></span>
+          <span class="lw-id-title" id="lwTitle"></span>
+        </div>
+        <div class="lw-id-meta">
+          <span id="lwWs"></span>
+          <span class="lw-status" id="lwStatus"></span>
+          <span id="lwSpan"></span>
+        </div>
+      </div>
+      <div class="lw-model-chips" id="lwChips"></div>
+    </div>
+
+    <div class="lw-cards" id="lwCards"></div>
+
+    <div style="display:grid;gap:8px">
+      <div class="lw-panel">
+        <div class="lw-panel-head">
+          <span class="lw-panel-title" data-i18n="usageTitle">用量时间轴</span>
+          <span class="lw-panel-note" data-i18n="usageNote">按模型分色的毛输入（含缓存读取）</span>
+          <span class="lw-spring"></span>
+        </div>
+        <div style="padding:0 12px 6px;display:flex;align-items:center;gap:8px">
+          <div class="lw-seg" role="group" aria-label="granularity">
+            <button type="button" id="lwG1" aria-pressed="true" data-i18n="gHour">小时</button>
+            <button type="button" id="lwG6" aria-pressed="false" data-i18n="g6h">6 小时</button>
+            <button type="button" id="lwGd" aria-pressed="false" data-i18n="gDay">天</button>
+          </div>
+          <span class="lw-updated" id="lwUpdated"></span>
+        </div>
+        <div class="lw-chartbox" id="lwUsageBox">
+          <div class="lw-tip" id="lwTip" role="tooltip"></div>
+          <div id="lwUsageChart"></div>
+        </div>
+        <div class="lw-chartbox" id="lwCtxBox" style="padding-top:0">
+          <div id="lwCtxChart"></div>
+        </div>
+        <div class="lw-chartbox" id="lwRhythmBox" style="padding-top:0;padding-bottom:8px">
+          <div id="lwRhythmChart"></div>
+        </div>
+      </div>
+
+      <div class="lw-breakdown">
+        <div class="lw-bd">
+          <div class="lw-bd-title" data-i18n="byTypeTitle">按类型</div>
+          <div class="lw-segbar" id="lwTypeBar"></div>
+          <div class="lw-bd-list" id="lwTypeList"></div>
+        </div>
+        <div class="lw-bd">
+          <div class="lw-bd-title" data-i18n="byModelTitle">按模型</div>
+          <div class="lw-segbar" id="lwModelBar"></div>
+          <div class="lw-bd-list" id="lwModelList"></div>
+        </div>
+        <div class="lw-bd">
+          <div class="lw-bd-title" data-i18n="byToolTitle">高频工具</div>
+          <div id="lwToolList"></div>
+          <div class="lw-bd-note" id="lwToolNote"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var root = document.getElementById('aw-lifecycle-mockup');
+  if (!root) return;
+
+  var SPAN_START = new Date(2026, 9, 11, 9, 12).getTime();
+  var SPAN_END = new Date(2026, 9, 12, 11, 58).getTime();
+  var SPAN_H = (SPAN_END - SPAN_START) / 3600000;
+  var COMPACT_AT_H = 37.6;
+
+  var MODELS = [
+    { id: 'glm-5.3', color: '#75beff', shareIn: 0.78 },
+    { id: 'glm-5.3-flash', color: '#4ec9b0', shareIn: 0.22 }
+  ];
+  var TARGETS = { in: 286400000, out: 412000, calls: 1180, tools: 2247, turns: 34 };
+  var TOOLS = [['Bash', 724], ['Edit', 64], ['Read', 41], ['Grep', 33], ['TodoWrite', 15]];
+
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  var BURSTS = [
+    { s: 0.0, e: 2.5 },
+    { s: 4.8, e: 8.6 },
+    { s: 11.0, e: 14.7 },
+    { s: 23.3, e: 26.8 }
+  ];
+
+  function buildCalls() {
+    var rnd = mulberry32(20261014);
+    var calls = [];
+    BURSTS.forEach(function (b) {
+      var hours = b.e - b.s;
+      var n = Math.max(8, Math.round(TARGETS.calls * hours / 25.6));
+      for (var i = 0; i < n; i++) {
+        var h = b.s + (i / n) * hours + rnd() * (hours / n);
+        var flash = rnd() < 0.24 && i % 2 === 0;
+        var base = rnd() * 0.7 + 0.3;
+        calls.push({
+          h: h,
+          model: flash ? MODELS[1].id : MODELS[0].id,
+          w: base,
+          cache: 0.9 + rnd() * 0.09
+        });
+      }
+    });
+    var wSumMain = 0, wSumFlash = 0;
+    calls.forEach(function (c) { if (c.model === MODELS[0].id) wSumMain += c.w; else wSumFlash += c.w; });
+    var inMain = TARGETS.in * MODELS[0].shareIn, inFlash = TARGETS.in * MODELS[1].shareIn;
+    calls.forEach(function (c) {
+      var wSum = c.model === MODELS[0].id ? wSumMain : wSumFlash;
+      var pool = c.model === MODELS[0].id ? inMain : inFlash;
+      c.in = Math.round(pool * c.w / wSum);
+      c.cacheIn = Math.round(c.in * c.cache);
+      c.out = Math.max(40, Math.round(c.in / 700 * (0.6 + rnd() * 0.8)));
+      c.t = SPAN_START + c.h * 3600000;
+    });
+    var outSum = calls.reduce(function (a, c) { return a + c.out; }, 0);
+    calls.forEach(function (c) { c.out = Math.max(30, Math.round(c.out * TARGETS.out / outSum)); });
+
+    var ctx = 61000;
+    calls.sort(function (a, b) { return a.t - b.t; });
+    calls.forEach(function (c) {
+      var growth = c.in * 0.012 + c.out * 0.9 + 400;
+      ctx = ctx + growth;
+      if (c.h >= COMPACT_AT_H && c.h - COMPACT_AT_H < 0.09) { ctx = 63000; c.compact = true; }
+      c.ctx = Math.min(196000, Math.round(ctx));
+    });
+    return calls;
+  }
+  var CALLS = buildCalls();
+
+  var TURN_HS = [];
+  (function () {
+    var rnd = mulberry32(3434);
+    BURSTS.forEach(function (b) {
+      var n = Math.max(5, Math.round(TARGETS.turns * (b.e - b.s) / 25.6));
+      for (var i = 0; i < n; i++) TURN_HS.push(b.s + rnd() * (b.e - b.s));
+    });
+    TURN_HS.sort(function (a, b) { return a - b; });
+  })();
+
+  function bucketMs(g) { return g === 'h' ? 3600000 : g === '6h' ? 21600000 : 86400000; }
+
+  function buckets(g) {
+    var size = bucketMs(g);
+    var map = {}, list = [];
+    CALLS.forEach(function (c) {
+      var start = Math.floor((c.t - SPAN_START) / size) * size + SPAN_START;
+      var k = String(start);
+      if (!map[k]) { map[k] = { start: start, end: start + size, models: {}, tools: 0, ctxEnd: 0, calls: 0 }; list.push(map[k]); }
+      var b = map[k];
+      b.calls++;
+      b.models[c.model] = b.models[c.model] || { in: 0, out: 0, calls: 0 };
+      b.models[c.model].in += c.in;
+      b.models[c.model].out += c.out;
+      b.models[c.model].calls++;
+      b.ctxEnd = Math.max(b.ctxEnd, c.ctx);
+    });
+    list.sort(function (a, b) { return a.start - b.start; });
+    return list;
+  }
+
+  function toolCountAt(h, i) {
+    var rnd = mulberry32(9000 + i);
+    return rnd();
+  }
+
+  var I18N = {
+    zh: {
+      protoBar: '原型控制', panelTitle: '会话分析', panelSub: '单会话全生命周期',
+      usageTitle: '用量时间轴', usageNote: '按模型分色的毛输入（含缓存读取）',
+      ctxTitle: '上下文占用', ctxNote: '每次模型调用时刻的当前上下文',
+      rhythmTitle: '活动节奏', rhythmNote: '活跃段 / 用户轮次 / 工具密度',
+      gHour: '小时', g6h: '6 小时', gDay: '天',
+      byTypeTitle: '按类型', byModelTitle: '按模型', byToolTitle: '高频工具',
+      cacheRead: '缓存读取', freshInput: '净输入', output: '输出',
+      modelCalls: '模型调用', toolCalls: '工具调用', turns: '用户轮次',
+      statIn: '累计毛输入', statOut: '累计输出', statCalls: '模型调用', statTools: '工具调用',
+      statTurns: '用户轮次', statActive: '活跃时长', statCost: '成本',
+      spanNote: '跨度 26.7h', cacheNote: '缓存 98%', activeNote: '4.7h',
+      statusLabel: '空闲', compactTag: '压缩',
+      toolNoteRest: function (n) { return '其余 ' + n.toLocaleString('en-US') + ' 次未列出'; },
+      updated: '数据时间 10-14 16:42 · 随会话扫描自动刷新',
+      bucketOf: '时间桶', callsWord: '调用', toolsWord: '工具', ctxWord: '上下文末', inWord: '输入', outWord: '输出',
+      chipHint: '点徽章切换该模型在时间轴上的显示',
+      sessionTitle: 'AES Workflow 协议 1.4 收口', ws: 'aes-workflow',
+      spanText: '10/11 09:12 – 10/12 11:58',
+      remainingTools: '其余工具调用'
+    },
+    en: {
+      protoBar: 'Prototype controls', panelTitle: 'Session Analytics', panelSub: 'Full session lifecycle',
+      usageTitle: 'Usage timeline', usageNote: 'Gross input by model (incl. cache reads)',
+      ctxTitle: 'Context usage', ctxNote: 'Current context at each model call',
+      rhythmTitle: 'Activity rhythm', rhythmNote: 'Active spans / user turns / tool density',
+      gHour: 'Hour', g6h: '6 h', gDay: 'Day',
+      byTypeTitle: 'By type', byModelTitle: 'By model', byToolTitle: 'Top tools',
+      cacheRead: 'Cache read', freshInput: 'Fresh input', output: 'Output',
+      modelCalls: 'Model calls', toolCalls: 'Tool calls', turns: 'User turns',
+      statIn: 'Gross input', statOut: 'Total output', statCalls: 'Model calls', statTools: 'Tool calls',
+      statTurns: 'User turns', statActive: 'Active time', statCost: 'Cost',
+      spanNote: '26.7h span', cacheNote: '98% cached', activeNote: '4.7h',
+      statusLabel: 'Idle', compactTag: 'compact',
+      toolNoteRest: function (n) { return n.toLocaleString('en-US') + ' more calls not listed'; },
+      updated: 'Data as of 10-14 16:42 · auto-refreshes with session scans',
+      bucketOf: 'bucket', callsWord: 'calls', toolsWord: 'tools', ctxWord: 'ctx end', inWord: 'in', outWord: 'out',
+      chipHint: 'click a chip to toggle the model on the timeline',
+      sessionTitle: 'AES Workflow protocol 1.4 closeout', ws: 'aes-workflow',
+      spanText: '10/11 09:12 – 10/12 11:58',
+      remainingTools: 'remaining tool calls'
+    }
+  };
+  function t(k) { return I18N[state.lang][k]; }
+  function fmtT(v) {
+    if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+    if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+    if (v >= 1e3) return (v / 1e3).toFixed(0) + 'k';
+    return String(v);
+  }
+  function fmtClock(ms) {
+    var d = new Date(ms);
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+  function fmtHourTick(ms) {
+    var d = new Date(ms);
+    var h = d.getHours();
+    if (h === 0) return (d.getMonth() + 1) + '/' + d.getDate();
+    return String(h).padStart(2, '0') + ':00';
+  }
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+  var state = { lang: 'zh', theme: 'dark', g: 'h', hiddenModels: {} };
+  try {
+    var saved = window.zcode && window.zcode.widgetState && window.zcode.widgetState.privateContent;
+    if (saved && typeof saved === 'object') {
+      if (saved.lang === 'zh' || saved.lang === 'en') state.lang = saved.lang;
+      if (saved.theme === 'dark' || saved.theme === 'light') state.theme = saved.theme;
+    }
+  } catch (e) { /* optional */ }
+  function persist() {
+    try {
+      if (window.zcode && window.zcode.setWidgetState) {
+        window.zcode.setWidgetState({ privateContent: { lang: state.lang, theme: state.theme } }).catch(function () {});
+      }
+    } catch (e) { /* optional */ }
+  }
+
+  var SVGNS = 'http://www.w3.org/2000/svg';
+  function el(name, attrs) {
+    var node = document.createElementNS(SVGNS, name);
+    for (var k in attrs) node.setAttribute(k, attrs[k]);
+    return node;
+  }
+  function $(id) { return document.getElementById(id); }
+  var els = {
+    langBtn: $('lwLangBtn'), themeBtn: $('lwThemeBtn'), closeBtn: $('lwCloseBtn'),
+    g1: $('lwG1'), g6: $('lwG6'), gd: $('lwGd'),
+    provBadge: $('lwProvBadge'), title: $('lwTitle'), ws: $('lwWs'), status: $('lwStatus'), span: $('lwSpan'),
+    chips: $('lwChips'), cards: $('lwCards'), updated: $('lwUpdated'),
+    usageChart: $('lwUsageChart'), ctxChart: $('lwCtxChart'), rhythmChart: $('lwRhythmChart'),
+    tip: $('lwTip'), usageBox: $('lwUsageBox'),
+    typeBar: $('lwTypeBar'), typeList: $('lwTypeList'),
+    modelBar: $('lwModelBar'), modelList: $('lwModelList'),
+    toolList: $('lwToolList'), toolNote: $('lwToolNote')
+  };
+
+  var PADL = 52, PADR = 10;
+  function plotW(hostW) { return Math.max(200, hostW - PADL - PADR); }
+  function xOf(ms, w) { return PADL + (ms - SPAN_START) / (SPAN_END - SPAN_START) * plotW(w); }
+  function msAt(px, w) { return SPAN_START + (px - PADL) / plotW(w) * (SPAN_END - SPAN_START); }
+
+  var chartRefs = { usage: null, ctx: null, rhythm: null };
+
+  function drawUsage() {
+    var host = els.usageChart;
+    host.innerHTML = '';
+    var W = Math.max(300, host.clientWidth || 640), H = 168, padT = 8, padB = 20;
+    var svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H, width: '100%', height: H, role: 'img', 'aria-label': t('usageTitle') });
+
+    var bs = buckets(state.g);
+    var visible = MODELS.filter(function (m) { return !state.hiddenModels[m.id]; });
+    var maxV = 0;
+    bs.forEach(function (b) {
+      var s = 0;
+      visible.forEach(function (m) { s += (b.models[m.id] || {}).in || 0; });
+      if (s > maxV) maxV = s;
+    });
+    var ceil = Math.max(1e6, Math.ceil((maxV * 1.12) / 2e7) * 2e7);
+    function yV(v) { return padT + (H - padT - padB) * (1 - v / ceil); }
+
+    for (var gi = 0; gi <= 4; gi++) {
+      var v = ceil * gi / 4, y = yV(v);
+      svg.appendChild(el('line', { x1: PADL, x2: W - PADR, y1: y, y2: y, stroke: 'var(--border)', 'stroke-width': '1' }));
+      var lab = el('text', { x: PADL - 6, y: y + 3.5, 'text-anchor': 'end', 'font-size': '11', fill: 'var(--muted)' });
+      lab.textContent = fmtT(v);
+      svg.appendChild(lab);
+    }
+
+    var size = bucketMs(state.g);
+    var inner = plotW(W);
+    var x0 = PADL, x1 = W - PADR;
+    function bandPath(model, underModels) {
+      var tops = [], bottoms = [];
+      var cursor = SPAN_START;
+      bs.forEach(function (b) {
+        var bx0 = Math.max(x0, xOf(b.start, W));
+        var bx1 = Math.min(x1, xOf(b.end, W));
+        var tv = 0, bv = 0;
+        visible.forEach(function (m) {
+          if (underModels.indexOf(m.id) >= 0 || m.id === model.id) tv += (b.models[m.id] || {}).in || 0;
+          if (underModels.indexOf(m.id) >= 0) bv += (b.models[m.id] || {}).in || 0;
+        });
+        tops.push([bx0, yV(tv), bx1, yV(tv), tv]);
+        bottoms.push([bx0, yV(bv), bx1, yV(bv)]);
+      });
+      if (!tops.length) return null;
+      var d = 'M' + x0 + ' ' + yV(0);
+      tops.forEach(function (p) {
+        d += ' L' + p[0].toFixed(1) + ' ' + p[1].toFixed(1) + ' L' + p[2].toFixed(1) + ' ' + p[1].toFixed(1);
+      });
+      d += ' L' + x1 + ' ' + yV(0);
+      for (var i = bottoms.length - 1; i >= 0; i--) {
+        d += ' L' + bottoms[i][2].toFixed(1) + ' ' + bottoms[i][1].toFixed(1) + ' L' + bottoms[i][0].toFixed(1) + ' ' + bottoms[i][1].toFixed(1);
+      }
+      d += ' Z';
+      return d;
+    }
+
+    var under = [];
+    MODELS.forEach(function (m) {
+      if (state.hiddenModels[m.id]) return;
+      var d = bandPath(m, under.slice());
+      if (d) {
+        svg.appendChild(el('path', { d: d, fill: m.color, 'fill-opacity': '0.55', stroke: m.color, 'stroke-width': '1.2' }));
+      }
+      under.push(m.id);
+    });
+
+    var tickStep = size * (state.g === 'h' ? 3 : 1);
+    var firstTick = Math.ceil((SPAN_START) / tickStep) * tickStep;
+    for (var ts = firstTick; ts <= SPAN_END; ts += tickStep) {
+      var tx = xOf(ts, W);
+      var lab2 = el('text', { x: tx, y: H - 6, 'text-anchor': 'middle', 'font-size': '10.5', fill: 'var(--muted)' });
+      lab2.textContent = state.g === 'd' ? (new Date(ts).getMonth() + 1) + '/' + new Date(ts).getDate() : fmtHourTick(ts);
+      svg.appendChild(lab2);
+    }
+
+    var guide = el('line', { x1: 0, x2: 0, y1: padT, y2: H - padB, stroke: 'var(--muted)', 'stroke-width': '1', 'stroke-dasharray': '3 3', visibility: 'hidden' });
+    svg.appendChild(guide);
+    var hit = el('rect', { x: PADL, y: padT, width: inner, height: H - padT - padB, fill: 'transparent', 'data-chart-hit': '' });
+    hit.style.cursor = 'crosshair';
+    svg.appendChild(hit);
+    host.appendChild(svg);
+    chartRefs.usage = { svg: svg, guide: guide, W: W, H: H };
+  }
+
+  function drawCtx() {
+    var host = els.ctxChart;
+    host.innerHTML = '';
+    var W = Math.max(300, host.clientWidth || 640), H = 116, padT = 16, padB = 18;
+    var svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H, width: '100%', height: H, role: 'img', 'aria-label': t('ctxTitle') });
+    var title = el('text', { x: PADL, y: 10, 'font-size': '11', fill: 'var(--muted)' });
+    title.textContent = t('ctxTitle');
+    svg.appendChild(title);
+
+    var ctxVals = CALLS.map(function (c) { return c.ctx; });
+    var minCtx = Math.min.apply(null, ctxVals), maxCtx = Math.max.apply(null, ctxVals);
+    var spanC = maxCtx - minCtx || maxCtx || 1;
+    var domLow = Math.max(0, minCtx - spanC * 0.25);
+    var domHigh = maxCtx + spanC * 0.15;
+    function yC(v) { return padT + (H - padT - padB) * (1 - (v - domLow) / (domHigh - domLow)); }
+    var stepC = (domHigh - domLow) / 3;
+    [domLow, domLow + stepC, domLow + stepC * 2, domHigh].forEach(function (v) {
+      var y = yC(v);
+      svg.appendChild(el('line', { x1: PADL, x2: W - PADR, y1: y, y2: y, stroke: 'var(--border)', 'stroke-width': '1' }));
+      var lab = el('text', { x: PADL - 6, y: y + 3.5, 'text-anchor': 'end', 'font-size': '11', fill: 'var(--muted)' });
+      lab.textContent = fmtT(Math.round(v));
+      svg.appendChild(lab);
+    });
+
+    var pts = CALLS.map(function (c) { return xOf(c.t, W).toFixed(1) + ',' + yC(c.ctx).toFixed(1); }).join(' ');
+    svg.appendChild(el('polyline', { points: pts, fill: 'none', stroke: 'var(--c-zc)', 'stroke-width': '1.6', 'stroke-linejoin': 'round' }));
+    svg.appendChild(el('polyline', { points: PADL + ',' + (H - padB) + ' ' + pts + ' ' + (W - PADR) + ',' + (H - padB), fill: 'var(--c-zc)', 'fill-opacity': '0.12', stroke: 'none' }));
+
+    var compactCall = null;
+    CALLS.forEach(function (c) { if (c.compact) compactCall = c; });
+    var tag = null;
+    if (compactCall) {
+      var cx = xOf(compactCall.t, W), cy = yC(compactCall.ctx);
+      svg.appendChild(el('circle', { cx: cx, cy: cy, r: 3.5, fill: 'var(--c-zc)' }));
+      svg.appendChild(el('circle', { cx: cx, cy: yC(maxCtx * 0.995), r: 3.5, fill: 'none', stroke: 'var(--muted)', 'stroke-width': '1' }));
+      tag = el('text', { x: Math.min(cx + 7, W - 44), y: cy - 8, 'font-size': '10.5', fill: 'var(--muted)' });
+      tag.textContent = t('compactTag');
+      svg.appendChild(tag);
+    }
+
+    var guide = el('line', { x1: 0, x2: 0, y1: padT, y2: H - padB, stroke: 'var(--muted)', 'stroke-width': '1', 'stroke-dasharray': '3 3', visibility: 'hidden' });
+    svg.appendChild(guide);
+    var hit = el('rect', { x: PADL, y: padT, width: plotW(W), height: H - padT - padB, fill: 'transparent', 'data-chart-hit': '' });
+    hit.style.cursor = 'crosshair';
+    svg.appendChild(hit);
+    host.appendChild(svg);
+    chartRefs.ctx = { svg: svg, guide: guide, W: W, H: H };
+  }
+
+  function drawRhythm() {
+    var host = els.rhythmChart;
+    host.innerHTML = '';
+    var W = Math.max(300, host.clientWidth || 640), H = 34, padT = 12, padB = 6;
+    var svg = el('svg', { viewBox: '0 0 ' + W + ' ' + H, width: '100%', height: H, role: 'img', 'aria-label': t('rhythmTitle') });
+    var title = el('text', { x: PADL, y: 8, 'font-size': '11', fill: 'var(--muted)' });
+    title.textContent = t('rhythmTitle');
+    svg.appendChild(title);
+    var baseY = padT, barH = 12;
+
+    svg.appendChild(el('rect', { x: PADL, y: baseY, width: plotW(W), height: barH, fill: 'var(--surface-3)', rx: 2 }));
+    BURSTS.forEach(function (b) {
+      var x0 = xOf(SPAN_START + b.s * 3600000, W), x1 = xOf(SPAN_START + b.e * 3600000, W);
+      svg.appendChild(el('rect', { x: x0, y: baseY, width: Math.max(1, x1 - x0), height: barH, fill: 'var(--accent)', 'fill-opacity': '0.35', rx: 2 }));
+    });
+
+    var size = bucketMs(state.g);
+    var bs = buckets(state.g);
+    var maxTools = 0;
+    var toolHeat = bs.map(function (b, i) {
+      var v = toolCountAt(0, i) * (b.calls / 60);
+      if (v > maxTools) maxTools = v;
+      return v;
+    });
+    bs.forEach(function (b, i) {
+      var x0 = Math.max(PADL, xOf(b.start, W)), x1 = Math.min(W - PADR, xOf(b.end, W));
+      var op = 0.25 + 0.6 * (toolHeat[i] / (maxTools || 1));
+      svg.appendChild(el('rect', { x: x0 + 0.5, y: baseY, width: Math.max(0.5, x1 - x0 - 1), height: barH, fill: 'var(--accent)', 'fill-opacity': op.toFixed(2) }));
+    });
+
+    TURN_HS.forEach(function (h, i) {
+      var x = xOf(SPAN_START + h * 3600000, W);
+      var d = 'M' + x + ' ' + (baseY - 4) + ' l3.2 4 l-3.2 4 l-3.2 -4 Z';
+      svg.appendChild(el('path', { d: d, fill: 'var(--c-oc)' }));
+    });
+
+    var guide = el('line', { x1: 0, x2: 0, y1: padT - 6, y2: H - padB, stroke: 'var(--muted)', 'stroke-width': '1', 'stroke-dasharray': '3 3', visibility: 'hidden' });
+    svg.appendChild(guide);
+    var hit = el('rect', { x: PADL, y: padT - 8, width: plotW(W), height: H - padT + 4, fill: 'transparent', 'data-chart-hit': '' });
+    hit.style.cursor = 'crosshair';
+    svg.appendChild(hit);
+    host.appendChild(svg);
+    chartRefs.rhythm = { svg: svg, guide: guide, W: W, H: H };
+  }
+
+  function nearestBucket(ms) {
+    var bs = buckets(state.g);
+    var best = null;
+    bs.forEach(function (b) {
+      if (ms >= b.start && ms < b.end) best = b;
+    });
+    if (!best && bs.length) best = ms < bs[0].start ? bs[0] : bs[bs.length - 1];
+    return best;
+  }
+
+  function wireHover() {
+    ['usage', 'ctx', 'rhythm'].forEach(function (key) {
+      var ref = chartRefs[key];
+      if (!ref) return;
+      var hits = ref.svg.querySelectorAll('[data-chart-hit]');
+      hits.forEach(function (h) {
+        h.addEventListener('mousemove', function (ev) {
+          var rect = ref.svg.getBoundingClientRect();
+          var scaleW = rect.width / ref.W;
+          var px = (ev.clientX - rect.left) / scaleW;
+          var ms = msAt(px, ref.W);
+          var bx = xOf(ms, ref.W);
+          ['usage', 'ctx', 'rhythm'].forEach(function (k2) {
+            var r2 = chartRefs[k2];
+            if (r2) {
+              r2.guide.setAttribute('x1', bx);
+              r2.guide.setAttribute('x2', bx);
+              r2.guide.setAttribute('visibility', 'visible');
+            }
+          });
+          var b = nearestBucket(ms);
+          if (b && key === 'usage') showTip(b, bx);
+        });
+        h.addEventListener('mouseleave', hideGuides);
+      });
+    });
+  }
+  function hideGuides() {
+    ['usage', 'ctx', 'rhythm'].forEach(function (k) {
+      if (chartRefs[k]) chartRefs[k].guide.setAttribute('visibility', 'hidden');
+    });
+    els.tip.style.display = 'none';
+  }
+  function showTip(b, bx) {
+    var parts = [];
+    parts.push('<div class="lw-tip-t">' + fmtClock(b.start) + ' – ' + fmtClock(Math.min(b.end, SPAN_END)) + '</div>');
+    MODELS.forEach(function (m) {
+      var v = b.models[m.id];
+      if (!v || state.hiddenModels[m.id]) return;
+      parts.push(
+        '<div class="lw-tip-row"><span class="lw-d" style="background:' + m.color + '"></span>' +
+        '<span class="lw-n">' + esc(m.id) + '</span>' +
+        '<span class="lw-x">' + t('inWord') + ' ' + fmtT(v.in) + ' · ' + t('outWord') + ' ' + fmtT(v.out) + ' · ' + v.calls + '</span></div>'
+      );
+    });
+    parts.push('<div class="lw-tip-row"><span class="lw-n" style="color:var(--muted)">' + t('ctxWord') + '</span><span class="lw-x">' + fmtT(b.ctxEnd) + '</span></div>');
+    els.tip.innerHTML = parts.join('');
+    els.tip.style.display = 'block';
+    var boxW = els.usageBox.clientWidth || 640;
+    var tipW = els.tip.offsetWidth || 200;
+    var left = bx - tipW / 2 - 8;
+    if (left < 2) left = 2;
+    if (left + tipW > boxW - 2) left = boxW - tipW - 2;
+    els.tip.style.left = left + 'px';
+    els.tip.style.top = '4px';
+  }
+
+  function renderIdentity() {
+    els.provBadge.textContent = 'ZCode';
+    els.provBadge.style.color = 'var(--c-zc)';
+    els.provBadge.style.borderColor = 'var(--c-zc)';
+    els.title.textContent = t('sessionTitle');
+    els.title.title = t('sessionTitle');
+    els.ws.textContent = t('ws');
+    els.status.innerHTML = '<span class="lw-dot" style="background:var(--soft)"></span>' + esc(t('statusLabel'));
+    els.span.textContent = t('spanText');
+    els.chips.innerHTML = '';
+    MODELS.forEach(function (m) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'lw-chip';
+      b.setAttribute('aria-pressed', state.hiddenModels[m.id] ? 'false' : 'true');
+      b.title = t('chipHint');
+      var pct = Math.round(m.shareIn * 100);
+      b.innerHTML = '<span class="lw-swatch" style="background:' + m.color + '"></span>' + esc(m.id) + ' <b>' + pct + '%</b>';
+      b.addEventListener('click', function () {
+        var others = MODELS.filter(function (x) { return x.id !== m.id && !state.hiddenModels[x.id]; });
+        if (!state.hiddenModels[m.id] && others.length === 0) return;
+        state.hiddenModels[m.id] = !state.hiddenModels[m.id];
+        renderCharts();
+        renderIdentity();
+      });
+      els.chips.appendChild(b);
+    });
+  }
+
+  function renderCards() {
+    var cards = [
+      { k: t('statIn'), v: fmtT(TARGETS.in), s: t('cacheNote') },
+      { k: t('statOut'), v: fmtT(TARGETS.out), s: '' },
+      { k: t('statCalls'), v: TARGETS.calls.toLocaleString('en-US'), s: '' },
+      { k: t('statTools'), v: TARGETS.tools.toLocaleString('en-US'), s: '' },
+      { k: t('statTurns'), v: String(TARGETS.turns), s: '' },
+      { k: t('statActive'), v: t('activeNote'), s: t('spanNote') },
+      { k: t('statCost'), v: '—', s: '' }
+    ];
+    els.cards.innerHTML = cards.map(function (c) {
+      return '<div class="lw-stat"><div class="lw-k">' + esc(c.k) + '</div><div class="lw-v">' + esc(c.v) + '</div>' +
+        (c.s ? '<div class="lw-s">' + esc(c.s) + '</div>' : '') + '</div>';
+    }).join('');
+  }
+
+  function renderBreakdown() {
+    var cacheRead = Math.round(TARGETS.in * 0.98);
+    var fresh = TARGETS.in - cacheRead;
+    var types = [
+      { n: t('cacheRead'), v: cacheRead, c: '#75beff' },
+      { n: t('freshInput'), v: fresh, c: '#4ec9b0' },
+      { n: t('output'), v: TARGETS.out, c: '#d7ba7d' }
+    ];
+    var totalType = cacheRead + fresh + TARGETS.out;
+    els.typeBar.innerHTML = types.map(function (x) {
+      return '<span style="width:' + (x.v / totalType * 100).toFixed(2) + '%;background:' + x.c + '"></span>';
+    }).join('');
+    els.typeList.innerHTML = types.map(function (x) {
+      return '<div class="lw-bd-row"><span class="lw-d" style="background:' + x.c + '"></span>' +
+        '<span class="lw-n">' + esc(x.n) + '</span><span class="lw-x">' + fmtT(x.v) + ' · ' + (x.v / totalType * 100).toFixed(x.v / totalType < 0.01 ? 2 : 1) + '%</span></div>';
+    }).join('');
+
+    els.modelBar.innerHTML = MODELS.map(function (m) {
+      return '<span style="width:' + (m.shareIn * 100).toFixed(1) + '%;background:' + m.color + '"></span>';
+    }).join('');
+    var callsMain = Math.round(TARGETS.calls * 0.78), callsFlash = TARGETS.calls - callsMain;
+    els.modelList.innerHTML =
+      '<div class="lw-bd-row"><span class="lw-d" style="background:' + MODELS[0].color + '"></span>' +
+      '<span class="lw-n">' + esc(MODELS[0].id) + '</span><span class="lw-x">' + fmtT(TARGETS.in * 0.78) + ' · 78% · ' + callsMain.toLocaleString('en-US') + ' ' + esc(t('modelCalls')) + '</span></div>' +
+      '<div class="lw-bd-row"><span class="lw-d" style="background:' + MODELS[1].color + '"></span>' +
+      '<span class="lw-n">' + esc(MODELS[1].id) + '</span><span class="lw-x">' + fmtT(TARGETS.in * 0.22) + ' · 22% · ' + callsFlash.toLocaleString('en-US') + ' ' + esc(t('modelCalls')) + '</span></div>';
+
+    var maxTool = TOOLS[0][1];
+    els.toolList.innerHTML = TOOLS.map(function (tt) {
+      return '<div class="lw-tool-row"><span class="lw-tn">' + esc(tt[0]) + '</span>' +
+        '<span class="lw-tool-track"><span class="lw-tool-fill" style="width:' + (tt[1] / maxTool * 100).toFixed(1) + '%"></span></span>' +
+        '<span class="lw-tc">' + tt[1].toLocaleString('en-US') + '</span></div>';
+    }).join('');
+    var listed = TOOLS.reduce(function (a, x) { return a + x[1]; }, 0);
+    els.toolNote.textContent = t('toolNoteRest')(TARGETS.tools - listed);
+  }
+
+  function renderCharts() {
+    drawUsage();
+    drawCtx();
+    drawRhythm();
+    wireHover();
+  }
+
+  function applyI18n() {
+    root.querySelectorAll('[data-i18n]').forEach(function (node) {
+      node.textContent = t(node.getAttribute('data-i18n'));
+    });
+    els.updated.textContent = t('updated');
+    els.langBtn.textContent = state.lang === 'zh' ? 'EN' : '中文';
+    els.langBtn.setAttribute('aria-pressed', state.lang === 'en' ? 'true' : 'false');
+  }
+
+  function render() {
+    applyI18n();
+    root.setAttribute('data-theme', state.theme);
+    root.setAttribute('data-lang', state.lang);
+    els.themeBtn.setAttribute('aria-pressed', state.theme === 'light' ? 'true' : 'false');
+    els.g1.setAttribute('aria-pressed', state.g === 'h' ? 'true' : 'false');
+    els.g6.setAttribute('aria-pressed', state.g === '6h' ? 'true' : 'false');
+    els.gd.setAttribute('aria-pressed', state.g === 'd' ? 'true' : 'false');
+    renderIdentity();
+    renderCards();
+    renderBreakdown();
+    renderCharts();
+    els.tip.style.display = 'none';
+  }
+
+  els.langBtn.addEventListener('click', function () { state.lang = state.lang === 'zh' ? 'en' : 'zh'; persist(); render(); });
+  els.themeBtn.addEventListener('click', function () { state.theme = state.theme === 'dark' ? 'light' : 'dark'; persist(); render(); });
+  els.closeBtn.addEventListener('click', function () { /* mock */ });
+  els.g1.addEventListener('click', function () { state.g = 'h'; render(); });
+  els.g6.addEventListener('click', function () { state.g = '6h'; render(); });
+  els.gd.addEventListener('click', function () { state.g = 'd'; render(); });
+
+  render();
+
+  if (window.ResizeObserver) {
+    new ResizeObserver(function () { renderCharts(); }).observe(els.usageChart);
+  }
+})();
+</script>
+</div>
+
+</body>
+</html>
