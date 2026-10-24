@@ -193,7 +193,7 @@
 - [x] App 版本三处一致 0.1.8；Bridge 保持 0.1.12。
 - [x] 范围 = 会话分析统计面板（feature/会话分析统计面板，14 笔提交合入 dev）：单会话全生命周期分析（六源逐调用时序、上下文曲线、活动节奏、结构分解）+ 多智能体轨迹泳道（子代理发现、编排标记、并行度、开销排行）+ 分析面板交互 12 轮实测修复（入口统一/关闭/缩放/粒度自适应/块级流布局）。
 - [x] cargo test 128+8+8 全过（rebase 后复跑）、build:ui、Bridge 语法与路由、git diff --check、CDP 真实运行时走查（含真会话对数：Claude 808 调用、ZCode 53.7M）。
-- [ ] `npm run package:exe` 产物核对与 SHA256 入 CHANGELOG（打包进行中）。
+- [x] `npm run package:exe` 产物核对（exe + cli + vsix 0.1.12）与 SHA256 入 CHANGELOG（B3019EB7…CBFEC）。
 
 ## v0.1.7 发布检查清单
 

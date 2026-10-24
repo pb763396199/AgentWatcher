@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.1.8 - 2026-10-24
+
+- 新增「会话分析」面板（悬浮预览用量区块或卡片右键进入）：单会话全生命周期视图——七个总指标、按模型分色的用量时间轴（自动粒度按会话跨度选桶宽，短会话分钟级、长会话到天）、上下文占用曲线（压缩回落自动标注，Codex 附窗口上限参考线）、活动节奏条（用户轮次菱形 + 工具密度）、按类型/按模型/高频工具三组分解；六源逐调用采集（Claude 按 message.id 去重、Codex 沿 rollout 链、ZCode 走 model_usage 观测表、OpenCode 走消息 tokens，Copilot CLI 数据源无用量如实降级）。
+- 多智能体会话新增轨迹泳道：每个子代理一条泳道（颜色 = 模型），主代理泳道带 spawn/send/wait 编排标记与等待区间（估算标注），并行度随时间曲线，子代理开销排行含效率列（输出/毛输入）；Codex 子代理按 `thread_spawn.parent_thread_id` 精确归属、guardian 审查者按工作区 + 时间窗估算；任一泳道点击展开该代理自己的用量与上下文合并明细。
+- CLI `session list` 支持全历史与归档会话搜索（`--active-days 0`、归档源），补 `updatedMs` 绝对时间戳。
+- 分析面板交互经 12 轮实测打磨：两入口结果统一、窗口缩放只出整体竖向滚动（主体块级流布局，任何子面板不再被压缩裁切）、关闭按钮与拖拽互不干扰、悬停详情跟随光标、滚动条与主窗口同款；窄窗断点适配。
+
+发布包：`AgentWatcher-v0.1.8-windows-x64.zip`
+
+SHA256：`B3019EB71E01B468132A51DC057DB3E5E62C8E84A8A3D57649C6E05F121CBFEC`
+
+验证：`cargo test --manifest-path src-tauri/Cargo.toml`（128 通过，含本任务 9 条新增单测；CLI 分类 8 + 契约 8）、Bridge 语法与 handoff 路由测试、`git diff --check`、`npm run package:exe`；真实 Tauri 运行时 CDP 走查多轮（含真实会话对数：Claude 24MB 样本 808 次模型调用与调研独立核算一致、ZCode 53.7M/234 次、多智能体会话 16 worker + 10 guardian 归属精确）；入口统一性、窄窗四档尺寸几何扫描零塌缩。已知限制：125%/150% DPI 与 8 小时长跑未测；guardian 归属为时间窗估算；跨会话聚合面板（阶段 B）未实施。
+
 ## v0.1.7 - 2026-09-18
 
 - 新增 AI 操作 CLI `agentwatcher-cli.exe`（随发布包分发）：`session list/show/usage`、`handoff export`、`skill install/list/remove` 六个命令大类，JSON 信封输出契约（`{command, ok, data, error, messages}`，退出码 0/1/2），内容分级与 GUI 隐私边界一致（list 无正文，show 默认悬浮预览级，`--content` 才给正文）；无副作用扫描（不拉起 Codex app-server、清理 stdio 句柄继承），用法技能可一键装进本机 AI 宿主。
