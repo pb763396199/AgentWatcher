@@ -1365,7 +1365,12 @@ fn apply_session_limit_per_provider(sessions: &mut Vec<AgentSession>, limit: usi
 
 // 每轮扫描最多全量聚合多少个未缓存的 JSONL 会话文件；超出的本轮 usage 置 None，
 // 由后续扫描渐进补齐，避免首次扫描出现秒级停顿。
-const USAGE_AGGREGATION_BUDGET_PER_SCAN: usize = 10;
+/// 用量渐进填充的时间预算：冷启动首轮宽裕（用户在等首屏，一次填满全部
+/// 会话；15s 足够数百个 JSONL 文件），后续每轮扫描只允许 800ms，防止
+/// 15 秒轮询周期出现秒级卡顿。取代旧的「每轮 10 个文件」计数预算——
+/// 232 会话规模下旧预算要 ~3.5 分钟才填满。
+const USAGE_AGGREGATION_FIRST_SCAN_BUDGET_MS: u64 = 15_000;
+const USAGE_AGGREGATION_TIME_BUDGET_MS: u64 = 800;
 const JSONL_USAGE_CACHE_CAPACITY: usize = 1024;
 const CODEX_ROLLOUT_INDEX_TTL_MS: u64 = 5_000;
 
@@ -1381,6 +1386,9 @@ static JSONL_USAGE_CACHE: OnceLock<Mutex<HashMap<String, CachedJsonlUsage>>> = O
 static JSONL_USAGE_DETAIL_BY_SESSION: OnceLock<Mutex<HashMap<String, CachedJsonlUsage>>> =
     OnceLock::new();
 static JSONL_USAGE_BUDGET_USED: AtomicUsize = AtomicUsize::new(0);
+static JSONL_USAGE_PROCESS_START: OnceLock<Instant> = OnceLock::new();
+static JSONL_USAGE_SCAN_DEADLINE_MS: AtomicU64 = AtomicU64::new(0);
+static JSONL_USAGE_FIRST_SCAN_PENDING: AtomicBool = AtomicBool::new(true);
 type CodexRolloutIndexCache = Mutex<Option<(u64, HashMap<String, Vec<PathBuf>>)>>;
 static CODEX_ROLLOUT_INDEX_CACHE: OnceLock<CodexRolloutIndexCache> = OnceLock::new();
 
@@ -1392,13 +1400,28 @@ fn jsonl_usage_detail_by_session() -> &'static Mutex<HashMap<String, CachedJsonl
     JSONL_USAGE_DETAIL_BY_SESSION.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn usage_process_now_ms() -> u64 {
+    JSONL_USAGE_PROCESS_START
+        .get_or_init(Instant::now)
+        .elapsed()
+        .as_millis() as u64
+}
+
 fn reset_usage_scan_budget() {
+    let budget_ms = if JSONL_USAGE_FIRST_SCAN_PENDING.swap(false, Ordering::Relaxed) {
+        USAGE_AGGREGATION_FIRST_SCAN_BUDGET_MS
+    } else {
+        USAGE_AGGREGATION_TIME_BUDGET_MS
+    };
     JSONL_USAGE_BUDGET_USED.store(0, Ordering::Relaxed);
+    JSONL_USAGE_SCAN_DEADLINE_MS.store(
+        usage_process_now_ms().saturating_add(budget_ms),
+        Ordering::Relaxed,
+    );
 }
 
 fn usage_scan_budget_try_consume() -> bool {
-    let used = JSONL_USAGE_BUDGET_USED.fetch_add(1, Ordering::Relaxed);
-    used < USAGE_AGGREGATION_BUDGET_PER_SCAN
+    usage_process_now_ms() < JSONL_USAGE_SCAN_DEADLINE_MS.load(Ordering::Relaxed)
 }
 
 fn cached_jsonl_usage_for_path<F>(path: &Path, compute: F) -> Option<CachedJsonlUsage>
@@ -2778,8 +2801,52 @@ pub fn session_usage_detail(id: String) -> SessionUsageDetail {
     }
 }
 
-/// Codex 子代理发现预算：超过后按毛输入截断并在返回上标记 truncated。
-const CODEX_SUBAGENT_BUDGET: usize = 40;
+/// 子代理发现预算：超过后按毛输入截断并在返回上标记 truncated。
+/// 2026-10 实测跨天 swarm 单会话 spawn 可达 139，40 不够用。
+const CODEX_SUBAGENT_BUDGET: usize = 200;
+
+/// 天数→公历（Howard Hinnant 算法）；子代理发现按日期目录枚举用。
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// 覆盖时间窗的候选目录：父片段自身目录（保底，兼容扁平布局）+
+/// sessions 根下从起始日到结束日的每个日期目录。跨月/跨年由日期步进天然处理。
+fn codex_subagent_scan_dirs(
+    parent_directory: &Path,
+    window_start_ms: u64,
+    window_end_ms: u64,
+) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = vec![parent_directory.to_path_buf()];
+    // sessions/YYYY/MM/DD 布局：片段目录向上三层是 sessions 根
+    let Some(sessions_root) = parent_directory.ancestors().nth(3) else {
+        return dirs;
+    };
+    let start_day = window_start_ms as i64 / 86_400_000;
+    let end_day = (window_end_ms as i64 / 86_400_000).min(start_day + 400);
+    if end_day < start_day {
+        return dirs;
+    }
+    for day in start_day..=end_day {
+        let (year, month, day_of_month) = civil_from_days(day);
+        dirs.push(
+            sessions_root
+                .join(format!("{:04}", year))
+                .join(format!("{:02}", month))
+                .join(format!("{:02}", day_of_month)),
+        );
+    }
+    dirs
+}
 const CODEX_SUBAGENT_TAIL_BYTES: u64 = 64 * 1024;
 
 /// 只读 rollout 首行（session_meta），带 64KB 上限防御超长行。
@@ -2845,14 +2912,19 @@ fn codex_subagents(
     parent_end_ms: u64,
 ) -> (Vec<TrajectoryAgent>, bool) {
     let mut agents: Vec<TrajectoryAgent> = Vec::new();
-    let Some(directory) = parent_segments.first().and_then(|path| path.parent()) else {
+    let Some(parent_directory) = parent_segments.first().and_then(|path| path.parent()) else {
         return (agents, false);
     };
     let window_low = parent_start_ms.saturating_sub(5 * 60_000);
     let window_high = parent_end_ms.saturating_add(10 * 60_000);
-    for entry in read_directory(directory) {
+    let mut seen_paths: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    for directory in codex_subagent_scan_dirs(parent_directory, window_low, window_high) {
+    for entry in read_directory(&directory) {
         let path = entry.path();
-        if !has_extension(&path, "jsonl") || parent_segments.iter().any(|s| s == &path) {
+        if !has_extension(&path, "jsonl")
+            || parent_segments.iter().any(|s| s == &path)
+            || !seen_paths.insert(path.clone())
+        {
             continue;
         }
         let Some(meta) = rollout_first_meta(&path) else {
@@ -2925,6 +2997,7 @@ fn codex_subagents(
             tool_calls: usage.tool_calls,
             approximated,
         });
+    }
     }
     agents.sort_by(|left, right| {
         right
@@ -15480,13 +15553,26 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_dir);
     }
 
+    static USAGE_BUDGET_TEST_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
-    fn usage_scan_budget_exhausts_within_one_scan() {
+    fn usage_scan_budget_first_scan_generous_then_time_budgeted() {
+        let _guard = USAGE_BUDGET_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // 首轮：宽裕预算内大量聚合不受阻
+        JSONL_USAGE_FIRST_SCAN_PENDING.store(true, Ordering::Relaxed);
         reset_usage_scan_budget();
-        for _ in 0..USAGE_AGGREGATION_BUDGET_PER_SCAN {
+        for _ in 0..5_000 {
             assert!(usage_scan_budget_try_consume());
         }
+        // 后续轮：时间预算生效
+        reset_usage_scan_budget();
+        assert!(usage_scan_budget_try_consume());
+        // 时间预算耗尽后停止聚合（把死线拨到过去模拟到期）
+        JSONL_USAGE_SCAN_DEADLINE_MS.store(1, Ordering::Relaxed);
         assert!(!usage_scan_budget_try_consume());
+        // 下一轮扫描恢复
         reset_usage_scan_budget();
         assert!(usage_scan_budget_try_consume());
     }
@@ -16213,6 +16299,71 @@ mod tests {
         assert!(agents.iter().all(|agent| !agent.id.contains("aaaaaaaa")));
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn codex_subagents_finds_children_across_day_directories() {
+        // 跨天会话（如 01a16948：10-23 活跃到 10-26）的子 rollout 按派生日落在
+        // 不同日期目录；发现必须覆盖整个时间窗，而不是父首片段所在的那一天
+        let root = std::env::temp_dir().join(format!("aw-subagent-days-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let write = |rel: &str, source: &str, model: &str| {
+            let path = root.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let content = format!(
+                concat!(
+                    r#"{{"timestamp":"{ts}","type":"session_meta","payload":{{"cwd":"X:/Demo","source":{{"subagent":{source}}}}}}}"#,
+                    "
+",
+                    r#"{{"timestamp":"{ts}","type":"turn_context","payload":{{"model":"{model}"}}}}"#,
+                    "
+",
+                    r#"{{"timestamp":"{ts}","type":"event_msg","payload":{{"type":"token_count","info":{{"total_token_usage":{{"input_tokens":1000,"output_tokens":50}},"last_token_usage":{{"input_tokens":1000,"output_tokens":50}}}}}}}}"#,
+                    "
+",
+                ),
+                ts = if rel.starts_with("2026/10/26") { "2026-10-26T08:00:00.000Z" } else { "2026-10-23T15:10:00.000Z" },
+                source = source,
+                model = model,
+            );
+            fs::write(&path, content).unwrap();
+            path
+        };
+        let parent = write(
+            "2026/10/23/rollout-2026-10-23T15-02-00-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl",
+            "null",
+            "gpt-main",
+        );
+        // 当天派生 + 26 号派生（跨天）
+        write(
+            "2026/10/23/rollout-2026-10-23T15-10-10-11111111-2222-3333-4444-555555555555.jsonl",
+            r#"{"thread_spawn":{"parent_thread_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}}"#,
+            "gpt-worker-day23",
+        );
+        write(
+            "2026/10/26/rollout-2026-10-26T08-00-10-99999999-8888-7777-6666-555555555555.jsonl",
+            r#"{"thread_spawn":{"parent_thread_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}}"#,
+            "gpt-worker-day26",
+        );
+
+        let (agents, truncated) = codex_subagents(
+            "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            &[parent],
+            "X:/Demo",
+            iso_timestamp_ms("2026-10-23T15:02:04.142Z").unwrap(),
+            iso_timestamp_ms("2026-10-26T11:00:00.000Z").unwrap(),
+        );
+        let _ = truncated;
+        let models: Vec<&str> = agents
+            .iter()
+            .filter_map(|agent| agent.model.as_deref())
+            .collect();
+        assert!(
+            models.contains(&"gpt-worker-day23") && models.contains(&"gpt-worker-day26"),
+            "跨天子代理必须全部发现，实际：{:?}",
+            models
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
