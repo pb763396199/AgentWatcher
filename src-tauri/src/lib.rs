@@ -2421,6 +2421,75 @@ fn codex_thread_usage(thread_id: &str) -> Option<CachedJsonlUsage> {
     merged
 }
 
+/// 悬停/分析等用户显式动作走的无预算版本：绕开渐进填充预算直读链文件。
+fn codex_thread_usage_unbudgeted(thread_id: &str) -> Option<CachedJsonlUsage> {
+    let index = codex_rollout_file_index()?;
+    let chain_paths = index.get(thread_id)?;
+    let mut merged: Option<CachedJsonlUsage> = None;
+    for rollout_path in chain_paths {
+        let Some(entry) = cached_jsonl_usage_for_path_unbudgeted(rollout_path, parse_codex_usage)
+        else {
+            continue;
+        };
+        merged = Some(match merged {
+            None => entry,
+            Some(previous) => merge_codex_usage_segments(previous, entry),
+        });
+    }
+    merged
+}
+
+/// Codex 用量后台回填：扫描里没聚合完的链文件由独立线程无预算补齐，
+/// 卡片随前端 15 秒轮询陆续点亮。大文件在 debug 构建下单个就要数秒，
+/// 800ms 的轮内预算对 Codex 完全不够（实测长驻进程 0/80）。
+static CODEX_USAGE_BACKFILL_QUEUE: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
+static CODEX_USAGE_BACKFILL_RUNNING: AtomicBool = AtomicBool::new(false);
+
+fn enqueue_codex_usage_backfill(sessions: &[AgentSession]) {
+    let running = CODEX_USAGE_BACKFILL_RUNNING.load(Ordering::Relaxed);
+    if !running {
+        let mut pending = Vec::new();
+        if let Some(index) = codex_rollout_file_index() {
+            for session in sessions {
+                if session.provider != "codex" || session.usage.is_some() {
+                    continue;
+                }
+                let Some(thread_id) = session.id.strip_prefix("codex:") else {
+                    continue;
+                };
+                if let Some(paths) = index.get(thread_id) {
+                    pending.extend(paths.iter().cloned());
+                }
+            }
+        }
+        if pending.is_empty() {
+            return;
+        }
+        if let Ok(mut queue) = CODEX_USAGE_BACKFILL_QUEUE
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+        {
+            queue.extend(pending);
+        }
+        if !CODEX_USAGE_BACKFILL_RUNNING.swap(true, Ordering::Relaxed) {
+            std::thread::spawn(|| {
+                let mut processed = 0_usize;
+                while processed < 400 {
+                    let next = CODEX_USAGE_BACKFILL_QUEUE
+                        .get_or_init(|| Mutex::new(Vec::new()))
+                        .lock()
+                        .ok()
+                        .and_then(|mut queue| queue.pop());
+                    let Some(path) = next else { break };
+                    let _ = cached_jsonl_usage_for_path_unbudgeted(&path, parse_codex_usage);
+                    processed += 1;
+                }
+                CODEX_USAGE_BACKFILL_RUNNING.store(false, Ordering::Relaxed);
+            });
+        }
+    }
+}
+
 /// resume 链条上每个 rollout 片段只记自己那段的事件，token 总量是累计口径。
 /// 合并规则：事件计数（轮次/工具/模型调用/时长）求和；token、上下文等
 /// 累计字段取最新片段（其缺席时回退旧片段）；模型名与 top 工具合并。
@@ -2783,6 +2852,34 @@ pub fn session_usage_detail(id: String) -> SessionUsageDetail {
     }
     if let Some(session_id) = trimmed.strip_prefix("opencode:") {
         return opencode_usage_detail(session_id);
+    }
+    if let Some(session_id) = trimmed.strip_prefix("codex:") {
+        let mut detail = jsonl_usage_detail_for_session(trimmed).map_or_else(
+            || SessionUsageDetail { usage: None, top_tools: Vec::new() },
+            |entry| SessionUsageDetail {
+                usage: (!entry.usage.is_empty()).then_some(entry.usage),
+                top_tools: entry
+                    .top_tools
+                    .into_iter()
+                    .map(|(name, count)| UsageToolCount { name, count })
+                    .collect(),
+            },
+        );
+        if detail.usage.is_none() {
+            // 悬停是用户显式动作：绕开渐进预算直读，避免大文件会话
+            // 在长驻进程里迟迟没有用量
+            if let Some(entry) = codex_thread_usage_unbudgeted(session_id) {
+                if !entry.usage.is_empty() {
+                    detail.usage = Some(entry.usage);
+                    detail.top_tools = entry
+                        .top_tools
+                        .into_iter()
+                        .map(|(name, count)| UsageToolCount { name, count })
+                        .collect();
+                }
+            }
+        }
+        return detail;
     }
     if let Some(entry) = jsonl_usage_detail_for_session(trimmed) {
         let usage = (!entry.usage.is_empty()).then_some(entry.usage);
@@ -4614,6 +4711,7 @@ fn scan_codex_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<
         }
     }
 
+    enqueue_codex_usage_backfill(&sessions);
     sessions
 }
 
