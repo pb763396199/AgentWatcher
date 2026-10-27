@@ -9,7 +9,7 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - ZCode 会话
 - 会话用量展示（实验）：卡片紧凑用量行与悬浮预览「用量」区块，token/轮次/工具/模型/时长随扫描源能力而定，缺项显示 —。
 
-当前发布版本：v0.1.8。仓库使用 Tauri 2 作为桌面应用壳，前端入口 [ui/index.html](ui/index.html) 是唯一 UI 源文件。AgentWatcher 主仓库保持零插件可启动、构建和测试，外部插件通过独立 `*.awplugin` 描述文件发现和启用。
+当前发布版本：v0.1.9。仓库使用 Tauri 2 作为桌面应用壳，前端入口 [ui/index.html](ui/index.html) 是唯一 UI 源文件。AgentWatcher 主仓库保持零插件可启动、构建和测试，外部插件通过独立 `*.awplugin` 描述文件发现和启用。
 
 ## 当前 UI 入口
 
@@ -55,6 +55,7 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - **一键跳转**：点击卡片直接打开对应的 VS Code session
 - **悬浮预览**：悬停卡片右下角展开按钮显示最近用户输入和 AI 正文摘要，预览窗口可 resize 并记忆尺寸
 - **Handoff**：右键 session 卡片可携带上下文接续到 Copilot、Copilot CLI 或 Claude，新会话由目标 provider 负责承接
+- **会话打包跨电脑交接**：右键卡片把整个会话打成单个 zip 交接包（manifest 逐文件 SHA256 + 定位块 HANDOFF + 全量原始内容；工作区为 git 仓库时附 repo/分支/HEAD/未提交/未推送锚点），落系统临时目录并把文件本身写入剪贴板，Ctrl+V 直接粘贴发送；打包与接续导出会顺手清理 7 天前的临时产物
 - **Codex 会话接入**：接入 Codex 桌面会话，支持与 Copilot、Claude 一起显示状态与跳转
 - **OpenCode 会话接入**：读取本机 OpenCode 数据库，支持状态、预览、打开和 handoff
 - **ZCode 会话接入**：读取本机 ZCode 会话库，支持状态、预览和作为接续来源导出上下文（跳转暂不实现）

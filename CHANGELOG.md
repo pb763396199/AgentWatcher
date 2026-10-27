@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.1.9 - 2026-10-27
+
+- 新增「打包会话用于跨电脑交接」：右键会话卡片把整个会话打成单个 zip 交接包——`manifest.json`（逐文件 SHA256；工作区是 git 仓库时附 repo/分支/HEAD/未提交数/未推送提交数锚点）、`HANDOFF.md`（纯定位块，含一行代码锚点与隐私提醒，不带正文）、`README.md`（数据格式说明）与 `raw/` 原始内容全量。落 `%TEMP%\AgentWatcher\session-packages\` 并把 zip 文件本身写入系统剪贴板（CF_HDROP），在 IM/资源管理器 Ctrl+V 直接粘贴出发送；剪贴板被占用时退回显示完整路径并揭示所在文件夹。
+- raw 全量口径：Claude/Copilot 原样 JSONL（Copilot 另带 transcripts 覆盖文件；路径缺失时按会话 id 在各自目录重定位）；Codex 带同 thread 的全部 rollout 片段，`archived_sessions` 的 `.jsonl.zst` 解压进包（app-server 侧无本地转录的 `aw-` 线程如实报错）；Copilot CLI/OpenCode/ZCode 从 SQLite 全量导出 session/message/part（或 turns）行为 NDJSON。
+- temp 产物 7 天清理：打包与接续源导出收尾时顺手删除 `%TEMP%\AgentWatcher` 下 `session-packages\` 与 `handoff-sources\` 中超期旧文件（只删文件不删目录，失败忽略）。
+- 新增真实交互流程 `npm run test:tauri:flow -- 打包`（跳过静态占位卡、无本地转录的 Codex 卡自动回退）；新增 5 条单元测试覆盖六 provider 收集、manifest/SHA256 一致性、git 锚点、清理与错误路径。
+
+发布包：`AgentWatcher-v0.1.9-windows-x64.zip`
+
+SHA256：`C5B5CB783DB277B2F24C8FA881FACEC20C0F40FBC36677FE47F776D50C760614`
+
+验证：`cargo test --manifest-path src-tauri/Cargo.toml`（117 lib + CLI 分类 9 + 契约 8 全通过）、`npm run test:tauri:flow -- 打包`（真实打包 Codex 会话，剪贴板写入实证）、`npm run test:tauri:smoke`、`npm run build:ui`、Bridge 语法与 handoff 路由测试、`git diff --check`、`npm run package:exe`；真实归档 `.jsonl.zst` 打包实证；VSIX 重复安装两次仅稳定 ID；用户实测右键打包、IM 粘贴发送、外包内容（外部 agent 对真实包核验"对话层 100% 还原"）。已知限制：英文界面与浅色主题下的新菜单样式未逐项目视（文案与样式类已双语言同构）；黑窗修复以未复报计。
+
 ## v0.1.8 - 2026-10-24
 
 - 新增「会话分析」面板（悬浮预览用量区块或卡片右键进入）：单会话全生命周期视图——七个总指标、按模型分色的用量时间轴（自动粒度按会话跨度选桶宽，短会话分钟级、长会话到天）、上下文占用曲线（压缩回落自动标注，Codex 附窗口上限参考线）、活动节奏条（用户轮次菱形 + 工具密度）、按类型/按模型/高频工具三组分解；六源逐调用采集（Claude 按 message.id 去重、Codex 沿 rollout 链、ZCode 走 model_usage 观测表、OpenCode 走消息 tokens，Copilot CLI 数据源无用量如实降级）。
