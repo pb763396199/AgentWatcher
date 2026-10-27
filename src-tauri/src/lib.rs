@@ -1290,6 +1290,7 @@ pub fn export_codex_zst_transcript(source_path: &str) -> Result<String, String> 
     let mut writer = std::io::BufWriter::new(output);
     std::io::copy(&mut decoder, &mut writer).map_err(|error| error.to_string())?;
     writer.flush().map_err(|error| error.to_string())?;
+    cleanup_agentwatcher_temp_artifacts(current_time_ms());
     Ok(path_to_string(&target_path))
 }
 
@@ -3834,6 +3835,9 @@ pub fn prepare_handoff_source_context_blocking(
 // 契约见 workflow/会话卡片右键打包整个会话跨电脑交接/contract.md。
 
 const SESSION_PACKAGE_SCHEMA: &str = "agentwatcher-session-package/1";
+/// `%TEMP%\AgentWatcher` 下 session-packages 与 handoff-sources 产物的保留期：
+/// 导出动作时顺手清掉超过这个时长的旧文件（与 Windows 存储感知的临时文件口径一致）。
+const AGENTWATCHER_TEMP_ARTIFACT_MAX_AGE_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -3910,12 +3914,41 @@ fn export_session_package_blocking(
     };
     let output_path = session_package_output_path(&info.provider, &info.session_id);
     let (file_count, total_bytes) = write_session_package_zip(&entries, &info, &output_path)?;
+    cleanup_agentwatcher_temp_artifacts(current_time_ms());
     Ok(SessionPackageExport {
         path: path_to_string(&output_path),
         clipboard_written: false,
         file_count,
         total_bytes,
     })
+}
+
+/// 清理 `%TEMP%\AgentWatcher` 下 session-packages 与 handoff-sources 两个子目录里
+/// 超过保留期的旧产物。只扫这两个目录，删除失败忽略，不影响调用方主流程。
+fn cleanup_agentwatcher_temp_artifacts(now_ms: u64) {
+    let base = env::temp_dir().join("AgentWatcher");
+    for subdirectory in ["session-packages", "handoff-sources"] {
+        cleanup_stale_files_under(&base.join(subdirectory), now_ms);
+    }
+}
+
+/// 递归删除 root 下最后修改时间早于保留期的文件；目录保留，删除尽力而为。
+fn cleanup_stale_files_under(root: &Path, now_ms: u64) {
+    let deadline_ms = now_ms.saturating_sub(AGENTWATCHER_TEMP_ARTIFACT_MAX_AGE_MS);
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory_path) = pending.pop() {
+        for entry in read_directory(&directory_path) {
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                pending.push(entry_path);
+                continue;
+            }
+            let modified_ms = dir_entry_modified_ms(&entry);
+            if modified_ms < deadline_ms {
+                let _ = fs::remove_file(&entry_path);
+            }
+        }
+    }
 }
 
 fn session_package_output_path(provider: &str, session_id: &str) -> PathBuf {
@@ -7475,6 +7508,7 @@ fn write_handoff_source_markdown(
     }
     fs::rename(&temp_path, &path)
         .map_err(|error| format!("Failed to finalize {} handoff source: {}", provider, error))?;
+    cleanup_agentwatcher_temp_artifacts(current_time_ms());
     Ok(path)
 }
 
@@ -17994,5 +18028,41 @@ mod tests {
         assert!(handoff_text.contains(&head[..10]));
 
         let _ = fs::remove_dir_all(&repo_dir);
+    }
+
+    #[test]
+    fn session_package_cleans_stale_temp_artifacts() {
+        let root = session_package_temp_dir("cleanup");
+        let packages_dir = root.join("session-packages");
+        let sources_dir = root.join("handoff-sources").join("opencode");
+        fs::create_dir_all(&packages_dir).unwrap();
+        fs::create_dir_all(&sources_dir).unwrap();
+        let stale_zip = packages_dir.join("codex-old-1.zip");
+        let fresh_zip = packages_dir.join("codex-new-1.zip");
+        let stale_md = sources_dir.join("sess-old-123-1.md");
+        fs::write(&stale_zip, "old zip").unwrap();
+        fs::write(&fresh_zip, "new zip").unwrap();
+        fs::write(&stale_md, "old export").unwrap();
+        let fresh_ms = current_time_ms();
+        // 测试无法直接改文件 mtime，用伪造的"现在"把真实新建的文件推到 8 天前。
+        let stale_now_ms = fresh_ms + AGENTWATCHER_TEMP_ARTIFACT_MAX_AGE_MS + 24 * 60 * 60 * 1000;
+
+        cleanup_stale_files_under(&root.join("session-packages"), stale_now_ms);
+        assert!(!stale_zip.exists(), "超期 zip 应被清理");
+        assert!(!fresh_zip.exists(), "同一批文件在超期视角下都该清");
+
+        cleanup_stale_files_under(&root.join("handoff-sources"), stale_now_ms);
+        assert!(!stale_md.exists(), "超期接续导出应被清理");
+
+        // 真实"现在"视角：新写的文件必须保留，目录结构不动。
+        fs::write(&fresh_zip, "new zip").unwrap();
+        fs::write(&stale_md, "old export").unwrap();
+        cleanup_stale_files_under(&root.join("session-packages"), current_time_ms());
+        cleanup_stale_files_under(&root.join("handoff-sources"), current_time_ms());
+        assert!(fresh_zip.exists(), "7 天内的包不能被清");
+        assert!(stale_md.exists(), "7 天内的接续导出不能被清");
+        assert!(sources_dir.is_dir(), "清理只删文件不删目录");
+
+        let _ = fs::remove_dir_all(&root);
     }
 }
