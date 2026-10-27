@@ -3940,13 +3940,15 @@ fn session_package_git_anchor(workspace_path: &str) -> Option<Value> {
         return None;
     }
     let run_git = |args: &[&str]| -> Option<String> {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(&workspace)
-            .args(args)
-            .stdin(Stdio::null())
-            .output()
-            .ok()?;
+        let mut command = Command::new("git");
+        command.arg("-C").arg(&workspace).args(args).stdin(Stdio::null());
+        // GUI 子系统进程拉起控制台程序必须带 CREATE_NO_WINDOW，否则每个
+        // git 子进程都会闪一个终端窗口（用户实测打包时连续弹黑窗）。
+        #[cfg(target_os = "windows")]
+        {
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+        let output = command.output().ok()?;
         if !output.status.success() {
             return None;
         }
