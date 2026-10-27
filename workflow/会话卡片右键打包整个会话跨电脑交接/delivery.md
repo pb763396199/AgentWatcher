@@ -6,10 +6,12 @@ artifact_id: ar_01M5YDKREF000EVA9MCRK286JW
 work_item_id: wi_25PNYKYZZZEZF9VBX61N79GPEG
 created_at: 2026-10-27T10:35:00Z
 producer: aes-finish
-outcome: ready_to_land
+outcome: delivered
 supersedes: null
 contract_revision: 4
 verified_at_commit: c948a518afddfb789250e52485094a5ac85dd09c
+landing_revision: 3b7dcf0832d471d4c7135498e67158a6a78d57aa
+landing_branch: dev
 dependencies:
   work_item_contract_digest: sha256:e03deeaffb83f1d3d5bcc288625d29642afd773ef027a39c45750a1581c454813
   artifacts: []
