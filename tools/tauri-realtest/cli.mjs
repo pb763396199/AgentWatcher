@@ -67,6 +67,13 @@ const aliasToFlow = new Map([
   ['settings-perf', 'settings-performance'],
   ['设置性能', 'settings-performance'],
   ['设置卡顿', 'settings-performance'],
+  ['session-package', 'session-package'],
+  ['session-packaging', 'session-package'],
+  ['package-session', 'session-package'],
+  ['package', 'session-package'],
+  ['打包', 'session-package'],
+  ['打包会话', 'session-package'],
+  ['会话打包', 'session-package'],
   ['filtering', 'filtering'],
   ['filters', 'filtering'],
   ['筛选', 'filtering'],
@@ -84,6 +91,7 @@ const flowDisplay = {
   'zcode-session': 'ZCode 会话卡片流程',
   'zcode-handoff-context': 'ZCode 接续上下文流程',
   'settings-performance': '设置切换性能流程',
+  'session-package': '会话打包跨电脑交接流程',
   filtering: '主面板筛选流程',
 };
 
@@ -198,6 +206,8 @@ try {
       await runStep('验证 OpenCode 接续 Prompt 可读取来源文件', () => runOpenCodeHandoffContextFlow());
     } else if (flow === 'settings-performance') {
       await runStep('打开子面板后测量设置切换延迟', () => runSettingsPerformanceFlow());
+    } else if (flow === 'session-package') {
+      await runStep('右键打包会话并验证交接包', () => runSessionPackageFlow());
     } else if (flow === 'filtering') {
       await runStep('验证主面板 provider、搜索、空状态和 todo workspace 过滤', () => runFilteringFlow());
     }
@@ -280,7 +290,7 @@ function normalizeFlows(rawFlows) {
   const flows = rawFlows.map(flow => {
     const normalized = aliasToFlow.get(String(flow).trim().toLowerCase());
     if (!normalized) {
-      throw new Error(`未知流程：${flow}。可用流程：冒烟、任务面板、性能面板、接续面板、opencode-session、opencode-handoff-context、settings-performance、filtering。`);
+      throw new Error(`未知流程：${flow}。可用流程：冒烟、任务面板、性能面板、接续面板、opencode-session、opencode-handoff-context、settings-performance、session-package、filtering。`);
     }
     return normalized;
   });
@@ -1272,6 +1282,130 @@ async function runZcodeHandoffContextFlow() {
     来源文件: sourcePath,
     来源文件大小: sourceText.length,
     Prompt片段: prompt.slice(0, 800),
+    截图: screenshot,
+  };
+}
+
+async function runSessionPackageFlow() {
+  const page = await getMainPage();
+  await assertTauriPage(page, '主窗口');
+
+  await page.waitForFunction(() => {
+    // 静态 mock 卡没有 data-session-id，只认扫描出来的真实卡片。
+    return Array.from(document.querySelectorAll('.lane .session-card'))
+      .some(card => (card.dataset.sessionId || '').trim().length > 0);
+  }, null, { timeout: 30000 });
+
+  // 优先打包 Codex 卡片：片段链与归档是最复杂的收集路径；该线程无本地 rollout
+  // （app-server 线程可能没有本地转录）时按 provider 顺序回退到下一张可打包的卡。
+  const providers = await page.evaluate(() => {
+    const present = new Set(
+      Array.from(document.querySelectorAll('.lane .session-card'))
+        .filter(card => (card.dataset.sessionId || '').trim().length > 0)
+        .map(card => card.dataset.provider)
+        .filter(Boolean),
+    );
+    const ordered = ['codex', 'claude', 'zcode', 'opencode', 'copilot', 'copilot-cli']
+      .filter(provider => present.has(provider));
+    for (const provider of present) {
+      if (!ordered.includes(provider)) ordered.push(provider);
+    }
+    return ordered;
+  });
+  const attempts = [];
+  const laneCardSample = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll('.lane .session-card')).slice(0, 5).map(element => ({
+      sessionId: element.dataset.sessionId || '',
+      alertId: element.dataset.alertId || '',
+      provider: element.dataset.provider || '',
+      isAlert: element.classList.contains('waiting-alert-card'),
+      text: (element.textContent || '').slice(0, 40),
+    }));
+  });
+  const realCardSelector = '.lane .session-card[data-session-id]:not([data-session-id=""])';
+  attempts.push({ provider: '(lane样本)', sessionId: JSON.stringify(laneCardSample), toast: '' });
+  const packagesDir = path.join(os.tmpdir(), 'AgentWatcher', 'session-packages');
+  let cardInfo = null;
+  let toastText = '';
+  let menuLabel = '';
+  let startedAtMs = 0;
+  for (const provider of providers) {
+    const card = page.locator(`${realCardSelector}[data-provider="${provider}"]`).first();
+    if (!(await card.count())) continue;
+    await card.scrollIntoViewIfNeeded();
+    const candidateInfo = await card.evaluate(element => ({
+      sessionId: element.dataset.sessionId || '',
+      provider: element.dataset.provider || '',
+      title: element.dataset.sessionTitle || element.querySelector('.session-title')?.textContent || '',
+    }));
+
+    await card.click({ button: 'right' });
+    const menuItem = page.locator('#handoffPackageSession');
+    await menuItem.waitFor({ state: 'visible', timeout: 10000 });
+    if (!menuLabel) menuLabel = ((await menuItem.textContent()) || '').trim();
+    if (!menuLabel) {
+      throw new Error('打包菜单项文案为空：i18n 未生效。');
+    }
+
+    await page.locator('#toast').evaluate(element => {
+      element.textContent = '';
+      element.classList.remove('show', 'error');
+    });
+    startedAtMs = Date.now();
+    await menuItem.click();
+    await page.waitForFunction(() => {
+      const text = document.querySelector('#toast')?.textContent || '';
+      return text && !/正在打包会话|Packaging session/i.test(text);
+    }, null, { timeout: 60000 });
+    const candidateToast = await page.locator('#toast').textContent().catch(() => '');
+    attempts.push({ provider: candidateInfo.provider || '(任意)', sessionId: candidateInfo.sessionId, toast: candidateToast });
+    if (/No local Codex rollout files/i.test(candidateToast)) {
+      continue; // 该线程无本地转录，换下一张卡再试。
+    }
+    if (!/已打包|Packaged/i.test(candidateToast)) {
+      throw new Error(`打包失败，toast 返回：${candidateToast}；lane 样本：${JSON.stringify(laneCardSample)}；尝试：${JSON.stringify(attempts)}`);
+    }
+    cardInfo = candidateInfo;
+    toastText = candidateToast;
+    break;
+  }
+  if (!cardInfo) {
+    throw new Error(`没有卡片可打包：${JSON.stringify(attempts)}`);
+  }
+
+  // 剪贴板成功时 toast 不带路径，产物从 session-packages 目录按时间新于流程起点核对。
+  if (!fs.existsSync(packagesDir)) {
+    throw new Error(`打包目录不存在：${packagesDir}`);
+  }
+  const produced = fs.readdirSync(packagesDir)
+    .map(name => {
+      const filePath = path.join(packagesDir, name);
+      const stat = fs.statSync(filePath);
+      return { name, filePath, mtimeMs: stat.mtimeMs, size: stat.size };
+    })
+    .filter(item => item.name.endsWith('.zip') && item.mtimeMs >= startedAtMs - 1000)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+  if (produced.length === 0) {
+    throw new Error(`session-packages 目录里没有本次流程生成的 zip：${packagesDir}`);
+  }
+  const packageFile = produced[0];
+  if (packageFile.size <= 0) {
+    throw new Error(`交接包是空文件：${packageFile.filePath}`);
+  }
+  if (cardInfo.provider && !packageFile.name.toLowerCase().startsWith(`${cardInfo.provider.toLowerCase()}-`)) {
+    throw new Error(`交接包文件名与卡片 provider 不符：卡片 ${cardInfo.provider}，文件 ${packageFile.name}`);
+  }
+  const clipboardWritten = /复制到剪贴板|copied to clipboard/i.test(toastText);
+  const screenshot = await saveScreenshot(page, 'session-package-after-click.png');
+
+  return {
+    卡片: cardInfo,
+    菜单项文案: menuLabel,
+    尝试记录: attempts,
+    Toast: toastText,
+    交接包: packageFile.filePath,
+    交接包大小: packageFile.size,
+    剪贴板写入: clipboardWritten,
     截图: screenshot,
   };
 }

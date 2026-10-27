@@ -3829,6 +3829,827 @@ pub fn prepare_handoff_source_context_blocking(
     })
 }
 
+// ---------- 会话交接包（跨电脑打包传递） ----------
+// 包结构：manifest.json + HANDOFF.md（短定位块）+ raw/（原始会话内容，全量）。
+// 契约见 workflow/会话卡片右键打包整个会话跨电脑交接/contract.md。
+
+const SESSION_PACKAGE_SCHEMA: &str = "agentwatcher-session-package/1";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionPackageExport {
+    path: String,
+    clipboard_written: bool,
+    file_count: u32,
+    total_bytes: u64,
+}
+
+#[derive(Debug)]
+struct SessionPackageEntry {
+    zip_path: String,
+    source_path: Option<String>,
+    source_kind: &'static str,
+    payload: SessionPackagePayload,
+}
+
+#[derive(Debug)]
+enum SessionPackagePayload {
+    /// 原始文件原样进包。
+    File(PathBuf),
+    /// .jsonl.zst 归档解压后的内容，zip 内用去掉 .zst 的文件名。
+    ZstDecompressed(PathBuf),
+    /// SQLite 行导出等生成内容。
+    Bytes(Vec<u8>),
+}
+
+struct SessionPackageInfo {
+    provider: String,
+    session_id: String,
+    title: String,
+    workspace_path: String,
+    exported_at_ms: u64,
+}
+
+#[tauri::command]
+async fn export_session_package(
+    request: HandoffSourceContextRequest,
+) -> Result<SessionPackageExport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut export = export_session_package_blocking(&request)?;
+        export.clipboard_written = copy_file_to_clipboard(Path::new(&export.path));
+        if !export.clipboard_written {
+            let _ = tauri_plugin_opener::reveal_item_in_dir(&export.path);
+        }
+        Ok(export)
+    })
+    .await
+    .map_err(|error| format!("Failed to wait for session package task: {}", error))?
+}
+
+fn export_session_package_blocking(
+    request: &HandoffSourceContextRequest,
+) -> Result<SessionPackageExport, String> {
+    let provider = clean_option(request.provider.as_deref())
+        .ok_or_else(|| "Missing provider for session package".to_string())?;
+    let session_id = clean_option(request.id.as_deref())
+        .ok_or_else(|| "Missing session id for session package".to_string())?;
+    let entries = collect_session_package_entries(request)?;
+    let info = SessionPackageInfo {
+        provider: provider.to_string(),
+        session_id: session_id.to_string(),
+        title: clean_option(request.title.as_deref()).unwrap_or("").to_string(),
+        workspace_path: clean_option(request.workspace_path.as_deref())
+            .unwrap_or("")
+            .to_string(),
+        exported_at_ms: current_time_ms(),
+    };
+    let output_path = session_package_output_path(&info.provider, &info.session_id);
+    let (file_count, total_bytes) = write_session_package_zip(&entries, &info, &output_path)?;
+    Ok(SessionPackageExport {
+        path: path_to_string(&output_path),
+        clipboard_written: false,
+        file_count,
+        total_bytes,
+    })
+}
+
+fn session_package_output_path(provider: &str, session_id: &str) -> PathBuf {
+    let token = safe_file_name_token(&format!(
+        "{}-{}-{}",
+        provider,
+        raw_request_session_id(Some(session_id)).unwrap_or(session_id),
+        current_time_ms()
+    ));
+    env::temp_dir()
+        .join("AgentWatcher")
+        .join("session-packages")
+        .join(format!("{}.zip", token))
+}
+
+fn collect_session_package_entries(
+    request: &HandoffSourceContextRequest,
+) -> Result<Vec<SessionPackageEntry>, String> {
+    let provider = clean_option(request.provider.as_deref())
+        .ok_or_else(|| "Missing provider for session package".to_string())?;
+    match provider {
+        "claude" => claude_package_entries(request),
+        "copilot" => copilot_package_entries(request),
+        "copilot-cli" => {
+            let key = package_session_key(request, "copilot-cli")?;
+            copilot_cli_package_entries_from_env(request, &key)
+        }
+        "codex" => {
+            let key = package_session_key(request, "codex")?;
+            let codex_home = codex_home_path()
+                .ok_or_else(|| "Missing USERPROFILE for Codex session package".to_string())?;
+            codex_package_entries(&codex_home, &key)
+        }
+        "opencode" => {
+            let key = raw_request_session_id(request.id.as_deref())
+                .map(str::to_string)
+                .or_else(|| {
+                    request
+                        .session_resource
+                        .as_deref()
+                        .and_then(opencode_session_id_from_resource)
+                })
+                .ok_or_else(|| "Missing OpenCode source session id".to_string())?;
+            let db_path = opencode_db_path()
+                .filter(|path| path.exists())
+                .ok_or_else(|| "OpenCode database not found".to_string())?;
+            sqlite_session_package_entries("opencode", &db_path, &key)
+        }
+        "zcode" => {
+            let key = package_session_key(request, "zcode")?;
+            let db_path = zcode_db_path()
+                .filter(|path| path.exists())
+                .ok_or_else(|| "ZCode database not found".to_string())?;
+            sqlite_session_package_entries("zcode", &db_path, &key)
+        }
+        other => Err(format!("Unsupported session package provider: {}", other)),
+    }
+}
+
+fn package_session_key(request: &HandoffSourceContextRequest, provider: &str) -> Result<String, String> {
+    let id = clean_option(request.id.as_deref())
+        .ok_or_else(|| format!("Missing {} session id", provider))?;
+    Ok(raw_request_session_id(Some(id))
+        .map(str::to_string)
+        .unwrap_or_else(|| id.trim().to_string()))
+}
+
+fn codex_home_path() -> Option<PathBuf> {
+    env::var_os("USERPROFILE").map(|profile| PathBuf::from(profile).join(".codex"))
+}
+
+fn claude_package_entries(request: &HandoffSourceContextRequest) -> Result<Vec<SessionPackageEntry>, String> {
+    let key = package_session_key(request, "claude")?;
+    let path = clean_option(request.session_path.as_deref())
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+        .or_else(|| locate_claude_session_file(&key))
+        .ok_or_else(|| {
+            format!(
+                "Claude session file not found for {}; no {}*.jsonl under ~/.claude/projects",
+                key, key
+            )
+        })?;
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .ok_or_else(|| "Claude session file has no file name".to_string())?;
+    Ok(vec![SessionPackageEntry {
+        zip_path: format!("raw/claude/{}", file_name),
+        source_path: Some(path_to_string(&path)),
+        source_kind: "file",
+        payload: SessionPackagePayload::File(path),
+    }])
+}
+
+/// UI 传来的 sessionPath 可能缺失（waiting 快照、DOM 兜底、sessions-index 无路径条目）：
+/// 按 <会话id>.jsonl 的文件名在 ~/.claude/projects 下重新定位，取修改时间最新的一条。
+fn locate_claude_session_file(key: &str) -> Option<PathBuf> {
+    let user_profile_path = env::var_os("USERPROFILE")?;
+    let projects_root = PathBuf::from(user_profile_path).join(".claude").join("projects");
+    locate_session_file_under(&projects_root, &format!("{}.jsonl", key))
+}
+
+/// 在 root 下递归找与 file_name 同名（大小写不敏感）的文件，多命中取修改时间最新。
+fn locate_session_file_under(root: &Path, file_name: &str) -> Option<PathBuf> {
+    let expected = file_name.to_ascii_lowercase();
+    let mut best: Option<(PathBuf, u64)> = None;
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory_path) = pending.pop() {
+        for entry in read_directory(&directory_path) {
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                pending.push(entry_path);
+                continue;
+            }
+            let matches = entry_path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_ascii_lowercase() == expected)
+                .unwrap_or(false);
+            if !matches {
+                continue;
+            }
+            let modified_ms = dir_entry_modified_ms(&entry);
+            if best.as_ref().is_none_or(|(_, current)| modified_ms > *current) {
+                best = Some((entry_path, modified_ms));
+            }
+        }
+    }
+    best.map(|(path, _)| path)
+}
+
+fn copilot_package_entries(request: &HandoffSourceContextRequest) -> Result<Vec<SessionPackageEntry>, String> {
+    let key = package_session_key(request, "copilot")?;
+    let path = clean_option(request.session_path.as_deref())
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+        .or_else(|| locate_copilot_chat_session_file(&key))
+        .ok_or_else(|| {
+            format!(
+                "Copilot session file not found for {}; no chatSessions/{}.jsonl in workspaceStorage",
+                key, key
+            )
+        })?;
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .ok_or_else(|| "Copilot session file has no file name".to_string())?;
+    let mut entries = vec![SessionPackageEntry {
+        zip_path: format!("raw/copilot/chat-session/{}", file_name),
+        source_path: Some(path_to_string(&path)),
+        source_kind: "file",
+        payload: SessionPackagePayload::File(path.clone()),
+    }];
+    if let Some(transcript_path) = copilot_transcript_path(&path) {
+        if transcript_path.is_file() {
+            let transcript_name = transcript_path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| file_name.clone());
+            entries.push(SessionPackageEntry {
+                zip_path: format!("raw/copilot/transcript/{}", transcript_name),
+                source_path: Some(path_to_string(&transcript_path)),
+                source_kind: "file",
+                payload: SessionPackagePayload::File(transcript_path),
+            });
+        }
+    }
+    Ok(entries)
+}
+
+/// 同一 thread id 的全部 rollout 片段：sessions 目录的活跃链 + archived_sessions
+/// 的归档副本（.jsonl 与 .jsonl.zst），按修改时间从旧到新，zip 内按来源分目录。
+fn codex_package_entries(codex_home: &Path, thread_id: &str) -> Result<Vec<SessionPackageEntry>, String> {
+    let mut fragments: Vec<(PathBuf, bool)> = Vec::new();
+    for (root, archived) in [
+        (codex_home.join("sessions"), false),
+        (codex_home.join("archived_sessions"), true),
+    ] {
+        let mut pending = vec![root];
+        while let Some(directory_path) = pending.pop() {
+            for entry in read_directory(&directory_path) {
+                let entry_path = entry.path();
+                if entry_path.is_dir() {
+                    pending.push(entry_path);
+                    continue;
+                }
+                let is_zst = has_extension(&entry_path, "zst");
+                if !has_extension(&entry_path, "jsonl") && !is_zst {
+                    continue;
+                }
+                if codex_rollout_session_id_candidates(&entry_path)
+                    .iter()
+                    .any(|candidate| candidate == thread_id)
+                {
+                    fragments.push((entry_path, archived));
+                }
+            }
+        }
+    }
+    if fragments.is_empty() {
+        return Err(format!(
+            "No local Codex rollout files for session {}; this thread has no local transcript to package",
+            thread_id
+        ));
+    }
+    fragments.sort_by_key(|(path, _)| {
+        fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0)
+    });
+
+    let mut entries = Vec::new();
+    for (path, archived) in fragments {
+        let is_zst = has_extension(&path, "zst");
+        let mut file_name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if is_zst {
+            file_name = file_name
+                .strip_suffix(".zst")
+                .map(str::to_string)
+                .unwrap_or(file_name);
+        }
+        let source_kind = if is_zst { "zst-decompressed" } else { "file" };
+        let bucket = if archived { "archived" } else { "sessions" };
+        if file_name.trim().is_empty() {
+            continue;
+        }
+        entries.push(SessionPackageEntry {
+            zip_path: format!("raw/codex/{}/{}", bucket, file_name),
+            source_path: Some(path_to_string(&path)),
+            source_kind,
+            payload: if is_zst {
+                SessionPackagePayload::ZstDecompressed(path)
+            } else {
+                SessionPackagePayload::File(path)
+            },
+        });
+    }
+    Ok(entries)
+}
+
+fn copilot_cli_package_entries_from_env(
+    request: &HandoffSourceContextRequest,
+    session_key: &str,
+) -> Result<Vec<SessionPackageEntry>, String> {
+    let mut db_candidates: Vec<PathBuf> = Vec::new();
+    if let Some(db_path) = clean_option(request.session_path.as_deref()) {
+        let path = PathBuf::from(db_path);
+        if path.is_file() {
+            db_candidates.push(path);
+        }
+    }
+    for path in copilot_cli_session_store_paths() {
+        if !db_candidates.contains(&path) {
+            db_candidates.push(path);
+        }
+    }
+    for db_path in db_candidates {
+        let Ok(connection) = Connection::open_with_flags(
+            &db_path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        ) else {
+            continue;
+        };
+        let _ = connection.busy_timeout(Duration::from_millis(OPENCODE_SQLITE_BUSY_TIMEOUT_MS));
+        let _ = connection.pragma_update(None, "query_only", "ON");
+        if sqlite_table_has_row(&connection, "sessions", session_key) {
+            return copilot_cli_package_entries_from_connection(&connection, session_key);
+        }
+    }
+    Err(format!(
+        "Copilot CLI session {} not found in any session store",
+        session_key
+    ))
+}
+
+fn copilot_cli_package_entries_from_connection(
+    connection: &Connection,
+    session_key: &str,
+) -> Result<Vec<SessionPackageEntry>, String> {
+    let session_dump = dump_sqlite_rows_as_ndjson(
+        connection,
+        "select * from sessions where id = ?1 limit 1",
+        vec![session_key.to_string()],
+    )?;
+    if session_dump.is_empty() {
+        return Err(format!("Copilot CLI session {} not found", session_key));
+    }
+    let turns_dump = dump_sqlite_rows_as_ndjson(
+        connection,
+        "select * from turns where session_id = ?1 order by turn_index asc, id asc",
+        vec![session_key.to_string()],
+    )?;
+    Ok(vec![
+        SessionPackageEntry {
+            zip_path: "raw/copilot-cli/session.ndjson".to_string(),
+            source_path: None,
+            source_kind: "sqlite-export",
+            payload: SessionPackagePayload::Bytes(session_dump),
+        },
+        SessionPackageEntry {
+            zip_path: "raw/copilot-cli/turns.ndjson".to_string(),
+            source_path: None,
+            source_kind: "sqlite-export",
+            payload: SessionPackagePayload::Bytes(turns_dump),
+        },
+    ])
+}
+
+/// OpenCode / ZCode：session 行 + message/part 全量行导出为 NDJSON。
+fn sqlite_session_package_entries(
+    provider: &str,
+    db_path: &Path,
+    session_key: &str,
+) -> Result<Vec<SessionPackageEntry>, String> {
+    let connection = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|error| format!("Failed to open {} database: {}", provider, error))?;
+    let _ = connection.busy_timeout(Duration::from_millis(OPENCODE_SQLITE_BUSY_TIMEOUT_MS));
+    let _ = connection.pragma_update(None, "query_only", "ON");
+    sqlite_session_package_entries_from_connection(provider, &connection, session_key)
+}
+
+fn sqlite_session_package_entries_from_connection(
+    provider: &str,
+    connection: &Connection,
+    session_key: &str,
+) -> Result<Vec<SessionPackageEntry>, String> {
+    if !sqlite_table_has_row(connection, "session", session_key) {
+        return Err(format!("Session {} not found in {} database", session_key, provider));
+    }
+    let session_dump = dump_sqlite_rows_as_ndjson(
+        connection,
+        "select * from session where id = ?1 limit 1",
+        vec![session_key.to_string()],
+    )?;
+    let messages_dump = dump_sqlite_rows_as_ndjson(
+        connection,
+        "select * from message where session_id = ?1 order by time_created asc, time_updated asc, id asc",
+        vec![session_key.to_string()],
+    )?;
+    let parts_dump = dump_sqlite_rows_as_ndjson(
+        connection,
+        "select * from part where session_id = ?1 order by time_created asc, time_updated asc, id asc",
+        vec![session_key.to_string()],
+    )?;
+    Ok(vec![
+        SessionPackageEntry {
+            zip_path: format!("raw/{}/session.ndjson", provider),
+            source_path: None,
+            source_kind: "sqlite-export",
+            payload: SessionPackagePayload::Bytes(session_dump),
+        },
+        SessionPackageEntry {
+            zip_path: format!("raw/{}/messages.ndjson", provider),
+            source_path: None,
+            source_kind: "sqlite-export",
+            payload: SessionPackagePayload::Bytes(messages_dump),
+        },
+        SessionPackageEntry {
+            zip_path: format!("raw/{}/parts.ndjson", provider),
+            source_path: None,
+            source_kind: "sqlite-export",
+            payload: SessionPackagePayload::Bytes(parts_dump),
+        },
+    ])
+}
+
+fn sqlite_table_has_row(connection: &Connection, table: &str, session_key: &str) -> bool {
+    connection
+        .query_row(
+            &format!("select 1 from {} where id = ?1 limit 1", table),
+            rusqlite::params![session_key],
+            |_| Ok(()),
+        )
+        .is_ok()
+}
+
+fn dump_sqlite_rows_as_ndjson(
+    connection: &Connection,
+    sql: &str,
+    params: Vec<String>,
+) -> Result<Vec<u8>, String> {
+    let mut statement = connection
+        .prepare(sql)
+        .map_err(|error| format!("Failed to prepare package export query: {}", error))?;
+    let column_names = statement
+        .column_names()
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let mut rows = statement
+        .query(rusqlite::params_from_iter(params.iter()))
+        .map_err(|error| format!("Failed to run package export query: {}", error))?;
+    let mut output = String::new();
+    while let Some(row) = rows
+        .next()
+        .map_err(|error| format!("Failed to read package export row: {}", error))?
+    {
+        let mut object = serde_json::Map::new();
+        for (index, name) in column_names.iter().enumerate() {
+            let value = row
+                .get_ref(index)
+                .map_err(|error| format!("Failed to read package export column: {}", error))?;
+            object.insert(name.clone(), sqlite_value_to_json(value));
+        }
+        output.push_str(
+            &serde_json::to_string(&Value::Object(object))
+                .map_err(|error| format!("Failed to serialize package export row: {}", error))?,
+        );
+        output.push('\n');
+    }
+    Ok(output.into_bytes())
+}
+
+fn sqlite_value_to_json(value: rusqlite::types::ValueRef<'_>) -> Value {
+    match value {
+        rusqlite::types::ValueRef::Null => Value::Null,
+        rusqlite::types::ValueRef::Integer(number) => Value::from(number),
+        rusqlite::types::ValueRef::Real(number) => Value::from(number),
+        rusqlite::types::ValueRef::Text(text) => {
+            Value::from(String::from_utf8_lossy(text).into_owned())
+        }
+        rusqlite::types::ValueRef::Blob(bytes) => Value::from(hex_encode_bytes(bytes)),
+    }
+}
+
+fn hex_encode_bytes(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push_str(&format!("{:02x}", byte));
+    }
+    output
+}
+
+/// 写交接包：HANDOFF.md + raw 条目 + manifest.json（最后写，含逐文件 SHA256）。
+/// 先写 .tmp 再原子替换，失败不产出半截 zip。
+fn write_session_package_zip(
+    entries: &[SessionPackageEntry],
+    info: &SessionPackageInfo,
+    output_path: &Path,
+) -> Result<(u32, u64), String> {
+    use sha2::{Digest, Sha256};
+    use zip::write::SimpleFileOptions;
+    use zip::{CompressionMethod, ZipWriter};
+
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create session package directory: {}", error))?;
+    }
+    let temp_path = output_path.with_extension("zip.tmp");
+    let file = File::create(&temp_path)
+        .map_err(|error| format!("Failed to create session package file: {}", error))?;
+    let mut zip_writer = ZipWriter::new(std::io::BufWriter::new(file));
+    let zip_options = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Deflated)
+        .large_file(true);
+
+    let mut file_records: Vec<Value> = Vec::new();
+    let mut total_bytes: u64 = 0;
+    let mut write_error: Option<String> = None;
+
+    let handoff_markdown = render_session_package_handoff(entries, info, &[]);
+    if let Err(error) = zip_writer.start_file("HANDOFF.md", zip_options) {
+        write_error = Some(format!("Failed to write HANDOFF.md: {}", error));
+    } else if let Err(error) = zip_writer.write_all(handoff_markdown.as_bytes()) {
+        write_error = Some(format!("Failed to write HANDOFF.md: {}", error));
+    }
+
+    for entry in entries {
+        if write_error.is_some() {
+            break;
+        }
+        let mut payload_reader: Box<dyn Read> = match &entry.payload {
+            SessionPackagePayload::File(path) => match File::open(path) {
+                Ok(file) => Box::new(std::io::BufReader::new(file)),
+                Err(error) => {
+                    write_error = Some(format!(
+                        "Failed to read source file {}: {}",
+                        path.display(),
+                        error
+                    ));
+                    break;
+                }
+            },
+            SessionPackagePayload::ZstDecompressed(path) => match File::open(path)
+                .map_err(|error| error.to_string())
+                .and_then(|file| {
+                    ruzstd::decoding::StreamingDecoder::new(file)
+                        .map_err(|error| error.to_string())
+                })
+            {
+                Ok(decoder) => Box::new(decoder),
+                Err(error) => {
+                    write_error = Some(format!(
+                        "Failed to decompress archived source {}: {}",
+                        path.display(),
+                        error
+                    ));
+                    break;
+                }
+            },
+            SessionPackagePayload::Bytes(data) => Box::new(std::io::Cursor::new(data.clone())),
+        };
+
+        if let Err(error) = zip_writer.start_file(entry.zip_path.clone(), zip_options) {
+            write_error = Some(format!("Failed to write package entry: {}", error));
+            break;
+        }
+        let mut hasher = Sha256::new();
+        let mut byte_count: u64 = 0;
+        let mut buffer = vec![0_u8; 64 * 1024];
+        loop {
+            match payload_reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read_bytes) => {
+                    hasher.update(&buffer[..read_bytes]);
+                    byte_count += read_bytes as u64;
+                    if let Err(error) = zip_writer.write_all(&buffer[..read_bytes]) {
+                        write_error = Some(format!("Failed to write package entry: {}", error));
+                        break;
+                    }
+                }
+                Err(error) => {
+                    write_error = Some(format!(
+                        "Failed to read package source {}: {}",
+                        entry.zip_path, error
+                    ));
+                    break;
+                }
+            }
+            if write_error.is_some() {
+                break;
+            }
+        }
+        if write_error.is_some() {
+            break;
+        }
+        total_bytes += byte_count;
+        file_records.push(json!({
+            "path": entry.zip_path,
+            "bytes": byte_count,
+            "sha256": format!("{:x}", hasher.finalize()),
+            "sourceKind": entry.source_kind,
+            "sourcePath": entry.source_path.clone().unwrap_or_default(),
+        }));
+    }
+
+    if write_error.is_none() {
+        let manifest = build_session_package_manifest(entries, info, &file_records);
+        let manifest_text = serde_json::to_string_pretty(&manifest)
+            .map_err(|error| format!("Failed to serialize manifest: {}", error))?;
+        if let Err(error) = zip_writer.start_file("manifest.json", zip_options) {
+            write_error = Some(format!("Failed to write manifest.json: {}", error));
+        } else if let Err(error) = zip_writer.write_all(manifest_text.as_bytes()) {
+            write_error = Some(format!("Failed to write manifest.json: {}", error));
+        }
+    }
+
+    if let Some(error) = write_error {
+        drop(zip_writer);
+        let _ = fs::remove_file(&temp_path);
+        return Err(error);
+    }
+    zip_writer
+        .finish()
+        .map_err(|error| format!("Failed to finalize session package: {}", error))?;
+    if output_path.exists() {
+        fs::remove_file(output_path)
+            .map_err(|error| format!("Failed to replace session package: {}", error))?;
+    }
+    fs::rename(&temp_path, output_path)
+        .map_err(|error| format!("Failed to finalize session package: {}", error))?;
+    Ok((entries.len() as u32, total_bytes))
+}
+
+fn build_session_package_manifest(
+    _entries: &[SessionPackageEntry],
+    info: &SessionPackageInfo,
+    file_records: &[Value],
+) -> Value {
+    json!({
+        "schema": SESSION_PACKAGE_SCHEMA,
+        "provider": info.provider,
+        "sessionId": info.session_id,
+        "title": info.title,
+        "workspacePath": info.workspace_path,
+        "exportedAtMs": info.exported_at_ms,
+        "exportedAt": format_utc_timestamp_ms(info.exported_at_ms),
+        "exportedBy": format!("AgentWatcher {}", env!("CARGO_PKG_VERSION")),
+        "files": file_records,
+    })
+}
+
+/// HANDOFF.md 只放定位块（用户拍板：不额外携带上下文，细节读 raw/ 原始文件）。
+fn render_session_package_handoff(
+    entries: &[SessionPackageEntry],
+    info: &SessionPackageInfo,
+    _file_records: &[Value],
+) -> String {
+    let mut lines = vec![
+        "# 会话交接包".to_string(),
+        String::new(),
+        format!("- 会话提供方：{}", info.provider),
+        format!("- 会话 ID：{}", info.session_id),
+        format!("- 标题：{}", info.title),
+        format!("- 工作区：{}", info.workspace_path),
+        format!(
+            "- 导出时间：{}（AgentWatcher {}）",
+            format_utc_timestamp_ms(info.exported_at_ms),
+            env!("CARGO_PKG_VERSION")
+        ),
+        String::new(),
+        "## 文件清单".to_string(),
+    ];
+    for entry in entries {
+        let source_note = match entry.source_kind {
+            "zst-decompressed" => "（zst 归档解压）",
+            "sqlite-export" => "（SQLite 表全量导出）",
+            _ => "（原始文件）",
+        };
+        lines.push(format!("- {}{}", entry.zip_path, source_note));
+    }
+    lines.push(String::new());
+    lines.push("> 注意：包内含完整对话正文，请只发给信任的对象。".to_string());
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+/// epoch 毫秒 → "YYYY-MM-DD HH:MM:SS UTC"，避免为此引 chrono；天数换算复用 civil_from_days。
+fn format_utc_timestamp_ms(ms: u64) -> String {
+    let seconds = ms / 1000;
+    let days = (seconds / 86_400) as i64;
+    let seconds_of_day = seconds % 86_400;
+    let (year, month, day) = civil_from_days(days);
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+        year,
+        month,
+        day,
+        seconds_of_day / 3600,
+        (seconds_of_day % 3600) / 60,
+        seconds_of_day % 60
+    )
+}
+
+/// 把单个文件以 CF_HDROP 写进系统剪贴板：IM/资源管理器里 Ctrl+V 直接粘贴出发送。
+/// 失败返回 false，由调用方退回"显示路径 + 揭示位置"。
+#[cfg(target_os = "windows")]
+fn copy_file_to_clipboard(path: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{GlobalFree, HWND};
+    use windows_sys::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    };
+    use windows_sys::Win32::System::Memory::{
+        GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
+    };
+
+    #[repr(C)]
+    struct DropFiles {
+        file_list_offset: u32,
+        drop_point_x: i32,
+        drop_point_y: i32,
+        fake_client_area: i32,
+        wide_chars: i32,
+    }
+
+    const CF_HDROP: u32 = 15;
+    const CLIPBOARD_OPEN_ATTEMPTS: usize = 8;
+
+    let wide_path: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    let header_size = std::mem::size_of::<DropFiles>();
+    let total_bytes = header_size + (wide_path.len() + 1) * 2;
+
+    unsafe {
+        let handle = GlobalAlloc(GMEM_MOVEABLE, total_bytes);
+        if handle.is_null() {
+            return false;
+        }
+        let base = GlobalLock(handle) as *mut u8;
+        if base.is_null() {
+            let _ = GlobalFree(handle);
+            return false;
+        }
+        std::ptr::write_bytes(base, 0, total_bytes);
+        (base as *mut DropFiles).write(DropFiles {
+            file_list_offset: header_size as u32,
+            drop_point_x: 0,
+            drop_point_y: 0,
+            fake_client_area: 0,
+            wide_chars: 1,
+        });
+        std::ptr::copy_nonoverlapping(
+            wide_path.as_ptr(),
+            base.add(header_size) as *mut u16,
+            wide_path.len(),
+        );
+        let _ = GlobalUnlock(handle);
+
+        let mut opened = false;
+        for _ in 0..CLIPBOARD_OPEN_ATTEMPTS {
+            if OpenClipboard(HWND::default()) != 0 {
+                opened = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        if !opened {
+            let _ = GlobalFree(handle);
+            return false;
+        }
+        let data_handle = if EmptyClipboard() != 0 {
+            SetClipboardData(CF_HDROP, handle as windows_sys::Win32::Foundation::HANDLE)
+        } else {
+            std::ptr::null_mut()
+        };
+        let succeeded = !data_handle.is_null();
+        if !succeeded {
+            let _ = GlobalFree(handle);
+        }
+        let _ = CloseClipboard();
+        succeeded
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn copy_file_to_clipboard(_path: &Path) -> bool {
+    false
+}
+
+
 fn launch_handoff_blocking(request: HandoffLaunchRequest) -> Result<(), String> {
     let mode = clean_option(Some(request.mode.as_str()))
         .ok_or_else(|| "Missing handoff launch mode".to_string())?;
@@ -4931,6 +5752,7 @@ pub fn run() {
             open_session,
             launch_handoff,
             prepare_handoff_source_context,
+            export_session_package,
             get_todo_state,
             save_todo_state,
             scan_plugins,
@@ -9653,6 +10475,25 @@ fn copilot_transcript_path(session_path: &Path) -> Option<PathBuf> {
             .join("transcripts")
             .join(format!("{}.jsonl", session_id)),
     )
+}
+
+/// Claude 同理：chatSessions 路径缺失时按 <会话id>.jsonl 在 workspaceStorage 下重定位。
+fn locate_copilot_chat_session_file(key: &str) -> Option<PathBuf> {
+    let appdata_path = env::var_os("APPDATA")?;
+    let appdata = PathBuf::from(appdata_path);
+    for product_folder in ["Code", "Code - Insiders"] {
+        let storage_root = appdata
+            .join(product_folder)
+            .join("User")
+            .join("workspaceStorage");
+        if let Some(path) = locate_session_file_under(
+            &storage_root.join("chatSessions"),
+            &format!("{}.jsonl", key),
+        ) {
+            return Some(path);
+        }
+    }
+    None
 }
 
 fn copilot_transcript_overlay_from_text(text: &str) -> Option<CopilotTranscriptOverlay> {
@@ -16501,5 +17342,451 @@ mod tests {
         assert_eq!(orchestration[2].kind, "wait");
         assert_eq!(orchestration[2].t_ms > orchestration[0].t_ms, true);
     }
-}
 
+    // ---------- 会话交接包 ----------
+
+    static SESSION_PACKAGE_TEST_DIR_SEQ: AtomicUsize = AtomicUsize::new(0);
+
+    fn session_package_temp_dir(label: &str) -> PathBuf {
+        let dir = env::temp_dir().join(format!(
+            "agentwatcher-session-package-{}-{}-{}",
+            label,
+            current_time_ms(),
+            SESSION_PACKAGE_TEST_DIR_SEQ.fetch_add(1, Ordering::SeqCst)
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn session_package_request(
+        provider: &str,
+        id: &str,
+        session_path: &str,
+    ) -> HandoffSourceContextRequest {
+        HandoffSourceContextRequest {
+            id: Some(id.to_string()),
+            provider: Some(provider.to_string()),
+            workspace_path: Some("F:\\Work\\Demo".to_string()),
+            session_path: Some(session_path.to_string()),
+            session_resource: None,
+            title: Some("打包测试会话".to_string()),
+        }
+    }
+
+    fn session_package_sqlite_connection(provider: &str) -> Connection {
+        let connection = Connection::open_in_memory().unwrap();
+        if provider == "copilot-cli" {
+            connection
+                .execute(
+                    "create table sessions (
+                        id text primary key,
+                        cwd text,
+                        branch text,
+                        summary text,
+                        created_at text,
+                        updated_at text,
+                        agent_name text
+                    )",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "create table turns (
+                        id integer primary key,
+                        session_id text not null,
+                        turn_index integer not null,
+                        timestamp text,
+                        user_message text,
+                        assistant_response text
+                    )",
+                    [],
+                )
+                .unwrap();
+        } else {
+            connection
+                .execute(
+                    "create table session (
+                        id text primary key,
+                        title text,
+                        directory text,
+                        task_type text,
+                        time_created integer,
+                        time_updated integer,
+                        time_archived integer
+                    )",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "create table message (
+                        id text primary key,
+                        session_id text not null,
+                        time_created integer not null,
+                        time_updated integer not null,
+                        data text not null,
+                        sequence integer
+                    )",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "create table part (
+                        id text primary key,
+                        message_id text not null,
+                        session_id text not null,
+                        time_created integer not null,
+                        time_updated integer not null,
+                        data text not null,
+                        sequence integer
+                    )",
+                    [],
+                )
+                .unwrap();
+        }
+        connection
+    }
+
+    #[test]
+    fn session_package_covers_all_providers() {
+        // Claude：单文件原样进包。
+        let claude_dir = session_package_temp_dir("claude");
+        let claude_file = claude_dir.join("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0.jsonl");
+        fs::write(&claude_file, "{\"type\":\"user\",\"message\":{}}\n").unwrap();
+        let claude_entries =
+            claude_package_entries(&session_package_request(
+                "claude",
+                "claude:0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+                &path_to_string(&claude_file),
+            ))
+            .unwrap();
+        assert_eq!(claude_entries.len(), 1);
+        assert_eq!(
+            claude_entries[0].zip_path,
+            "raw/claude/0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0.jsonl"
+        );
+        assert_eq!(claude_entries[0].source_kind, "file");
+        let _ = fs::remove_dir_all(&claude_dir);
+
+        // Copilot：chatSessions + transcripts 覆盖文件各一条。
+        let copilot_dir = session_package_temp_dir("copilot");
+        let copilot_storage = copilot_dir.join("storage-hash");
+        fs::create_dir_all(copilot_storage.join("chatSessions")).unwrap();
+        fs::create_dir_all(copilot_storage.join("GitHub.copilot-chat").join("transcripts")).unwrap();
+        let copilot_session = copilot_storage
+            .join("chatSessions")
+            .join("aaaabbbb-cccc-dddd-eeee-ffff00001111.jsonl");
+        fs::write(&copilot_session, "{\"type\":\"user\"}\n").unwrap();
+        fs::write(
+            copilot_storage
+                .join("GitHub.copilot-chat")
+                .join("transcripts")
+                .join("aaaabbbb-cccc-dddd-eeee-ffff00001111.jsonl"),
+            "{\"type\":\"transcript\"}\n",
+        )
+        .unwrap();
+        let copilot_entries =
+            copilot_package_entries(&session_package_request(
+                "copilot",
+                "copilot:aaaabbbb-cccc-dddd-eeee-ffff00001111",
+                &path_to_string(&copilot_session),
+            ))
+            .unwrap();
+        let copilot_zip_paths: Vec<&str> = copilot_entries
+            .iter()
+            .map(|entry| entry.zip_path.as_str())
+            .collect();
+        assert_eq!(
+            copilot_zip_paths,
+            vec![
+                "raw/copilot/chat-session/aaaabbbb-cccc-dddd-eeee-ffff00001111.jsonl",
+                "raw/copilot/transcript/aaaabbbb-cccc-dddd-eeee-ffff00001111.jsonl",
+            ]
+        );
+        let _ = fs::remove_dir_all(&copilot_dir);
+
+        // Codex：sessions 的片段链（resume 副本文件名带 _<新uuid>）+ archived_sessions 的归档副本。
+        let codex_dir = session_package_temp_dir("codex");
+        let codex_home = codex_dir.join(".codex");
+        let day_dir = codex_home.join("sessions").join("2026").join("06").join("23");
+        fs::create_dir_all(&day_dir).unwrap();
+        let thread_id = "12345678-90ab-cdef-1234-567890abcdef";
+        fs::write(
+            day_dir.join(format!("rollout-2026-06-23T16-41-04-{}.jsonl", thread_id)),
+            "{\"type\":\"session_meta\"}\n",
+        )
+        .unwrap();
+        fs::write(
+            day_dir.join(format!(
+                "rollout-2026-06-23T16-41-04-{}_fedcba09-8765-4321-fedc-ba0987654321.jsonl",
+                thread_id
+            )),
+            "{\"type\":\"turn\"}\n",
+        )
+        .unwrap();
+        let archive_dir = codex_home.join("archived_sessions").join("2026").join("06").join("24");
+        fs::create_dir_all(&archive_dir).unwrap();
+        fs::write(
+            archive_dir.join(format!("rollout-2026-06-23T16-41-04-{}.jsonl", thread_id)),
+            "{\"type\":\"session_meta\"}\n",
+        )
+        .unwrap();
+        let codex_entries = codex_package_entries(&codex_home, thread_id).unwrap();
+        let codex_zip_paths: Vec<&str> = codex_entries
+            .iter()
+            .map(|entry| entry.zip_path.as_str())
+            .collect();
+        assert_eq!(
+            codex_zip_paths,
+            vec![
+                format!("raw/codex/sessions/rollout-2026-06-23T16-41-04-{}.jsonl", thread_id),
+                format!(
+                    "raw/codex/sessions/rollout-2026-06-23T16-41-04-{}_fedcba09-8765-4321-fedc-ba0987654321.jsonl",
+                    thread_id
+                ),
+                format!("raw/codex/archived/rollout-2026-06-23T16-41-04-{}.jsonl", thread_id),
+            ]
+        );
+        assert!(codex_entries.iter().all(|entry| entry.source_kind == "file"));
+        let _ = fs::remove_dir_all(&codex_dir);
+
+        // Copilot CLI：sessions 行 + turns 全量行。
+        let copilot_cli_connection = session_package_sqlite_connection("copilot-cli");
+        copilot_cli_connection
+            .execute(
+                "insert into sessions (id, cwd, summary, created_at, updated_at, agent_name) \
+                 values ('cli-sess-1', 'F:\\Work\\Demo', 'cli 会话', '2026-10-27T01:00:00Z', '2026-10-27T02:00:00Z', 'copilotcli')",
+                [],
+            )
+            .unwrap();
+        copilot_cli_connection
+            .execute(
+                "insert into turns (session_id, turn_index, timestamp, user_message, assistant_response) \
+                 values ('cli-sess-1', 1, '2026-10-27T01:30:00Z', '帮我看看', '看完了')",
+                [],
+            )
+            .unwrap();
+        copilot_cli_connection
+            .execute(
+                "insert into turns (session_id, turn_index, timestamp, user_message, assistant_response) \
+                 values ('cli-sess-1', 2, '2026-10-27T01:45:00Z', '还有一件事', '好的')",
+                [],
+            )
+            .unwrap();
+        let copilot_cli_entries =
+            copilot_cli_package_entries_from_connection(&copilot_cli_connection, "cli-sess-1")
+                .unwrap();
+        assert_eq!(copilot_cli_entries.len(), 2);
+        assert_eq!(copilot_cli_entries[0].zip_path, "raw/copilot-cli/session.ndjson");
+        assert_eq!(copilot_cli_entries[1].zip_path, "raw/copilot-cli/turns.ndjson");
+        let SessionPackagePayload::Bytes(session_bytes) = &copilot_cli_entries[0].payload else {
+            panic!("copilot-cli session payload should be generated bytes");
+        };
+        assert_eq!(session_bytes.iter().filter(|byte| **byte == b'\n').count(), 1);
+        let SessionPackagePayload::Bytes(turns_bytes) = &copilot_cli_entries[1].payload else {
+            panic!("copilot-cli turns payload should be generated bytes");
+        };
+        assert_eq!(turns_bytes.iter().filter(|byte| **byte == b'\n').count(), 2);
+
+        // OpenCode / ZCode：session 行 + message/part 全量行。
+        for provider in ["opencode", "zcode"] {
+            let connection = session_package_sqlite_connection(provider);
+            connection
+                .execute(
+                    "insert into session (id, title, directory, time_created, time_updated) \
+                     values ('sess-pkg-1', '打包测试', 'F:\\Work\\Demo', 1000, 2000)",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "insert into message (id, session_id, time_created, time_updated, data) \
+                     values ('m1', 'sess-pkg-1', 1000, 1000, '{\"role\":\"user\"}')",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "insert into message (id, session_id, time_created, time_updated, data) \
+                     values ('m2', 'sess-pkg-1', 1100, 1100, '{\"role\":\"assistant\"}')",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "insert into part (id, message_id, session_id, time_created, time_updated, data) \
+                     values ('p1', 'm1', 'sess-pkg-1', 1000, 1000, '{\"type\":\"text\",\"text\":\"你好\"}')",
+                    [],
+                )
+                .unwrap();
+            let entries = sqlite_session_package_entries_from_connection(
+                provider,
+                &connection,
+                "sess-pkg-1",
+            )
+            .unwrap();
+            let zip_paths: Vec<&str> = entries.iter().map(|entry| entry.zip_path.as_str()).collect();
+            assert_eq!(
+                zip_paths,
+                vec![
+                    format!("raw/{}/session.ndjson", provider),
+                    format!("raw/{}/messages.ndjson", provider),
+                    format!("raw/{}/parts.ndjson", provider),
+                ]
+            );
+            let SessionPackagePayload::Bytes(messages_bytes) = &entries[1].payload else {
+                panic!("sqlite message payload should be generated bytes");
+            };
+            let messages_text = String::from_utf8(messages_bytes.clone()).unwrap();
+            // data 列是字符串：原样转储时内层 JSON 保持转义形态。
+            assert!(messages_text.contains("{\\\"role\\\":\\\"user\\\"}"));
+            assert!(messages_text.contains("{\\\"role\\\":\\\"assistant\\\"}"));
+            assert_eq!(messages_text.lines().count(), 2);
+        }
+    }
+
+    #[test]
+    fn session_package_manifest_matches_files() {
+        use sha2::{Digest, Sha256};
+        use zip::ZipArchive;
+
+        let connection = session_package_sqlite_connection("zcode");
+        connection
+            .execute(
+                "insert into session (id, title, directory, time_created, time_updated) \
+                 values ('sess_z', '打包验证', 'F:\\Work\\Demo', 1000, 2000)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into message (id, session_id, time_created, time_updated, data) \
+                 values ('m1', 'sess_z', 1000, 1000, '{\"role\":\"user\",\"time\":{\"created\":1000}}')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into part (id, message_id, session_id, time_created, time_updated, data) \
+                 values ('p1', 'm1', 'sess_z', 1000, 1000, '{\"type\":\"text\",\"text\":\"你好\"}')",
+                [],
+            )
+            .unwrap();
+        let entries =
+            sqlite_session_package_entries_from_connection("zcode", &connection, "sess_z").unwrap();
+        let info = SessionPackageInfo {
+            provider: "zcode".to_string(),
+            session_id: "zcode:sess_z".to_string(),
+            title: "打包验证".to_string(),
+            workspace_path: "F:\\Work\\Demo".to_string(),
+            exported_at_ms: 1_761_500_000_000,
+        };
+        let output_dir = session_package_temp_dir("manifest");
+        let output_path = output_dir.join("zcode-package.zip");
+        let (file_count, total_bytes) =
+            write_session_package_zip(&entries, &info, &output_path).unwrap();
+        assert_eq!(file_count, 3);
+        assert!(total_bytes > 0);
+
+        let archive_file = File::open(&output_path).unwrap();
+        let mut archive = ZipArchive::new(archive_file).unwrap();
+        let mut manifest_text = String::new();
+        archive
+            .by_name("manifest.json")
+            .unwrap()
+            .read_to_string(&mut manifest_text)
+            .unwrap();
+        let manifest: Value = serde_json::from_str(&manifest_text).unwrap();
+        assert_eq!(manifest["schema"], SESSION_PACKAGE_SCHEMA);
+        assert_eq!(manifest["provider"], "zcode");
+        assert_eq!(manifest["sessionId"], "zcode:sess_z");
+        assert_eq!(manifest["workspacePath"], "F:\\Work\\Demo");
+        assert_eq!(manifest["exportedAt"], "2025-10-26 17:33:20 UTC");
+        let files = manifest["files"].as_array().unwrap();
+        assert_eq!(files.len(), entries.len());
+        for (record, entry) in files.iter().zip(entries.iter()) {
+            assert_eq!(record["path"], entry.zip_path);
+            let mut entry_bytes = Vec::new();
+            archive
+                .by_name(&entry.zip_path)
+                .unwrap_or_else(|error| panic!("{} should exist in archive: {}", entry.zip_path, error))
+                .read_to_end(&mut entry_bytes)
+                .unwrap();
+            assert_eq!(record["bytes"].as_u64().unwrap(), entry_bytes.len() as u64);
+            let mut hasher = Sha256::new();
+            hasher.update(&entry_bytes);
+            assert_eq!(record["sha256"], format!("{:x}", hasher.finalize()));
+        }
+
+        let mut handoff_text = String::new();
+        archive
+            .by_name("HANDOFF.md")
+            .unwrap()
+            .read_to_string(&mut handoff_text)
+            .unwrap();
+        assert!(handoff_text.contains("会话交接包"));
+        assert!(handoff_text.contains("会话 ID：zcode:sess_z"));
+        assert!(handoff_text.contains("工作区：F:\\Work\\Demo"));
+        assert!(handoff_text.contains("raw/zcode/messages.ndjson（SQLite 表全量导出）"));
+        assert!(handoff_text.contains("请只发给信任的对象"));
+        assert!(!handoff_text.contains("你好")); // 定位块不携带正文
+        assert!(archive.file_names().all(|name| !name.contains("transcript.md")));
+
+        let _ = fs::remove_dir_all(&output_dir);
+    }
+
+    #[test]
+    fn session_package_reports_source_errors() {
+        // 源文件不存在：收集阶段报错并带上路径。
+        let missing_path = session_package_temp_dir("missing")
+            .join("nope-11111111-2222-3333-4444-555555555555.jsonl");
+        let error = claude_package_entries(&session_package_request(
+            "claude",
+            "claude:11111111-2222-3333-4444-555555555555",
+            &path_to_string(&missing_path),
+        ))
+        .unwrap_err();
+        assert!(error.contains("not found"), "unexpected error: {}", error);
+
+        // Codex thread 没有任何片段。
+        let codex_home = session_package_temp_dir("codex-empty").join(".codex");
+        fs::create_dir_all(codex_home.join("sessions")).unwrap();
+        let error = codex_package_entries(&codex_home, "00000000-0000-0000-0000-000000000000")
+            .unwrap_err();
+        assert!(error.contains("No local Codex rollout files"), "unexpected error: {}", error);
+
+        // SQLite 里没有这个会话。
+        let connection = session_package_sqlite_connection("zcode");
+        let error = sqlite_session_package_entries_from_connection("zcode", &connection, "ghost")
+            .unwrap_err();
+        assert!(error.contains("not found"), "unexpected error: {}", error);
+
+        // 写包阶段源文件消失：报错、不产出 zip、不残留 .tmp。
+        let claude_dir = session_package_temp_dir("write-fail");
+        let claude_file = claude_dir.join("11111111-2222-3333-4444-555555555555.jsonl");
+        fs::write(&claude_file, "{\"type\":\"user\"}\n").unwrap();
+        let entries =
+            claude_package_entries(&session_package_request(
+                "claude",
+                "claude:11111111-2222-3333-4444-555555555555",
+                &path_to_string(&claude_file),
+            ))
+            .unwrap();
+        fs::remove_file(&claude_file).unwrap();
+        let info = SessionPackageInfo {
+            provider: "claude".to_string(),
+            session_id: "claude:11111111-2222-3333-4444-555555555555".to_string(),
+            title: String::new(),
+            workspace_path: String::new(),
+            exported_at_ms: 1_761_500_000_000,
+        };
+        let output_path = claude_dir.join("half-written.zip");
+        let error = write_session_package_zip(&entries, &info, &output_path).unwrap_err();
+        assert!(error.contains("Failed to read source file"), "unexpected error: {}", error);
+        assert!(!output_path.exists());
+        assert!(!output_path.with_extension("zip.tmp").exists());
+        let _ = fs::remove_dir_all(&claude_dir);
+    }
+}

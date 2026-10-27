@@ -26,7 +26,7 @@ AgentWatcher 是一个 Windows 桌面小工具，用 Tauri 2 写的。它盯着�
 - `npm run dev:ui` —— 只起 Vite，纯浏览器预览在 `:1420`，没有 Tauri 接口。做纯 UI 时用这个。当 `window.__TAURI_INTERNALS__` 不存在时，页面会自动用 mock 数据兜底。
 - `npm run build:ui` —— 用 Vite 把 `ui/` 打到 `ui-dist/` 目录（这个目录是 git 忽略的）。
 - `npm run test:tauri:smoke` —— 真实 Tauri 桌面壳冒烟测试。脚本优先附着 `.tmp/tauri-dev-runtime.json` 里的 `npm run dev` CDP 运行时；如果没有可用 dev，才自己启动测试用真实 Tauri 壳。它会确认 `window.__TAURI_INTERNALS__ === true`，再做真实点击、窗口发现、console/pageerror 采集和截图。改 UI/窗口/交互时优先跑这个，不要用 `dev:ui` 的浏览器 mock 当验收。
-- `npm run test:tauri:flow -- 任务面板` / `性能面板` / `接续面板` / `opencode-session` / `zcode-session` —— 只跑指定真实交互流程。也接受英文别名 `agent-task`、`performance`、`handoff`、`opencode`、`zcode`。默认优先测当前 `npm run dev`；需要隔离临时窗口时才加 `--isolated-runtime`。
+- `npm run test:tauri:flow -- 任务面板` / `性能面板` / `接续面板` / `opencode-session` / `zcode-session` / `打包` —— 只跑指定真实交互流程。也接受英文别名 `agent-task`、`performance`、`handoff`、`opencode`、`zcode`、`package-session`。默认优先测当前 `npm run dev`；需要隔离临时窗口时才加 `--isolated-runtime`。
 - `npm run build` —— `tauri build`，跑 Rust + 打包。生成的 exe 在 `src-tauri/target/release/agentwatcher.exe`。
 - `cargo build --manifest-path src-tauri/Cargo.toml --bin agentwatcher-cli` —— 单独构建 AI 命令行二进制（见「AI 操作 CLI」一节）。
 - `npm run generate:icons` —— 重新生成 `src-tauri/icons/icon.ico` 和 `icon-runtime-256.rgba`。**只能在 Windows 上跑**，里面调了 `pwsh` 用 .NET 的 `System.Drawing` 画 Segoe UI 字体。其他系统会报错。
@@ -57,6 +57,7 @@ AgentWatcher 是一个 Windows 桌面小工具，用 Tauri 2 写的。它盯着�
 - `get_bridge_status()` → 返回 `{ installed, needsUpdate, localVersion, installedVersion, codePath, message }`。`needsUpdate` 为真的条件：装的版本比本地的旧 *或者* 任何历史 safe ID 还在。
 - `install_bridge()` → 先卸掉历史 safe ID，找目录里的 `agentwatcher-bridge-<版本>.vsix`，找不到就用 `npx --yes @vscode/vsce package` 打到 `%TEMP%\AgentWatcher\` 兜底，然后跑 `code --install-extension … --force`，最后再验一遍：稳定 ID 必须装上了、历史 safe ID 一个都不准剩。任何一个没满足都报错。
 - `set_window_always_on_top({ alwaysOnTop })` → 调 `window.setAlways_on_top`，Windows 下还会再调一次 `SetWindowPos(HWND_TOPMOST|HWND_NOTOPMOST)` 作用到根窗口上。光靠 Tauri 2 的 flag 在无边框小窗上不靠谱，必须多这一步。
+- `export_session_package({ request: HandoffSourceContextRequest })` → 右键「打包会话用于跨电脑交接」的后端。把整个会话打成单个 zip 落到 `%TEMP%\AgentWatcher\session-packages\`（先写 `.tmp` 再原子替换，失败不产出半截文件），包内固定 `manifest.json`（含逐文件 SHA256）+ `HANDOFF.md`（短定位块，无正文）+ `raw/`。各 provider 的 raw 口径：Claude/Copilot 原样 JSONL（Copilot 另带 transcripts 覆盖文件）；Codex 带同 thread 的全部 rollout 片段，`archived_sessions` 里的 `.jsonl.zst` 解压后进包；Copilot CLI / OpenCode / ZCode 从 SQLite 全量导出 session/message/part（或 turns）行为 NDJSON。打包后把 zip 文件本身用 Win32 CF_HDROP 写进系统剪贴板（IM/资源管理器可直接 Ctrl+V 粘贴出发送），写入失败则用 opener 揭示文件位置并让 toast 显示完整路径。
 
 VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `code` / `code.cmd` / `code.exe`，然后 `%LOCALAPPDATA%\Programs\Microsoft VS Code\bin\code.cmd` → `…\Code.exe` → `C:\Program Files\Microsoft VS Code\bin\code.cmd` → `…\Code.exe` → x86 版本。
 
@@ -130,7 +131,7 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 - Rust 单元测试在 `lib.rs` 文件末尾，覆盖了 Bridge 版本管理、状态转换、transcript 覆盖、工作区身份（UGA 分支、通用插件根、路径归一化）和预览文本提取。跑：`cargo test --manifest-path src-tauri/Cargo.toml`。
 - CLI 分类学与契约测试：`cargo test --manifest-path src-tauri/Cargo.toml --test cli_taxonomy --test cli_contract`。改 `src-tauri/src/bin/agentwatcher-cli/` 或三个 pub 扫描入口时必跑。
 - 真实 Tauri UI 冒烟测试：`npm run test:tauri:smoke`。它会优先附着 `npm run dev` 写出的 `.tmp/tauri-dev-runtime.json`，用 Playwright 通过 WebView2 CDP 操作真实桌面窗口，覆盖主窗口、AgentTask 切换、性能诊断窗口和接续面板识别；如果没有 dev，脚本会自己启动真实 Tauri 壳。
-- 指定真实 UI 流程：`npm run test:tauri:flow -- 任务面板`、`npm run test:tauri:flow -- 性能面板`、`npm run test:tauri:flow -- 接续面板`、`npm run test:tauri:flow -- opencode-session`、`npm run test:tauri:flow -- zcode-session`。改 OpenCode/ZCode provider、卡片打开、handoff/AgentTask 派发目标时，必须跑对应 provider 的 session 流程，不能退回“手动点一下”。
+- 指定真实 UI 流程：`npm run test:tauri:flow -- 任务面板`、`npm run test:tauri:flow -- 性能面板`、`npm run test:tauri:flow -- 接续面板`、`npm run test:tauri:flow -- opencode-session`、`npm run test:tauri:flow -- zcode-session`、`npm run test:tauri:flow -- 打包`。改 OpenCode/ZCode provider、卡片打开、handoff/AgentTask 派发目标时，必须跑对应 provider 的 session 流程，不能退回“手动点一下”。
 - `.tmp/bridge-handoff-routing-test.cjs` 是 Node 写的测试，伪造 `vscode` 模块，验证 Bridge 命令路由（`agents` / `code-chat` / `claude-panel` 三种），包括 `claude-vscode.editor.open` 走剪贴板那条路径和 `safe1` 风格的兜底。它还顺带测了 `AGENTWATCHER_TARGET_BOUND_SENTINEL` 这个 Copilot 目标的正常路径。
 - 人工验收清单在 `docs/retrospectives/`：VSIX 必须叫 `agentwatcher-bridge-0.1.12.vsix`；`code --list-extensions | findstr agentwatcher` 应该只显示稳定 ID，不准出现 `safe1..4`；每次发版的 SHA256 要写进 `CHANGELOG.md`。
 
