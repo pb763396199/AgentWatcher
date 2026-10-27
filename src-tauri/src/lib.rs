@@ -3868,6 +3868,9 @@ struct SessionPackageInfo {
     title: String,
     workspace_path: String,
     exported_at_ms: u64,
+    /// 工作区是 git 仓库时的代码锚点（repo/branch/head/uncommittedChanges/unpushedCommits）。
+    /// 只记元数据，代码本体走 git 正交通道，不进包。
+    git: Option<Value>,
 }
 
 #[tauri::command]
@@ -3894,13 +3897,15 @@ fn export_session_package_blocking(
     let session_id = clean_option(request.id.as_deref())
         .ok_or_else(|| "Missing session id for session package".to_string())?;
     let entries = collect_session_package_entries(request)?;
+    let workspace_path = clean_option(request.workspace_path.as_deref())
+        .unwrap_or("")
+        .to_string();
     let info = SessionPackageInfo {
         provider: provider.to_string(),
         session_id: session_id.to_string(),
         title: clean_option(request.title.as_deref()).unwrap_or("").to_string(),
-        workspace_path: clean_option(request.workspace_path.as_deref())
-            .unwrap_or("")
-            .to_string(),
+        git: session_package_git_anchor(&workspace_path),
+        workspace_path,
         exported_at_ms: current_time_ms(),
     };
     let output_path = session_package_output_path(&info.provider, &info.session_id);
@@ -3924,6 +3929,46 @@ fn session_package_output_path(provider: &str, session_id: &str) -> PathBuf {
         .join("AgentWatcher")
         .join("session-packages")
         .join(format!("{}.zip", token))
+}
+
+/// 会话工作区是 git 仓库时，用只读 git 命令取代码锚点：远端、分支、HEAD、
+/// 未提交修改数、未推送提交数。git 不存在或工作区不是仓库时返回 None，
+/// 静默省略——锚点是增强信息，不构成打包的成败条件。
+fn session_package_git_anchor(workspace_path: &str) -> Option<Value> {
+    let workspace = PathBuf::from(workspace_path);
+    if workspace_path.trim().is_empty() || !workspace.is_dir() {
+        return None;
+    }
+    let run_git = |args: &[&str]| -> Option<String> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&workspace)
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .filter(|text| !text.is_empty())
+    };
+    let head = run_git(&["rev-parse", "HEAD"])?;
+    let branch = run_git(&["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_else(|| "HEAD".to_string());
+    let repo = run_git(&["config", "--get", "remote.origin.url"]);
+    // -uno 跳过未跟踪文件：大仓库（如 UE 工程）上全量 status 可能秒级卡顿。
+    let uncommitted = run_git(&["status", "--porcelain", "-uno"])
+        .map(|text| text.lines().filter(|line| !line.trim().is_empty()).count())
+        .unwrap_or(0);
+    let unpushed = run_git(&["rev-list", "--count", "@{upstream}..HEAD"])
+        .and_then(|text| text.parse::<u64>().ok());
+    Some(json!({
+        "repo": repo,
+        "branch": branch,
+        "head": head,
+        "uncommittedChanges": uncommitted,
+        "unpushedCommits": unpushed,
+    }))
 }
 
 fn collect_session_package_entries(
@@ -4387,6 +4432,15 @@ fn write_session_package_zip(
         write_error = Some(format!("Failed to write HANDOFF.md: {}", error));
     }
 
+    if write_error.is_none() {
+        let readme_markdown = render_session_package_readme(&info.provider);
+        if let Err(error) = zip_writer.start_file("README.md", zip_options) {
+            write_error = Some(format!("Failed to write README.md: {}", error));
+        } else if let Err(error) = zip_writer.write_all(readme_markdown.as_bytes()) {
+            write_error = Some(format!("Failed to write README.md: {}", error));
+        }
+    }
+
     for entry in entries {
         if write_error.is_some() {
             break;
@@ -4505,6 +4559,7 @@ fn build_session_package_manifest(
         "sessionId": info.session_id,
         "title": info.title,
         "workspacePath": info.workspace_path,
+        "git": info.git,
         "exportedAtMs": info.exported_at_ms,
         "exportedAt": format_utc_timestamp_ms(info.exported_at_ms),
         "exportedBy": format!("AgentWatcher {}", env!("CARGO_PKG_VERSION")),
@@ -4525,14 +4580,17 @@ fn render_session_package_handoff(
         format!("- 会话 ID：{}", info.session_id),
         format!("- 标题：{}", info.title),
         format!("- 工作区：{}", info.workspace_path),
-        format!(
-            "- 导出时间：{}（AgentWatcher {}）",
-            format_utc_timestamp_ms(info.exported_at_ms),
-            env!("CARGO_PKG_VERSION")
-        ),
-        String::new(),
-        "## 文件清单".to_string(),
     ];
+    if let Some(anchor_line) = session_package_git_anchor_line(&info.git) {
+        lines.push(anchor_line);
+    }
+    lines.push(format!(
+        "- 导出时间：{}（AgentWatcher {}）",
+        format_utc_timestamp_ms(info.exported_at_ms),
+        env!("CARGO_PKG_VERSION")
+    ));
+    lines.push(String::new());
+    lines.push("## 文件清单".to_string());
     for entry in entries {
         let source_note = match entry.source_kind {
             "zst-decompressed" => "（zst 归档解压）",
@@ -4545,6 +4603,57 @@ fn render_session_package_handoff(
     lines.push("> 注意：包内含完整对话正文，请只发给信任的对象。".to_string());
     lines.push(String::new());
     lines.join("\n")
+}
+
+/// HANDOFF 里的代码锚点一行：接替方据此知道对话对着哪个提交；代码本体走 git，不在包里。
+fn session_package_git_anchor_line(git: &Option<Value>) -> Option<String> {
+    let git = git.as_ref()?;
+    let head = git.get("head").and_then(Value::as_str).unwrap_or("");
+    if head.is_empty() {
+        return None;
+    }
+    let repo = git
+        .get("repo")
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+        .unwrap_or("（无远端）");
+    let branch = git.get("branch").and_then(Value::as_str).unwrap_or("HEAD");
+    let head_short = &head[..head.len().min(10)];
+    let mut line = format!("- 代码锚点：{} @ {}（{}）", repo, branch, head_short);
+    if let Some(unpushed) = git.get("unpushedCommits").and_then(Value::as_u64) {
+        if unpushed > 0 {
+            line.push_str(&format!("，{} 个未推送提交", unpushed));
+        }
+    }
+    Some(line)
+}
+
+/// README.md 只讲数据格式，不含会话正文（契约决策 7：外部评审实证跨 agent 需要格式说明）。
+fn render_session_package_readme(provider: &str) -> String {
+    let mut text = String::from(
+        concat!(
+            "# AgentWatcher 会话交接包\n\n",
+            "这是某个 AI 助手会话在导出时刻的完整快照，给另一台电脑上的人或 agent 阅读。\n\n",
+            "## 包结构\n\n",
+            "- `HANDOFF.md`：定位块（会话 ID、工作区、代码锚点、文件清单）。\n",
+            "- `manifest.json`：元数据与逐文件 SHA256，`exportedAt` 即快照时刻，会话此后继续的话以重新导出的包为准。\n",
+            "- `README.md`：本文件。\n",
+            "- `raw/`：原始会话数据，全量。\n\n",
+            "## raw/ 里是什么（按来源）\n\n",
+            "- Claude / Copilot：原始 JSONL 原样（Copilot 另带 transcripts 覆盖文件）。\n",
+            "- Codex：同 thread 的全部 rollout 片段；`archived/` 下是 `.jsonl.zst` 归档解压后的内容。\n",
+            "- OpenCode / ZCode / Copilot CLI：SQLite 表行的 NDJSON 导出，每行一个 JSON 对象即一行表记录。",
+        ),
+    );
+    if ["opencode", "zcode", "copilot-cli"].contains(&provider) {
+        text.push_str("其中 `data` 列是字符串化的 JSON，需要二次解析。");
+    }
+    text.push_str(concat!(
+        "\n\n## 校验\n\n",
+        "`manifest.json` 的 `files[].sha256` 可与解包后文件比对，例如：\n",
+        "`certutil -hashfile <文件> SHA256`（Windows）。\n",
+    ));
+    text
 }
 
 /// epoch 毫秒 → "YYYY-MM-DD HH:MM:SS UTC"，避免为此引 chrono；天数换算复用 civil_from_days。
@@ -17682,6 +17791,7 @@ mod tests {
             title: "打包验证".to_string(),
             workspace_path: "F:\\Work\\Demo".to_string(),
             exported_at_ms: 1_761_500_000_000,
+            git: None,
         };
         let output_dir = session_package_temp_dir("manifest");
         let output_path = output_dir.join("zcode-package.zip");
@@ -17704,6 +17814,7 @@ mod tests {
         assert_eq!(manifest["sessionId"], "zcode:sess_z");
         assert_eq!(manifest["workspacePath"], "F:\\Work\\Demo");
         assert_eq!(manifest["exportedAt"], "2025-10-26 17:33:20 UTC");
+        assert!(manifest["git"].is_null(), "非 git 工作区不应有锚点块");
         let files = manifest["files"].as_array().unwrap();
         assert_eq!(files.len(), entries.len());
         for (record, entry) in files.iter().zip(entries.iter()) {
@@ -17731,8 +17842,19 @@ mod tests {
         assert!(handoff_text.contains("工作区：F:\\Work\\Demo"));
         assert!(handoff_text.contains("raw/zcode/messages.ndjson（SQLite 表全量导出）"));
         assert!(handoff_text.contains("请只发给信任的对象"));
+        assert!(!handoff_text.contains("代码锚点"), "无 git 信息时 HANDOFF 不应带锚点行");
         assert!(!handoff_text.contains("你好")); // 定位块不携带正文
         assert!(archive.file_names().all(|name| !name.contains("transcript.md")));
+
+        let mut readme_text = String::new();
+        archive
+            .by_name("README.md")
+            .unwrap_or_else(|error| panic!("README.md should exist in archive: {}", error))
+            .read_to_string(&mut readme_text)
+            .unwrap();
+        assert!(readme_text.contains("AgentWatcher 会话交接包"));
+        assert!(readme_text.contains("字符串化的 JSON，需要二次解析"), "SQLite provider 的 README 要说明双重编码");
+        assert!(!readme_text.contains("你好"), "README 不含会话正文");
 
         let _ = fs::remove_dir_all(&output_dir);
     }
@@ -17781,6 +17903,7 @@ mod tests {
             title: String::new(),
             workspace_path: String::new(),
             exported_at_ms: 1_761_500_000_000,
+            git: None,
         };
         let output_path = claude_dir.join("half-written.zip");
         let error = write_session_package_zip(&entries, &info, &output_path).unwrap_err();
@@ -17788,5 +17911,86 @@ mod tests {
         assert!(!output_path.exists());
         assert!(!output_path.with_extension("zip.tmp").exists());
         let _ = fs::remove_dir_all(&claude_dir);
+    }
+
+    #[test]
+    fn session_package_records_git_anchor() {
+        use zip::ZipArchive;
+
+        // 本机没有 git 就跳过（打包命令本身对此也是静默降级）。
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+        let repo_dir = session_package_temp_dir("git-anchor");
+        let run_git = |args: &[&str]| {
+            Command::new("git")
+                .arg("-C")
+                .arg(&repo_dir)
+                .args(args)
+                .stdin(Stdio::null())
+                .output()
+                .unwrap();
+        };
+        run_git(&["init"]);
+        run_git(&["config", "user.email", "pkg@test.local"]);
+        run_git(&["config", "user.name", "pkg test"]);
+        fs::write(repo_dir.join("note.txt"), "hello").unwrap();
+        run_git(&["add", "."]);
+        run_git(&["commit", "-m", "init"]);
+
+        let anchor = session_package_git_anchor(&path_to_string(&repo_dir))
+            .expect("git 仓库应产出锚点");
+        let head = anchor["head"].as_str().unwrap_or_default().to_string();
+        assert_eq!(head.len(), 40, "HEAD 应是 40 位十六进制：{}", head);
+        assert!(anchor["branch"].as_str().is_some_and(|b| !b.is_empty()));
+        assert!(anchor["repo"].is_null(), "没有远端时 repo 为 null");
+        assert!(anchor["unpushedCommits"].is_null(), "没有上游时未推送数为 null");
+
+        let info = SessionPackageInfo {
+            provider: "claude".to_string(),
+            session_id: "claude:11111111-2222-3333-4444-555555555555".to_string(),
+            title: "锚点验证".to_string(),
+            workspace_path: path_to_string(&repo_dir),
+            exported_at_ms: 1_761_500_000_000,
+            git: Some(anchor.clone()),
+        };
+        let entry = SessionPackageEntry {
+            zip_path: "raw/claude/note.jsonl".to_string(),
+            source_path: None,
+            source_kind: "file",
+            payload: SessionPackagePayload::Bytes(b"{\"type\":\"user\"}\n".to_vec()),
+        };
+        let output_path = repo_dir.join("anchor-package.zip");
+        write_session_package_zip(&[entry], &info, &output_path).unwrap();
+
+        let mut archive = ZipArchive::new(File::open(&output_path).unwrap()).unwrap();
+        let mut manifest_text = String::new();
+        archive
+            .by_name("manifest.json")
+            .unwrap()
+            .read_to_string(&mut manifest_text)
+            .unwrap();
+        let manifest: Value = serde_json::from_str(&manifest_text).unwrap();
+        assert_eq!(manifest["git"]["head"], anchor["head"]);
+        assert_eq!(
+            manifest["git"]["uncommittedChanges"].as_u64(),
+            Some(0),
+            "干净仓库未提交数为 0"
+        );
+
+        let mut handoff_text = String::new();
+        archive
+            .by_name("HANDOFF.md")
+            .unwrap()
+            .read_to_string(&mut handoff_text)
+            .unwrap();
+        assert!(
+            handoff_text.contains("代码锚点：（无远端）"),
+            "HANDOFF 锚点行应出现，实际：{}",
+            handoff_text
+        );
+        assert!(handoff_text.contains(&head[..10]));
+
+        let _ = fs::remove_dir_all(&repo_dir);
     }
 }
