@@ -209,6 +209,12 @@
       color: #71337a;
     }
 
+    body[data-theme="light"] .provider.wb {
+      border-color: #2f6b33;
+      background: #eaf7ea;
+      color: #2f6b33;
+    }
+
     body[data-theme="light"] .lane-header {
       background: rgba(248, 248, 248, 0.96);
     }
@@ -932,6 +938,7 @@
     .provider-option-badge.cx { color: #75beff; }
     .provider-option-badge.oc { color: #d7ba7d; }
     .provider-option-badge.zc { color: #c586c0; }
+    .provider-option-badge.wb { color: #89d185; }
 
     .session-empty-state {
       min-height: 132px;
@@ -1454,6 +1461,7 @@
     .provider.cx { color: #75beff; border-color: #75beff; }
     .provider.oc { color: #d7ba7d; border-color: #d7ba7d; }
     .provider.zc { color: #c586c0; border-color: #c586c0; }
+    .provider.wb { color: #89d185; border-color: #89d185; }
     .time {
       min-width: 0;
       overflow: hidden;
@@ -5777,6 +5785,10 @@
             <input class="setting-check" id="includeZcode" type="checkbox" checked />
           </div>
           <div class="setting-row">
+            <label for="includeWorkbuddy" data-i18n="includeWorkbuddy">WorkBuddy sessions</label>
+            <input class="setting-check" id="includeWorkbuddy" type="checkbox" checked />
+          </div>
+          <div class="setting-row">
             <label for="hideArchived" data-i18n="hideArchived">Hide archived</label>
             <input class="setting-check" id="hideArchived" type="checkbox" checked />
           </div>
@@ -6523,6 +6535,7 @@
     const includeCodex = document.getElementById('includeCodex');
     const includeOpenCode = document.getElementById('includeOpenCode');
     const includeZcode = document.getElementById('includeZcode');
+    const includeWorkbuddy = document.getElementById('includeWorkbuddy');
     const hideArchived = document.getElementById('hideArchived');
     const workspacePathBlacklist = document.getElementById('workspacePathBlacklist');
     const activeWindowDays = document.getElementById('activeWindowDays');
@@ -6820,6 +6833,7 @@
       includeCodex: true,
       includeOpenCode: true,
       includeZcode: true,
+      includeWorkbuddy: true,
       hideArchived: true,
       workspacePathBlacklist: ['%TEMP%'],
       activeWindowDays: 7,
@@ -6943,6 +6957,7 @@
         includeCodex: 'Codex sessions',
         includeOpenCode: 'OpenCode sessions',
         includeZcode: 'ZCode sessions',
+        includeWorkbuddy: 'WorkBuddy sessions',
         includeCopilot: 'VS Code Copilot sessions',
         maxSessions: 'Sessions per provider',
         pluginManagement: 'Plugin management', pluginRefresh: 'Refresh', pluginMount: 'Mount', pluginMountPlaceholder: 'Plugin directory, for example F:\\Tools\\MyPlugin', pluginWorkflowParametersAria: 'Plugin workflow parameters', pluginWorkflowParameters: 'Workflow parameters', pluginWorkflowPerTask: 'Configured per task', pluginWorkflowPreviewAria: 'Plugin workflow preview', pluginWorkflowPreview: 'Workflow preview', pluginWorkflowAwaitingPreview: 'Awaiting preview', pluginWorkflowDefaultLabel: 'Plugin workflow', pluginNoneMounted: 'No plugins mounted', pluginZeroMode: 'AgentWatcher is running in zero-plugin mode.', pluginFallbackName: 'Plugin', pluginHealthFailed: 'startup check failed', pluginHealthPassed: 'startup check passed', pluginEnabled: 'Enabled', pluginMountedDisabled: 'Mounted, disabled', pluginNoPublicModules: 'No public modules', pluginDisable: 'Disable', pluginEnable: 'Enable', pluginUnmount: 'Unmount', confirmAgain: 'Confirm again',
@@ -6960,6 +6975,7 @@
         handoffProviderCodex: 'Codex desktop',
         handoffProviderOpenCode: 'OpenCode',
         handoffProviderZcode: 'ZCode',
+        handoffProviderWorkbuddy: 'WorkBuddy',
         handoffPortableSummaryLabel: 'Portable source summary',
         handoffSourceExportPending: 'Exporting portable source file...',
         handoffParserHintCodex: 'Codex sessions are available through the Codex desktop app-server. Use the provider resource to open the source thread when needed, and rely on the snapshot if the source thread is not accessible.',
@@ -7123,6 +7139,7 @@
         includeCodex: 'Codex 会话',
         includeOpenCode: 'OpenCode 会话',
         includeZcode: 'ZCode 会话',
+        includeWorkbuddy: 'WorkBuddy 会话',
         includeCopilot: 'VS Code Copilot 会话',
         maxSessions: '每个提供方的会话数',
         pluginManagement: '插件管理', pluginRefresh: '刷新', pluginMount: '挂载', pluginMountPlaceholder: '插件目录，例如 F:\\Tools\\MyPlugin', pluginWorkflowParametersAria: '插件工作流参数', pluginWorkflowParameters: '工作流参数', pluginWorkflowPerTask: '每个任务单独填写', pluginWorkflowPreviewAria: '插件工作流预演', pluginWorkflowPreview: '工作流预演', pluginWorkflowAwaitingPreview: '等待预演', pluginWorkflowDefaultLabel: '插件工作流', pluginNoneMounted: '未挂载插件', pluginZeroMode: 'AgentWatcher 当前以零插件模式运行。', pluginFallbackName: '插件', pluginHealthFailed: '启动检查失败', pluginHealthPassed: '已通过启动检查', pluginEnabled: '已启用', pluginMountedDisabled: '已挂载，未启用', pluginNoPublicModules: '无公开模块', pluginDisable: '停用', pluginEnable: '启用', pluginUnmount: '卸载', confirmAgain: '再次确认',
@@ -7140,6 +7157,7 @@
         handoffProviderCodex: 'Codex 桌面端',
         handoffProviderOpenCode: 'OpenCode',
         handoffProviderZcode: 'ZCode',
+        handoffProviderWorkbuddy: 'WorkBuddy',
         handoffPortableSummaryLabel: '可移植来源摘要',
         handoffSourceExportPending: '正在导出可移植来源文件...',
         handoffParserHintCodex: 'Codex 会话通过 Codex 桌面端 app-server 访问。需要时使用 provider resource 打开来源线程；若无法访问来源线程，则从快照继续。',
@@ -11573,6 +11591,7 @@
           includeCodex: savedSettings.includeCodex !== false,
           includeOpenCode: savedSettings.includeOpenCode !== false,
           includeZcode: savedSettings.includeZcode !== false,
+          includeWorkbuddy: savedSettings.includeWorkbuddy !== false,
           hideArchived: savedSettings.hideArchived !== false,
           workspacePathBlacklist: Array.isArray(savedSettings.workspacePathBlacklist)
             ? savedSettings.workspacePathBlacklist.map(value => String(value).trim()).filter(Boolean)
@@ -11607,6 +11626,7 @@
         'includeCodex',
         'includeOpenCode',
         'includeZcode',
+        'includeWorkbuddy',
         'hideArchived',
         'workspacePathBlacklist',
         'activeWindowDays',
@@ -11970,6 +11990,7 @@
         includeCodex: settings.includeCodex,
         includeOpenCode: settings.includeOpenCode,
         includeZcode: settings.includeZcode,
+        includeWorkbuddy: settings.includeWorkbuddy,
         hideArchived: settings.hideArchived,
         activeWindowDays: settings.activeWindowDays,
         maxSessions: settings.maxSessions,
@@ -11991,6 +12012,7 @@
       includeCodex.checked = settings.includeCodex;
       includeOpenCode.checked = settings.includeOpenCode;
       includeZcode.checked = settings.includeZcode;
+      includeWorkbuddy.checked = settings.includeWorkbuddy;
       hideArchived.checked = settings.hideArchived;
       workspacePathBlacklist.value = settings.workspacePathBlacklist.join('\n');
       activeWindowDays.value = String(settings.activeWindowDays);
@@ -12811,11 +12833,11 @@
     function formatScanMetric(scan, counts) {
       const duration = Number.isFinite(Number(scan.durationMs)) ? scan.durationMs + 'ms' : '--';
       const total = Number.isFinite(Number(scan.totalSessions)) ? scan.totalSessions : 0;
-      return duration + ' / ' + total + ' | GH ' + (counts.copilot || 0) + ' GH CLI ' + (counts.copilotCli || 0) + ' C ' + (counts.claude || 0) + ' CX ' + (counts.codex || 0) + ' OC ' + (counts.opencode || 0) + ' ZC ' + (counts.zcode || 0);
+      return duration + ' / ' + total + ' | GH ' + (counts.copilot || 0) + ' GH CLI ' + (counts.copilotCli || 0) + ' C ' + (counts.claude || 0) + ' CX ' + (counts.codex || 0) + ' OC ' + (counts.opencode || 0) + ' ZC ' + (counts.zcode || 0) + ' WB ' + (counts.workbuddy || 0);
     }
 
     function scanExplainText(scan, counts) {
-      const providers = 'GH ' + (counts.copilot || 0) + ' · GH CLI ' + (counts.copilotCli || 0) + ' · C ' + (counts.claude || 0) + ' · CX ' + (counts.codex || 0) + ' · OC ' + (counts.opencode || 0) + ' · ZC ' + (counts.zcode || 0);
+      const providers = 'GH ' + (counts.copilot || 0) + ' · GH CLI ' + (counts.copilotCli || 0) + ' · C ' + (counts.claude || 0) + ' · CX ' + (counts.codex || 0) + ' · OC ' + (counts.opencode || 0) + ' · ZC ' + (counts.zcode || 0) + ' · WB ' + (counts.workbuddy || 0);
       const codexRpc = Number(scan.codexTurnRequests) || 0;
       const codexTurns = Number(scan.codexTurnsReturned) || 0;
       return t('perfScanExplain') + ' ' + providers + (codexRpc ? ' · Codex ' + codexRpc + ' rpc / ' + codexTurns + ' turns' : '');
@@ -13073,6 +13095,9 @@
       }
       if (key === 'zcode' || key === 'zc' || key === 'z code' || key === 'zcode cli' || key === 'zcode tui') {
         return { provider: 'zcode', label: 'ZC', className: 'zc', nameKey: 'handoffProviderZcode' };
+      }
+      if (key === 'workbuddy' || key === 'wb' || key === 'work buddy') {
+        return { provider: 'workbuddy', label: 'WB', className: 'wb', nameKey: 'handoffProviderWorkbuddy' };
       }
       if (key === 'claude' || key === 'cl' || key === 'c' || key === 'claude code') {
         return { provider: 'claude', label: 'C', className: 'cl', nameKey: 'handoffProviderClaude' };
@@ -13784,7 +13809,7 @@
     const ANALYTICS_MODEL_COLORS = ['#75beff', '#4ec9b0', '#d7ba7d', '#c586c0', '#ce9178', '#4fb3d8', '#9cdcfe'];
     const ANALYTICS_PROVIDER_LABELS = {
       copilot: 'Copilot Chat', 'copilot-cli': 'Copilot CLI', claude: 'Claude',
-      codex: 'Codex', opencode: 'OpenCode', zcode: 'ZCode'
+      codex: 'Codex', opencode: 'OpenCode', zcode: 'ZCode', workbuddy: 'WorkBuddy'
     };
     let nativeAnalyticsWindow = null;
     let analyticsWindowDesiredVisible = false;
@@ -15810,7 +15835,7 @@ function analyticsRememberSession(normalized) {
     }
 
     function providerFilterItems() {
-      return ['all', 'copilot', 'copilot-cli', 'claude', 'codex', 'opencode', 'zcode'].map(provider => {
+      return ['all', 'copilot', 'copilot-cli', 'claude', 'codex', 'opencode', 'zcode', 'workbuddy'].map(provider => {
         if (provider === 'all') {
           return {
             provider,
@@ -17436,9 +17461,9 @@ function analyticsRememberSession(normalized) {
     async function loadSessionUsageDetail(data) {
       const sessionId = String(data?.sessionId || '');
       if (!sessionId) return;
-      // OpenCode 的上下文/轮次/工具明细与 ZCode 的工具分布走懒加载；
+      // OpenCode 的上下文/轮次/工具明细与 ZCode/WorkBuddy 的工具分布走懒加载；
       // 其余来源在扫描端已经带齐用量，不额外发请求。
-      if (!sessionId.startsWith('zcode:') && !sessionId.startsWith('opencode:')) return;
+      if (!sessionId.startsWith('zcode:') && !sessionId.startsWith('opencode:') && !sessionId.startsWith('workbuddy:')) return;
       if (typeof tauriInvoke !== 'function') return;
       try {
         const detail = await tauriInvoke('get_session_usage_detail', { id: sessionId });
@@ -18512,6 +18537,7 @@ function analyticsRememberSession(normalized) {
       includeCodex.addEventListener('change', () => updateSetting('includeCodex', includeCodex.checked, { announce: true }));
       includeOpenCode.addEventListener('change', () => updateSetting('includeOpenCode', includeOpenCode.checked, { announce: true }));
       includeZcode.addEventListener('change', () => updateSetting('includeZcode', includeZcode.checked, { announce: true }));
+      includeWorkbuddy.addEventListener('change', () => updateSetting('includeWorkbuddy', includeWorkbuddy.checked, { announce: true }));
       hideArchived.addEventListener('change', () => updateSetting('hideArchived', hideArchived.checked, { announce: true }));
       workspacePathBlacklist.addEventListener('change', () => updateSetting(
         'workspacePathBlacklist',
