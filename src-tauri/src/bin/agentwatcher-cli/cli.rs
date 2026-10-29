@@ -47,7 +47,7 @@ pub enum Commands {
 pub enum SessionAction {
     /// 列出会话元数据：状态、标题、工作区、provider、时间
     List {
-        /// 只看这些 provider：copilot、copilot-cli、claude、codex、opencode、zcode，可重复给
+        /// 只看这些 provider：copilot、copilot-cli、claude、codex、opencode、zcode、workbuddy，可重复给
         #[arg(long = "provider")]
         provider: Vec<String>,
         /// 只看这个状态：waiting、running、idle

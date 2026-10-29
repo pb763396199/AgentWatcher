@@ -53,6 +53,7 @@ fn scan_options(
         options.include_codex = picks("codex");
         options.include_open_code = picks("opencode");
         options.include_zcode = picks("zcode");
+        options.include_workbuddy = picks("workbuddy");
     }
     options
 }
