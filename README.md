@@ -7,6 +7,7 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - Codex 桌面会话
 - OpenCode 会话
 - ZCode 会话
+- WorkBuddy 桌面会话
 - 会话用量展示（实验）：卡片紧凑用量行与悬浮预览「用量」区块，token/轮次/工具/模型/时长随扫描源能力而定，缺项显示 —。
 
 当前发布版本：v0.1.9。仓库使用 Tauri 2 作为桌面应用壳，前端入口 [ui/index.html](ui/index.html) 是唯一 UI 源文件。AgentWatcher 主仓库保持零插件可启动、构建和测试，外部插件通过独立 `*.awplugin` 描述文件发现和启用。
@@ -41,16 +42,17 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - 接入 Codex 桌面会话扫描，支持与 Copilot / Claude 一起纳入 Watcher 和任务链路。
 - 接入 OpenCode 和 Copilot CLI 独立会话来源，provider 筛选、状态卡片和数量配额彼此独立。
 - 接入 ZCode 会话来源（本机 `~/.zcode/cli/db/db.sqlite`）：状态卡片、悬浮预览、接续上下文导出可用；点击跳转暂不实现（ZCode 官方无会话级深链，桌面发行版不含 TUI 运行时，点击返回明确提示）。
+- 接入 WorkBuddy 桌面会话来源（本机 `~/.workbuddy`：`workbuddy.db` 元数据 + `projects` 正文 JSONL）：状态卡片、悬浮预览、用量（token/上下文占用/credits）可用；点击经 `workbuddy://chat/<会话id>` 深链跳回 WorkBuddy 对应会话。
 - 扫描上限按 provider 分别计算，避免高数量来源挤掉其他 provider。
 - 支持工作区路径黑名单，默认过滤 `%TEMP%` 下的临时测试会话。
 
 ## 技术方向
 
-使用 Tauri 2 实现轻量桌面壳，前端由 [ui/index.html](ui/index.html) 提供。宿主统一聚合 Copilot、Copilot CLI、Claude Code、Codex、OpenCode 和 ZCode 会话；VS Code 内会话通过 Bridge 精确跳转，ZCode 会话支持扫描、预览与接续上下文导出（跳转暂不实现），外部插件通过描述文件贡献工作流和设置动作。
+使用 Tauri 2 实现轻量桌面壳，前端由 [ui/index.html](ui/index.html) 提供。宿主统一聚合 Copilot、Copilot CLI、Claude Code、Codex、OpenCode、ZCode 和 WorkBuddy 会话；VS Code 内会话通过 Bridge 精确跳转，ZCode 会话支持扫描、预览与接续上下文导出（跳转暂不实现），WorkBuddy 会话经其注册的 `workbuddy://` 协议跳转，外部插件通过描述文件贡献工作流和设置动作。
 
 ## 功能特性
 
-- **实时监控**：自动扫描 Copilot、Copilot CLI、Claude Code、Codex、OpenCode 和 ZCode 的 workspace sessions
+- **实时监控**：自动扫描 Copilot、Copilot CLI、Claude Code、Codex、OpenCode、ZCode 和 WorkBuddy 的 workspace sessions
 - **状态分类**：按 waiting（待回复）、running（运行中）、idle（闲置）分类显示
 - **一键跳转**：点击卡片直接打开对应的 VS Code session
 - **悬浮预览**：悬停卡片右下角展开按钮显示最近用户输入和 AI 正文摘要，预览窗口可 resize 并记忆尺寸
@@ -59,6 +61,7 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - **Codex 会话接入**：接入 Codex 桌面会话，支持与 Copilot、Claude 一起显示状态与跳转
 - **OpenCode 会话接入**：读取本机 OpenCode 数据库，支持状态、预览、打开和 handoff
 - **ZCode 会话接入**：读取本机 ZCode 会话库，支持状态、预览和作为接续来源导出上下文（跳转暂不实现）
+- **WorkBuddy 会话接入**：读取本机 WorkBuddy 桌面端数据（SQLite 元数据 + 正文 JSONL），支持状态卡片、悬浮预览、用量展示（token 求和、上下文占用、credits）和深链跳转
 - **AI 命令行**：随发布包附带 `agentwatcher-cli.exe`，AI 助手和终端用户不启动 GUI 即可查询会话、用量并导出接续上下文，输出机器可解析的 JSON 信封（详见下文「AI 命令行」一节）
 - **独立 Copilot CLI provider**：独立筛选、配额和标识，不与 VS Code Copilot 合并
 - **VS Code 连接组件**：首次启动自动安装连接组件，实现精确 session 跳转、handoff 路由和 ack 成功确认

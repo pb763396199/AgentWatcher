@@ -1,6 +1,6 @@
 # AGENTS.md
 
-AgentWatcher 是一个 Windows 桌面小工具，用 Tauri 2 写的。它盯着多个 AI 助手（VS Code Copilot / Copilot CLI、Claude Code、Codex、OpenCode、ZCode）在工作区里的 session 状态，按"等回复 / 跑着 / 闲着"分类，显示成一个个小卡片。点卡片就能跳到对应的 session（ZCode 例外：跳转暂不实现，点击返回明确提示，扫描/预览/接续导出可用），悬停还能看摘要。
+AgentWatcher 是一个 Windows 桌面小工具，用 Tauri 2 写的。它盯着多个 AI 助手（VS Code Copilot / Copilot CLI、Claude Code、Codex、OpenCode、ZCode、WorkBuddy）在工作区里的 session 状态，按"等回复 / 跑着 / 闲着"分类，显示成一个个小卡片。点卡片就能跳到对应的 session（ZCode 例外：跳转暂不实现，点击返回明确提示，扫描/预览/接续导出可用），悬停还能看摘要。WorkBuddy 点击经 `workbuddy://chat/<会话id>` 深链跳回对应会话。
 
 这个仓库没有 OpenCode 或 Cursor 的配置文件，AGENTS.md 是唯一的指令文件。改东西请在 `dev` 分支上，动手前先跑 `git status --short --untracked-files=all` 看清楚当前工作区。
 
@@ -26,7 +26,7 @@ AgentWatcher 是一个 Windows 桌面小工具，用 Tauri 2 写的。它盯着�
 - `npm run dev:ui` —— 只起 Vite，纯浏览器预览在 `:1420`，没有 Tauri 接口。做纯 UI 时用这个。当 `window.__TAURI_INTERNALS__` 不存在时，页面会自动用 mock 数据兜底。
 - `npm run build:ui` —— 用 Vite 把 `ui/` 打到 `ui-dist/` 目录（这个目录是 git 忽略的）。
 - `npm run test:tauri:smoke` —— 真实 Tauri 桌面壳冒烟测试。脚本优先附着 `.tmp/tauri-dev-runtime.json` 里的 `npm run dev` CDP 运行时；如果没有可用 dev，才自己启动测试用真实 Tauri 壳。它会确认 `window.__TAURI_INTERNALS__ === true`，再做真实点击、窗口发现、console/pageerror 采集和截图。改 UI/窗口/交互时优先跑这个，不要用 `dev:ui` 的浏览器 mock 当验收。
-- `npm run test:tauri:flow -- 任务面板` / `性能面板` / `接续面板` / `opencode-session` / `zcode-session` / `打包` —— 只跑指定真实交互流程。也接受英文别名 `agent-task`、`performance`、`handoff`、`opencode`、`zcode`、`package-session`。默认优先测当前 `npm run dev`；需要隔离临时窗口时才加 `--isolated-runtime`。
+- `npm run test:tauri:flow -- 任务面板` / `性能面板` / `接续面板` / `opencode-session` / `zcode-session` / `workbuddy-session` / `打包` —— 只跑指定真实交互流程。也接受英文别名 `agent-task`、`performance`、`handoff`、`opencode`、`zcode`、`workbuddy`（或 `wb`）、`package-session`。默认优先测当前 `npm run dev`；需要隔离临时窗口时才加 `--isolated-runtime`。
 - `npm run build` —— `tauri build`，跑 Rust + 打包。生成的 exe 在 `src-tauri/target/release/agentwatcher.exe`。
 - `cargo build --manifest-path src-tauri/Cargo.toml --bin agentwatcher-cli` —— 单独构建 AI 命令行二进制（见「AI 操作 CLI」一节）。
 - `npm run generate:icons` —— 重新生成 `src-tauri/icons/icon.ico` 和 `icon-runtime-256.rgba`。**只能在 Windows 上跑**，里面调了 `pwsh` 用 .NET 的 `System.Drawing` 画 Segoe UI 字体。其他系统会报错。
@@ -51,8 +51,8 @@ AgentWatcher 是一个 Windows 桌面小工具，用 Tauri 2 写的。它盯着�
 
 命令都注册在 `src-tauri/src/lib.rs`（generate_handler 列表）。前端用 `@tauri-apps/api/core` 里的 `invoke('name', { ... })` 调。事件名：`agentwatcher-sessions-changed`（被监控的 JSONL 文件变了之后 250 ms 防抖发一次，被监控的目录在 `session_watch_roots()` 里）。
 
-- `scan_sessions({ options?: ScanOptions })` → `AgentSession[]`。`ScanOptions` 字段：`maxSessions`、`activeWindowDays`（非 0 值夹在 1 到 30 之间；显式传 `0` 是全历史模式，不限时间、`maxSessions` 上限放宽到 20000、解除 SQLite 240 行扫描上限——GUI 滑条最低 1 天不会传 0，这是给 CLI 显式参数用的）、`hideArchived`、`includeCopilot`、`includeCopilotCli`、`includeClaude`、`includeCodex`、`includeOpenCode`、`includeZcode`、`workspacePathBlacklist`。默认最大 80 个（按 provider 各自配额）、活跃窗口 7 天、include 全部默认 `true`。每个会话带 `usage` 字段（可选，`null` 时整体省略）：累计毛输入/缓存读取/输出 token、当前上下文（含窗口上限）、用户轮次、工具调用数、模型调用数、模型名、总跨度时长与活跃时长，OpenCode 另有美元成本、Copilot Chat 另有 credits；数据源没有的项为 `null`。活跃时长口径：Codex/Claude/Copilot Chat/OpenCode 按内容时间戳聚类、相邻间隔超过 `USAGE_ACTIVE_GAP_THRESHOLD_MS`（5 分钟）的空闲不计入（`active_duration_ms_from_timestamps`，OpenCode 走 message 表 SQL）；ZCode 取 `model_usage.duration_ms` 求和（模型真实生成时长）；Copilot CLI 数据源无用量。另有一个懒加载命令 `get_session_usage_detail({ id })` 返回 `{ usage, topTools }`（OpenCode/ZCode 走 SQL，其余源取聚合缓存）。
-- `open_session({ id?, provider?, workspacePath?, sessionResource? })` → 先试 bridge 的 `vscode://…/open?resource=…&target=editor`，不行再试 `vscode://file<path>?session=…` 深链接，最后兜底用 `code --agents <path>`。每一步失败都会降级。provider 为 `codex` / `opencode` / `zcode` 时走各自专属分支不走 bridge。**ZCode 分支：跳转暂不实现（用户拍板）**——官方无会话级深链（feedback#465 待响应）、桌面发行版不含 `@zcode/tui`（3.11.2 与 3.12.1 均已解包验证）、独立 CLI 未公开分发（npm/npmmirror/CDN 均无）。点击卡片返回明确的「not supported yet」提示；扫描、悬浮预览、接续上下文导出不受影响。上游能力就绪后按 git 历史里的 TUI 实现恢复即可。
+- `scan_sessions({ options?: ScanOptions })` → `AgentSession[]`。`ScanOptions` 字段：`maxSessions`、`activeWindowDays`（非 0 值夹在 1 到 30 之间；显式传 `0` 是全历史模式，不限时间、`maxSessions` 上限放宽到 20000、解除 SQLite 240 行扫描上限——GUI 滑条最低 1 天不会传 0，这是给 CLI 显式参数用的）、`hideArchived`、`includeCopilot`、`includeCopilotCli`、`includeClaude`、`includeCodex`、`includeOpenCode`、`includeZcode`、`includeWorkbuddy`、`workspacePathBlacklist`。默认最大 80 个（按 provider 各自配额）、活跃窗口 7 天、include 全部默认 `true`。每个会话带 `usage` 字段（可选，`null` 时整体省略）：累计毛输入/缓存读取/输出 token、当前上下文（含窗口上限）、用户轮次、工具调用数、模型调用数、模型名、总跨度时长与活跃时长，OpenCode 另有美元成本、Copilot Chat 另有 credits；数据源没有的项为 `null`。活跃时长口径：Codex/Claude/Copilot Chat/OpenCode 按内容时间戳聚类、相邻间隔超过 `USAGE_ACTIVE_GAP_THRESHOLD_MS`（5 分钟）的空闲不计入（`active_duration_ms_from_timestamps`，OpenCode 走 message 表 SQL）；ZCode 取 `model_usage.duration_ms` 求和（模型真实生成时长）；WorkBuddy 的 token/轮次/工具数按正文全量聚合（走 JSONL 用量缓存预算），上下文占用与 credits 取 `workbuddy.db` 的 `session_usage` 表；Copilot CLI 数据源无用量。另有一个懒加载命令 `get_session_usage_detail({ id })` 返回 `{ usage, topTools }`（OpenCode/ZCode 走 SQL，其余源取聚合缓存）。
+- `open_session({ id?, provider?, workspacePath?, sessionResource? })` → 先试 bridge 的 `vscode://…/open?resource=…&target=editor`，不行再试 `vscode://file<path>?session=…` 深链接，最后兜底用 `code --agents <path>`。每一步失败都会降级。provider 为 `codex` / `opencode` / `zcode` / `workbuddy` 时走各自专属分支不走 bridge。WorkBuddy 分支用 `rundll32 url.dll,FileProtocolHandler` 打开 `workbuddy://chat/<会话id>`（WorkBuddy 注册的 URL 协议，正式包内 `navigateToSession` 即此格式），失败返回明确报错。**ZCode 分支：跳转暂不实现（用户拍板）**——官方无会话级深链（feedback#465 待响应）、桌面发行版不含 `@zcode/tui`（3.11.2 与 3.12.1 均已解包验证）、独立 CLI 未公开分发（npm/npmmirror/CDN 均无）。点击卡片返回明确的「not supported yet」提示；扫描、悬浮预览、接续上下文导出不受影响。上游能力就绪后按 git 历史里的 TUI 实现恢复即可。
 - `launch_handoff({ mode, workspacePath })` → 先开新窗口，再发 `vscode://…/handoff?command=…&insertPrompt=1&ackPath=…&ackToken=…`。`mode`：`agents` → `workbench.action.chat.openNewSessionEditor.local`，`code-chat` → `…openNewSessionEditor.copilotcli`，`claude-panel` → `claude-vscode.editor.open`（这三个等 Bridge 写 ack 文件，最多 20 秒）；`codex-app` / `opencode-cli` 不等 ack，直接拉起目标客户端。ZCode 只能作为接续**来源**（prompt 里带 `handoff-sources\zcode\` 导出文件），不作为接续目标（跳转/TUI 暂不实现）。
 - `get_bridge_status()` → 返回 `{ installed, needsUpdate, localVersion, installedVersion, codePath, message }`。`needsUpdate` 为真的条件：装的版本比本地的旧 *或者* 任何历史 safe ID 还在。
 - `install_bridge()` → 先卸掉历史 safe ID，找目录里的 `agentwatcher-bridge-<版本>.vsix`，找不到就用 `npx --yes @vscode/vsce package` 打到 `%TEMP%\AgentWatcher\` 兜底，然后跑 `code --install-extension … --force`，最后再验一遍：稳定 ID 必须装上了、历史 safe ID 一个都不准剩。任何一个没满足都报错。
@@ -87,12 +87,13 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 
 ## Session 数据源（只在 Windows 下有效）
 
-扫描逻辑在 `session_watch_roots()` 和各 provider 的 `scan_*_sessions` 里（Copilot / Copilot CLI / Claude / Codex / OpenCode / ZCode）。
+扫描逻辑在 `session_watch_roots()` 和各 provider 的 `scan_*_sessions` 里（Copilot / Copilot CLI / Claude / Codex / OpenCode / ZCode / WorkBuddy）。
 
 - Copilot Chat：`%APPDATA%\Code\User\workspaceStorage\*\chatSessions\*.jsonl`（也扫 `Code - Insiders`）。
 - Copilot 转录覆盖文件（用来判断 waiting/running 状态）：`<workspaceStorage>\<hash>\GitHub.copilot-chat\transcripts\<sessionId>.jsonl`。
 - Claude Code：`%USERPROFILE%\.claude\projects\*\*.jsonl`，加上每个项目里的 `sessions-index.json` 拿预索引的 session。Insiders 路径走扩展目录，不是 projects 目录。
 - ZCode：`%USERPROFILE%\.zcode\cli\db\db.sqlite`（SQLite，桌面版和 CLI 共用；只读打开，`session` 表的 `directory` 列就是明文 workspace 路径，`message`/`part` 表的 `data` 列是 JSON，schema 与 OpenCode 的 db 同构）。扫描时会过滤 `task_type = 'subagent_child'` 的子会话。
+- WorkBuddy：`%USERPROFILE%\.workbuddy\workbuddy.db`（SQLite + WAL，只读打开）出会话清单（跳过 `deleted_at` 非空、`is_playground=1`、`cwd` 为空的行；playground 是自动化任务产物，没有工作区归属）；正文在 `projects\<工作区 slug>\<会话 id>.jsonl`（CodeBuddy 系事件流：message/function_call/function_call_result/reasoning 等，文件名即会话 ID，按文件名通配定位不推导 slug）。文件监听只挂 `projects` 子目录——`~/.workbuddy` 根下有秒级心跳文件，挂根会刷爆防抖。
 - Codex resume/fork 会在 `~/.codex/sessions` 另开一个文件名带 `_<新uuid>` 后缀的 rollout 片段（`session_meta` 仍写原 thread id，ordinal 接续原文件），app-server 的 `thread/list` 会把同一 id 的每个片段各返回一条。`scan_codex_sessions` 对 thread/list 结果按 id 去重、保留 updatedAt 最新的一条；usage 沿片段文件链聚合：事件计数（轮次/工具/模型调用/时长）跨片段求和，token 等累计口径取最新片段。归档会话在 `~/.codex/archived_sessions`（`.jsonl` 与 `.jsonl.zst` 混存，zst 用 ruzstd 解压）；只有 `hideArchived=false` 时才扫这个目录，且全历史列表扫描对 zst 只取头部（尾部解压留给定向查找）。
 
 采样大小（都是 `lib.rs` 里的常量）：JSONL 头读 128 KB，尾读 256 KB，标题采样 240 行，Copilot prompt 扫 16 MB，Claude prompt 扫 8 MB，transcript 扫 2 MB。SQLite provider（OpenCode/ZCode）只采样最近 N 行 message/part（24/32 条），**不读全文**。
@@ -104,6 +105,7 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 - Copilot `waiting`：当前响应里有没解决的 `questionCarousel`，或者 `vscode_askQuestions` 工具调用还 `!isComplete && !isUsed && !isSkipped`。一旦出现 `modelState.completedAt`、`result`、`followups`、`elapsedMs`，就清掉之前的 waiting 标记。
 - Claude `waiting`：`AskUserQuestion` 的 `tool_use` 进到了 `pending_ask_user_question_ids`（还没被同 `tool_use_id` 的 `tool_result` 关掉）。`toolUseResult.answers == []` 或者 `isSkipped` 都会把它清掉。
 - ZCode `waiting`：`part` 表里 `tool = "AskUserQuestion"` 且 `state.status = "pending"`（未完成）；`running`：assistant message 没有 `time.completed/finish/error`，或 tool part 的 `state.status` 是 `pending/running`。**状态机的新鲜度用 message/part 内容时间戳，不用 `session.time_updated`**——那个字段是亚秒级心跳，空闲时可能空刷，用它会把空闲会话误判成 running。
+- WorkBuddy `waiting`：尾部采样里问题类工具（`AskUserQuestion`/`ask_user_question`/`ask_followup_question`/`pick_location`，名单来自正式包 app.asar 的交互工具集合）的 `function_call` 没有同 `callId` 的 `function_call_result`；`running`：最后一条 assistant message 没有 `completed`/`incomplete` 终态，或普通工具 `function_call` 未闭合。新鲜度用正文事件时间戳（毫秒，数字或数字字符串）。
 - `running`：10 分钟内有内容时间戳（`STATUS_RECENT_CONTENT_WINDOW_MS`），或者 3 分钟内有文件修改（`STATUS_RECENT_FILE_WINDOW_MS`），或者 2 小时内有 Running 标记（`STATUS_RUNNING_HINT_WINDOW_MS`）。
 - 跳过的回答（`skip` / `skipped` / `跳过` / `no_answer` 等等，定义在 `is_skip_sentinel`）和 AI 模型的废话（`is_ai_model_noise_text`）一律在生成预览时过滤掉，也永远不会让状态机误判。
 
@@ -114,7 +116,7 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 ## AgentTask / Watcher UI 约束
 
 - 改 AgentTask 或 Watcher 的按钮、状态卡片、详情面板时，必须同时检查中文/英文、dark/light；按钮配色按功能角色和当前状态主题色统一分配，不能只给当前截图里的一种语言或主题打补丁。
-- 改任何 Tauri 窗口、真实点击、悬浮预览、handoff、性能面板、todo 面板、AgentTask/Watcher 切换、OpenCode/ZCode 会话卡片、窗口尺寸或主题/语言交互时，必须跑 `npm run test:tauri:smoke`，或者至少跑对应的 `npm run test:tauri:flow -- <流程名>`。
+- 改任何 Tauri 窗口、真实点击、悬浮预览、handoff、性能面板、todo 面板、AgentTask/Watcher 切换、OpenCode/ZCode/WorkBuddy 会话卡片、窗口尺寸或主题/语言交互时，必须跑 `npm run test:tauri:smoke`，或者至少跑对应的 `npm run test:tauri:flow -- <流程名>`。
 - `npm run dev:ui` 只能做浏览器预览，不算真实交互验收。真实验收必须通过 WebView2 CDP 连接到 Tauri dev 版，并确认 `window.__TAURI_INTERNALS__ === true`。
 - 不要问用户“要 dev 还是 debug”。本项目里对 agent 的默认动作是：先用 `npm run dev`，再跑 `npm run test:tauri:*`；测试脚本会自动附着当前 dev 的 CDP，或者在没有 dev 时拉起自己的真实 Tauri 壳。
 - 不要优先使用 Windows UI Automation、坐标点击或截图猜测。只有 WebView2 CDP 不可用时，才把这些当人工兜底，并在结果里写清楚。
@@ -131,7 +133,7 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 - Rust 单元测试在 `lib.rs` 文件末尾，覆盖了 Bridge 版本管理、状态转换、transcript 覆盖、工作区身份（UGA 分支、通用插件根、路径归一化）和预览文本提取。跑：`cargo test --manifest-path src-tauri/Cargo.toml`。
 - CLI 分类学与契约测试：`cargo test --manifest-path src-tauri/Cargo.toml --test cli_taxonomy --test cli_contract`。改 `src-tauri/src/bin/agentwatcher-cli/` 或三个 pub 扫描入口时必跑。
 - 真实 Tauri UI 冒烟测试：`npm run test:tauri:smoke`。它会优先附着 `npm run dev` 写出的 `.tmp/tauri-dev-runtime.json`，用 Playwright 通过 WebView2 CDP 操作真实桌面窗口，覆盖主窗口、AgentTask 切换、性能诊断窗口和接续面板识别；如果没有 dev，脚本会自己启动真实 Tauri 壳。
-- 指定真实 UI 流程：`npm run test:tauri:flow -- 任务面板`、`npm run test:tauri:flow -- 性能面板`、`npm run test:tauri:flow -- 接续面板`、`npm run test:tauri:flow -- opencode-session`、`npm run test:tauri:flow -- zcode-session`、`npm run test:tauri:flow -- 打包`。改 OpenCode/ZCode provider、卡片打开、handoff/AgentTask 派发目标时，必须跑对应 provider 的 session 流程，不能退回“手动点一下”。
+- 指定真实 UI 流程：`npm run test:tauri:flow -- 任务面板`、`npm run test:tauri:flow -- 性能面板`、`npm run test:tauri:flow -- 接续面板`、`npm run test:tauri:flow -- opencode-session`、`npm run test:tauri:flow -- zcode-session`、`npm run test:tauri:flow -- workbuddy-session`、`npm run test:tauri:flow -- 打包`。改 OpenCode/ZCode/WorkBuddy provider、卡片打开、handoff/AgentTask 派发目标时，必须跑对应 provider 的 session 流程，不能退回“手动点一下”。
 - `.tmp/bridge-handoff-routing-test.cjs` 是 Node 写的测试，伪造 `vscode` 模块，验证 Bridge 命令路由（`agents` / `code-chat` / `claude-panel` 三种），包括 `claude-vscode.editor.open` 走剪贴板那条路径和 `safe1` 风格的兜底。它还顺带测了 `AGENTWATCHER_TARGET_BOUND_SENTINEL` 这个 Copilot 目标的正常路径。
 - 人工验收清单在 `docs/retrospectives/`：VSIX 必须叫 `agentwatcher-bridge-0.1.12.vsix`；`code --list-extensions | findstr agentwatcher` 应该只显示稳定 ID，不准出现 `safe1..4`；每次发版的 SHA256 要写进 `CHANGELOG.md`。
 
