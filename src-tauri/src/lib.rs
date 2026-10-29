@@ -14999,8 +14999,9 @@ fn lookup_workbuddy_session_by_key(scan_time_ms: u64, key: &str) -> Option<Agent
         .map(|path| summarize_workbuddy_transcript_tail(path))
         .unwrap_or_default();
     // 定向查询是用户显式动作：绕开共享 JSONL 预算直读（与 codex 的 unbudgeted 直读
-    // 同口径）。共享预算由 scan_sessions_blocking 重置，lookup 路径不经过它，deadline
-    // 恒为 0，走 cached_jsonl_usage_for_path 会永远拿不到用量。
+    // 同口径）。lookup 路径要么在从未跑过扫描的进程里（预算 deadline 为 0），要么在
+    // CLI 先扫后兜底的链路里（预算可能已被前面的 provider 耗尽）——两种情况下走
+    // cached_jsonl_usage_for_path 都拿不到用量。
     let full_usage_entry = transcript_path
         .as_ref()
         .and_then(|path| cached_jsonl_usage_for_path_unbudgeted(path, parse_workbuddy_usage));
@@ -19739,6 +19740,7 @@ mod tests {
 
         assert_eq!(parsed.model_calls, None);
         assert_eq!(parsed.total_input_tokens, None);
+        assert_eq!(parsed.cached_input_tokens, None);
         assert_eq!(parsed.total_output_tokens, None);
         assert_eq!(parsed.user_turns, Some(1));
         assert_eq!(parsed.tool_calls, Some(1));
