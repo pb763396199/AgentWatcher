@@ -3174,6 +3174,39 @@ pub fn session_usage_detail(id: String) -> SessionUsageDetail {
     if let Some(session_id) = trimmed.strip_prefix("opencode:") {
         return opencode_usage_detail(session_id);
     }
+    if let Some(session_id) = trimmed.strip_prefix("workbuddy:") {
+        let mut detail = jsonl_usage_detail_for_session(trimmed).map_or_else(
+            || SessionUsageDetail { usage: None, top_tools: Vec::new() },
+            |entry| SessionUsageDetail {
+                usage: (!entry.usage.is_empty()).then_some(entry.usage),
+                top_tools: entry
+                    .top_tools
+                    .into_iter()
+                    .map(|(name, count)| UsageToolCount { name, count })
+                    .collect(),
+            },
+        );
+        if detail.usage.is_none() {
+            // 悬停是用户显式动作：绕开渐进预算直读，避免全量扫描把共享预算
+            // 花光后 WorkBuddy（扫描顺序排在最后）迟迟没有用量
+            if let Some(path) = workbuddy_transcript_paths().get(session_id) {
+                if let Some(entry) =
+                    cached_jsonl_usage_for_path_unbudgeted(path, parse_workbuddy_usage)
+                {
+                    if !entry.usage.is_empty() {
+                        store_jsonl_usage_detail(trimmed, &entry);
+                        detail.usage = Some(entry.usage);
+                        detail.top_tools = entry
+                            .top_tools
+                            .into_iter()
+                            .map(|(name, count)| UsageToolCount { name, count })
+                            .collect();
+                    }
+                }
+            }
+        }
+        return detail;
+    }
     if let Some(session_id) = trimmed.strip_prefix("codex:") {
         let mut detail = jsonl_usage_detail_for_session(trimmed).map_or_else(
             || SessionUsageDetail { usage: None, top_tools: Vec::new() },
@@ -14965,9 +14998,15 @@ fn lookup_workbuddy_session_by_key(scan_time_ms: u64, key: &str) -> Option<Agent
         .as_ref()
         .map(|path| summarize_workbuddy_transcript_tail(path))
         .unwrap_or_default();
+    // 定向查询是用户显式动作：绕开共享 JSONL 预算直读（与 codex 的 unbudgeted 直读
+    // 同口径）。共享预算由 scan_sessions_blocking 重置，lookup 路径不经过它，deadline
+    // 恒为 0，走 cached_jsonl_usage_for_path 会永远拿不到用量。
     let full_usage_entry = transcript_path
         .as_ref()
-        .and_then(|path| cached_jsonl_usage_for_path(path, parse_workbuddy_usage));
+        .and_then(|path| cached_jsonl_usage_for_path_unbudgeted(path, parse_workbuddy_usage));
+    if let Some(entry) = &full_usage_entry {
+        store_jsonl_usage_detail(&format!("workbuddy:{}", row.id), entry);
+    }
     let usage = workbuddy_merged_usage(
         &row,
         full_usage_entry.map(|entry| entry.usage),

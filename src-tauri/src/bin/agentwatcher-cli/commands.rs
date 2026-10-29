@@ -154,6 +154,28 @@ fn session_time_label(session: &AgentSession) -> String {
 
 fn find_session(id: &str) -> Option<AgentSession> {
     let trimmed = id.trim();
+    // id 形如 provider:key：先按该 provider 窄扫描。显式点名查询不该跟全量扫描
+    // 抢共享 JSONL 用量预算——扫描顺序靠后的 provider（如 workbuddy）在全量模式下
+    // 可能被前面的 provider 把预算花光，拿到没有 usage 的会话。
+    if let Some((provider, _)) = trimmed.split_once(':') {
+        if KNOWN_PROVIDERS.contains(&provider) {
+            if let Some(session) = scan_sessions_blocking(Some(ScanOptions {
+                include_copilot: Some(provider == "copilot"),
+                include_copilot_cli: Some(provider == "copilot-cli"),
+                include_claude: Some(provider == "claude"),
+                include_codex: Some(provider == "codex"),
+                include_open_code: Some(provider == "opencode"),
+                include_zcode: Some(provider == "zcode"),
+                include_workbuddy: Some(provider == "workbuddy"),
+                ..scan_options(&[], None, None, false)
+            }))
+            .into_iter()
+            .find(|session| session.id == trimmed)
+            {
+                return Some(session);
+            }
+        }
+    }
     if let Some(session) = scan_sessions_blocking(None)
         .into_iter()
         .find(|session| session.id == trimmed)
@@ -163,6 +185,17 @@ fn find_session(id: &str) -> Option<AgentSession> {
     // 默认参数查不到：会话可能已归档或在 30 天窗口外，定向兜底再查一次。
     lookup_session_full_history(trimmed)
 }
+
+/// id 前缀里认识的 provider 名单；不认识的前缀直接走全量扫描与兜底。
+const KNOWN_PROVIDERS: &[&str] = &[
+    "copilot",
+    "copilot-cli",
+    "claude",
+    "codex",
+    "opencode",
+    "zcode",
+    "workbuddy",
+];
 
 fn handoff_request_for(session: &AgentSession) -> HandoffSourceContextRequest {
     HandoffSourceContextRequest {
