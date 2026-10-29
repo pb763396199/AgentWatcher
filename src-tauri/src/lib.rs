@@ -183,7 +183,7 @@ pub struct SessionUsageDetail {
 /// token 求和保总量，上下文取桶末值，并在返回上标记 degraded。
 const TIMELINE_POINT_BUDGET: usize = 5000;
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Default, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct LifecycleCallPoint {
     t_ms: u64,
@@ -195,6 +195,60 @@ struct LifecycleCallPoint {
     output_tokens: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     context_tokens: Option<u64>,
+    // 逐轮审计字段：数据源没有就保持 None，序列化时省略。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_requested: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort_or_variant: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cost_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ttft_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retries: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_type: Option<String>,
+    #[serde(skip_serializing_if = "is_false")]
+    context_exceeded: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+/// 逐轮降智审计的一行：一个用户轮窗口内全部模型调用的聚合与信号。
+/// 信号四类各自独立，不合成分数：model（请求与实际模型不符，或轮间模型
+/// 改变）、effort（轮间档位/变体改变）、low-output（输出低于会话中位数
+/// 三成）、retry / error / context-exceeded（可靠性痕迹）。
+#[derive(Debug, Default, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct TurnAuditRow {
+    turn_index: u32,
+    t_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_requested: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_served: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort_or_variant: Option<String>,
+    input_tokens: u64,
+    output_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cost_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ttft_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retries: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_type: Option<String>,
+    #[serde(skip_serializing_if = "is_false")]
+    context_exceeded: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    signals: Vec<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize)]
@@ -215,6 +269,9 @@ struct SessionLifecycle {
     orchestration: Vec<OrchestrationEvent>,
     /// 主代理被子代理阻塞的估算区间（spawn 到其后最近一次 wait_agent）
     wait_intervals: Vec<(u64, u64)>,
+    /// 逐轮降智审计：按用户轮窗口聚合的模型、档位、用量与信号。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    turn_audit: Vec<TurnAuditRow>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -283,10 +340,42 @@ fn downsample_lifecycle_calls(
                 cached_input_tokens: first.cached_input_tokens,
                 output_tokens: first.output_tokens,
                 context_tokens: first.context_tokens,
+                model_requested: first.model_requested.clone(),
+                effort_or_variant: first.effort_or_variant.clone(),
+                reasoning_tokens: first.reasoning_tokens,
+                cost_usd: first.cost_usd,
+                ttft_ms: first.ttft_ms,
+                retries: first.retries,
+                error_type: first.error_type.clone(),
+                context_exceeded: first.context_exceeded,
             };
             for point in &chunk[1..] {
                 bucket.input_tokens = bucket.input_tokens.saturating_add(point.input_tokens);
                 bucket.output_tokens = bucket.output_tokens.saturating_add(point.output_tokens);
+                bucket.reasoning_tokens = match (bucket.reasoning_tokens, point.reasoning_tokens)
+                {
+                    (Some(acc), Some(value)) => Some(acc.saturating_add(value)),
+                    _ => None,
+                };
+                bucket.cost_usd = match (bucket.cost_usd, point.cost_usd) {
+                    (Some(acc), Some(value)) => Some(acc + value),
+                    _ => None,
+                };
+                bucket.ttft_ms = match (bucket.ttft_ms, point.ttft_ms) {
+                    (Some(acc), Some(value)) => Some(acc.min(value)),
+                    _ => None,
+                };
+                bucket.retries = match (bucket.retries, point.retries) {
+                    (Some(acc), Some(value)) => Some(acc.saturating_add(value)),
+                    _ => None,
+                };
+                if bucket.error_type.is_none() {
+                    bucket.error_type = point.error_type.clone();
+                }
+                bucket.context_exceeded = bucket.context_exceeded || point.context_exceeded;
+                if point.effort_or_variant.is_some() {
+                    bucket.effort_or_variant = point.effort_or_variant.clone();
+                }
                 match (bucket.cached_input_tokens, point.cached_input_tokens) {
                     (Some(acc), Some(value)) => {
                         bucket.cached_input_tokens = Some(acc.saturating_add(value));
@@ -304,6 +393,174 @@ fn downsample_lifecycle_calls(
     }
     out.sort_by_key(|point| point.t_ms);
     (out, true)
+}
+
+/// 逐轮降智审计的低输出判定：输出低于会话中位数三成才算异常。
+const TURN_AUDIT_LOW_OUTPUT_RATIO: f64 = 0.3;
+/// 低输出判定需要的参照轮数下限：不足三轮不给中位数下结论。
+const TURN_AUDIT_LOW_OUTPUT_MIN_TURNS: usize = 3;
+
+/// 把逐调用点位按用户轮窗口聚合成逐轮审计行，并标注四类信号。
+/// 窗口按 turn_timestamps 切，早于首个轮边界的时间戳归入第一轮；
+/// 没有轮边界时整段算一轮。空窗口不产生行，行号按产出的行序排。
+fn build_turn_audit(
+    calls: &[LifecycleCallPoint],
+    turn_timestamps: &[u64],
+) -> Vec<TurnAuditRow> {
+    if calls.is_empty() {
+        return Vec::new();
+    }
+    let mut bounds: Vec<u64> = turn_timestamps.to_vec();
+    bounds.sort_unstable();
+    bounds.dedup();
+
+    let mut ordered: Vec<&LifecycleCallPoint> = calls.iter().collect();
+    ordered.sort_by_key(|point| point.t_ms);
+
+    let key_of = |t_ms: u64| -> usize {
+        if bounds.is_empty() {
+            return 0;
+        }
+        match bounds.binary_search(&t_ms) {
+            Ok(index) => index,
+            Err(0) => 0,
+            Err(index) => index - 1,
+        }
+    };
+
+    let mut rows: Vec<TurnAuditRow> = Vec::new();
+    let mut current_key: Option<usize> = None;
+    let mut window_models: Vec<String> = Vec::new();
+    let mut push_row = |key: usize, window: &mut Vec<&LifecycleCallPoint>| {
+        if window.is_empty() {
+            return;
+        }
+        let mut row = TurnAuditRow {
+            turn_index: rows.len() as u32 + 1,
+            t_ms: bounds.get(key).copied().unwrap_or_else(|| window[0].t_ms),
+            ..Default::default()
+        };
+        for point in window.iter() {
+            row.input_tokens = row.input_tokens.saturating_add(point.input_tokens);
+            row.output_tokens = row.output_tokens.saturating_add(point.output_tokens);
+            // 可空合计的规则：还没见过值时取首个值；见过之后又缺，合计按未知算。
+            row.reasoning_tokens = match (row.reasoning_tokens, point.reasoning_tokens) {
+                (Some(acc), Some(value)) => Some(acc.saturating_add(value)),
+                (None, value) => value,
+                (Some(_), None) => None,
+            };
+            row.cost_usd = match (row.cost_usd, point.cost_usd) {
+                (Some(acc), Some(value)) => Some(acc + value),
+                (None, value) => value,
+                (Some(_), None) => None,
+            };
+            row.ttft_ms = match (row.ttft_ms, point.ttft_ms) {
+                (Some(acc), Some(value)) => Some(acc.min(value)),
+                (None, value) => value,
+                (Some(_), None) => None,
+            };
+            row.retries = match (row.retries, point.retries) {
+                (Some(acc), Some(value)) => Some(acc.saturating_add(value)),
+                (None, value) => value,
+                (Some(_), None) => None,
+            };
+            if row.error_type.is_none() {
+                row.error_type = point.error_type.clone();
+            }
+            row.context_exceeded = row.context_exceeded || point.context_exceeded;
+            if row.model_requested.is_none() {
+                row.model_requested = point.model_requested.clone();
+            }
+            if let Some(model) = point.model.as_deref() {
+                if !model.is_empty() {
+                    row.model_served = Some(model.to_string());
+                    if !window_models.iter().any(|seen| seen == model) {
+                        window_models.push(model.to_string());
+                    }
+                }
+            }
+            if point.effort_or_variant.is_some() {
+                row.effort_or_variant = point.effort_or_variant.clone();
+            }
+        }
+        // 窗口内换过模型也算模型变化（同轮多次调用换了模型）。
+        if window_models.len() > 1 {
+            row.signals.push("model".to_string());
+        }
+        if row.retries.unwrap_or(0) > 0 {
+            row.signals.push("retry".to_string());
+        }
+        if row.error_type.is_some() {
+            row.signals.push("error".to_string());
+        }
+        if row.context_exceeded {
+            row.signals.push("context-exceeded".to_string());
+        }
+        rows.push(row);
+        window_models.clear();
+    };
+
+    let mut window: Vec<&LifecycleCallPoint> = Vec::new();
+    for point in ordered {
+        let key = key_of(point.t_ms);
+        match current_key {
+            Some(active) if active == key => window.push(point),
+            Some(active) => {
+                push_row(active, &mut window);
+                window.clear();
+                window.push(point);
+                current_key = Some(key);
+            }
+            None => {
+                window.push(point);
+                current_key = Some(key);
+            }
+        }
+    }
+    if let Some(active) = current_key {
+        push_row(active, &mut window);
+    }
+
+    // 中位数只看有输出的轮；不足三轮不做低输出判定。
+    let mut outputs: Vec<u64> = rows
+        .iter()
+        .map(|row| row.output_tokens)
+        .filter(|value| *value > 0)
+        .collect();
+    outputs.sort_unstable();
+    let median = (outputs.len() >= TURN_AUDIT_LOW_OUTPUT_MIN_TURNS).then(|| {
+        outputs[outputs.len() / 2]
+    });
+
+    let mut prev_served: Option<String> = None;
+    let mut prev_effort: Option<String> = None;
+    for row in rows.iter_mut() {
+        if let (Some(requested), Some(served)) = (&row.model_requested, &row.model_served) {
+            if requested != served && !row.signals.iter().any(|s| s == "model") {
+                row.signals.push("model".to_string());
+            }
+        }
+        if let (Some(prev), Some(current)) = (&prev_served, &row.model_served) {
+            if prev != current && !row.signals.iter().any(|s| s == "model") {
+                row.signals.push("model".to_string());
+            }
+        }
+        if let (Some(prev), Some(current)) = (&prev_effort, &row.effort_or_variant) {
+            if prev != current {
+                row.signals.push("effort".to_string());
+            }
+        }
+        if let Some(median_value) = median {
+            if row.output_tokens > 0
+                && (row.output_tokens as f64) < median_value as f64 * TURN_AUDIT_LOW_OUTPUT_RATIO
+            {
+                row.signals.push("low-output".to_string());
+            }
+        }
+        prev_served = row.model_served.clone();
+        prev_effort = row.effort_or_variant.clone();
+    }
+    rows
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -1866,6 +2123,23 @@ fn parse_claude_timeline(
                                     cached_input_tokens: Some(cache_read),
                                     output_tokens: output,
                                     context_tokens: Some(gross_input),
+                                    // 逐轮审计：请求模型与档位在顶层记录上，思考 token
+                                    // 在 usage.output_tokens_details.thinking_tokens。
+                                    model_requested: value
+                                        .get("requestedModel")
+                                        .and_then(Value::as_str)
+                                        .filter(|text| !text.is_empty())
+                                        .map(str::to_string),
+                                    effort_or_variant: value
+                                        .get("perTurnEffort")
+                                        .or_else(|| value.get("effort"))
+                                        .and_then(Value::as_str)
+                                        .filter(|text| !text.is_empty())
+                                        .map(str::to_string),
+                                    reasoning_tokens: usage_json
+                                        .pointer("/output_tokens_details/thinking_tokens")
+                                        .and_then(Value::as_u64),
+                                    ..Default::default()
                                 });
                             }
                         }
@@ -2164,16 +2438,34 @@ fn parse_copilot_chat_timeline(
         let completion = request.get("completionTokens").and_then(value_as_u64);
         if let Some(t_ms) = timestamp_ms {
             if prompt.unwrap_or(0).saturating_add(completion.unwrap_or(0)) > 0 {
+                // 实际模型优先取 result.metadata.resolvedModel（解析后的真实模型），
+                // 请求模型取 modelId 去掉 copilot/ 前缀，两者可直接比对。
+                let resolved_model = request
+                    .get("result")
+                    .and_then(|result| result.pointer("/metadata/resolvedModel"))
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.is_empty());
+                let requested_model = request
+                    .get("modelId")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .map(|model_id| {
+                        model_id
+                            .split_once('/')
+                            .map(|(_, rest)| rest.to_string())
+                            .unwrap_or(model_id)
+                    });
                 calls.push(LifecycleCallPoint {
                     t_ms,
-                    model: request
-                        .get("modelId")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
+                    model: resolved_model
+                        .map(str::to_string)
+                        .or_else(|| requested_model.clone()),
                     input_tokens: prompt.unwrap_or(0),
                     cached_input_tokens: None,
                     output_tokens: completion.unwrap_or(0),
                     context_tokens: prompt,
+                    model_requested: requested_model,
+                    ..Default::default()
                 });
             }
             let is_system_initiated = request
@@ -2546,6 +2838,7 @@ fn parse_codex_timeline(
     let mut tool_timestamps: Vec<u64> = Vec::new();
     let mut context_window_tokens: Option<u64> = None;
     let mut current_model: Option<String> = None;
+    let mut current_effort: Option<String> = None;
     let mut orchestration: Vec<OrchestrationEvent> = Vec::new();
 
     for line in jsonl_lines(text) {
@@ -2593,6 +2886,12 @@ fn parse_codex_timeline(
                             cached_input_tokens: cached,
                             output_tokens: output,
                             context_tokens,
+                            // 逐轮审计：reasoning 已并入输出，档位跟随最近一次 turn_context。
+                            effort_or_variant: current_effort.clone(),
+                            reasoning_tokens: last
+                                .map(|last| count_value_u64(last, "reasoning_output_tokens"))
+                                .filter(|value| *value > 0),
+                            ..Default::default()
                         });
                     }
                 }
@@ -2643,6 +2942,9 @@ fn parse_codex_timeline(
             (Some("turn_context"), _) => {
                 if let Some(model) = payload.get("model").and_then(Value::as_str) {
                     current_model = Some(model.to_string());
+                }
+                if let Some(effort) = payload.get("effort").and_then(Value::as_str) {
+                    current_effort = Some(effort.to_string());
                 }
             }
             _ => {}
@@ -3153,6 +3455,7 @@ fn session_lifecycle(request: SessionLifecycleRequest) -> SessionLifecycle {
         agents_truncated: false,
         orchestration: Vec::new(),
         wait_intervals: Vec::new(),
+        turn_audit: Vec::new(),
     };
 
     let mut codex_segments: Vec<PathBuf> = Vec::new();
@@ -3241,6 +3544,8 @@ fn session_lifecycle(request: SessionLifecycleRequest) -> SessionLifecycle {
     // 指标行沿用既有的 usage 聚合口径（卡片/预览同源），时间轴只负责分布。
     let detail = session_usage_detail(id.clone());
     lifecycle.usage = detail.usage;
+    // 逐轮审计在降采样之后的点位上聚合：降级时信号只基于已采到的点。
+    lifecycle.turn_audit = build_turn_audit(&lifecycle.calls, &lifecycle.turn_timestamps);
     lifecycle
 }
 
@@ -7933,8 +8238,12 @@ fn zcode_session_timeline_on(
     session_id: &str,
 ) -> Option<(Vec<LifecycleCallPoint>, Vec<u64>, Vec<u64>, Option<u64>, Vec<OrchestrationEvent>)> {
     let mut calls: Vec<LifecycleCallPoint> = Vec::new();
+    // 逐轮审计列与用量列同查：variant 是档位，重试、错误、上下文超限与
+    // 首 token 时延只在 model_usage 表里有。
     if let Ok(mut statement) = connection.prepare(
-        "select started_at, model_id, input_tokens, output_tokens, cache_read_input_tokens \
+        "select started_at, model_id, input_tokens, output_tokens, cache_read_input_tokens, \
+                variant, reasoning_tokens, time_to_first_token_ms, retry_count, \
+                error_type, context_exceeded \
          from model_usage \
          where session_id = ?1 and started_at > 0 \
          order by started_at",
@@ -7946,9 +8255,16 @@ fn zcode_session_timeline_on(
                 row.get::<_, Option<i64>>(2)?,
                 row.get::<_, Option<i64>>(3)?,
                 row.get::<_, Option<i64>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<i64>>(6)?,
+                row.get::<_, Option<i64>>(7)?,
+                row.get::<_, Option<i64>>(8)?,
+                row.get::<_, Option<String>>(9)?,
+                row.get::<_, Option<i64>>(10)?,
             ))
         }) {
-            for (started_at, model_id, input, output, cache_read) in rows.filter_map(Result::ok)
+            for (started_at, model_id, input, output, cache_read, variant, reasoning, ttft, retries, error_type, context_exceeded) in
+                rows.filter_map(Result::ok)
             {
                 let Some(start_ms) = started_at.filter(|value| *value > 0) else {
                     continue;
@@ -7967,6 +8283,13 @@ fn zcode_session_timeline_on(
                         .map(|value| value as u64),
                     output_tokens,
                     context_tokens: (input_tokens > 0).then_some(input_tokens),
+                    effort_or_variant: variant.filter(|value| !value.is_empty()),
+                    reasoning_tokens: reasoning.filter(|value| *value > 0).map(|value| value as u64),
+                    ttft_ms: ttft.filter(|value| *value > 0).map(|value| value as u64),
+                    retries: retries.filter(|value| *value > 0).map(|value| value as u32),
+                    error_type: error_type.filter(|value| !value.is_empty()),
+                    context_exceeded: context_exceeded.unwrap_or(0) != 0,
+                    ..Default::default()
                 });
             }
         }
@@ -8046,7 +8369,10 @@ fn opencode_session_timeline_on(
                 json_extract(data, '$.tokens.output'), \
                 json_extract(data, '$.tokens.cacheRead'), \
                 json_extract(data, '$.tokens.total'), \
-                json_extract(data, '$.modelID') \
+                json_extract(data, '$.modelID'), \
+                json_extract(data, '$.variant'), \
+                json_extract(data, '$.tokens.reasoning'), \
+                json_extract(data, '$.cost') \
          from message \
          where session_id = ?1 and time_created > 0 \
            and json_extract(data, '$.role') = 'assistant' \
@@ -8060,9 +8386,12 @@ fn opencode_session_timeline_on(
                 row.get::<_, Option<i64>>(3)?,
                 row.get::<_, Option<i64>>(4)?,
                 row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<i64>>(7)?,
+                row.get::<_, Option<f64>>(8)?,
             ))
         }) {
-            for (time_created, input, output, cache_read, total, model_id) in
+            for (time_created, input, output, cache_read, total, model_id, variant, reasoning, cost) in
                 rows.filter_map(Result::ok)
             {
                 if time_created <= 0 {
@@ -8082,6 +8411,14 @@ fn opencode_session_timeline_on(
                         .map(|value| value as u64),
                     output_tokens,
                     context_tokens: total.filter(|value| *value > 0).map(|value| value as u64),
+                    // 逐轮审计：OpenCode 的 data 里有 variant（档位）、reasoning
+                    // token 与美元成本；没有重试与错误列。
+                    effort_or_variant: variant.filter(|value| !value.is_empty()),
+                    reasoning_tokens: reasoning
+                        .filter(|value| *value > 0)
+                        .map(|value| value as u64),
+                    cost_usd: cost.filter(|value| *value > 0.0),
+                    ..Default::default()
                 });
             }
         }
@@ -17014,6 +17351,7 @@ mod tests {
                 cached_input_tokens: Some(90),
                 output_tokens: 5,
                 context_tokens: Some(1000 + index as u64),
+                ..Default::default()
             });
         }
         let input_total: u64 = calls.iter().map(|point| point.input_tokens).sum();
@@ -17054,10 +17392,133 @@ mod tests {
             cached_input_tokens: None,
             output_tokens: 3,
             context_tokens: Some(9),
+            ..Default::default()
         }];
         let (kept, kept_degraded) = downsample_lifecycle_calls(small, 5000);
         assert_eq!(kept.len(), 1);
         assert!(!kept_degraded);
+    }
+
+    fn audit_point(t_ms: u64, model: Option<&str>, output: u64) -> LifecycleCallPoint {
+        LifecycleCallPoint {
+            t_ms,
+            model: model.map(str::to_string),
+            input_tokens: 100,
+            cached_input_tokens: None,
+            output_tokens: output,
+            context_tokens: None,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn turn_audit_groups_calls_into_turn_windows() {
+        let calls = vec![
+            audit_point(50, Some("model-a"), 10),
+            audit_point(150, Some("model-a"), 20),
+            audit_point(200, Some("model-a"), 30),
+            audit_point(1_100, Some("model-a"), 40),
+        ];
+        let turns = vec![100_u64, 1_000];
+        let rows = build_turn_audit(&calls, &turns);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].turn_index, 1);
+        assert_eq!(rows[0].t_ms, 100);
+        assert_eq!(rows[0].output_tokens, 60);
+        assert_eq!(rows[1].turn_index, 2);
+        assert_eq!(rows[1].t_ms, 1_000);
+        assert_eq!(rows[1].output_tokens, 40);
+    }
+
+    #[test]
+    fn turn_audit_without_turns_yields_single_row() {
+        let calls = vec![
+            audit_point(10, Some("model-a"), 10),
+            audit_point(20, Some("model-a"), 15),
+        ];
+        let rows = build_turn_audit(&calls, &[]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].turn_index, 1);
+        assert_eq!(rows[0].output_tokens, 25);
+    }
+
+    #[test]
+    fn turn_audit_empty_calls_returns_empty() {
+        assert!(build_turn_audit(&[], &[100, 200]).is_empty());
+    }
+
+    #[test]
+    fn turn_audit_flags_model_change_between_turns() {
+        let calls = vec![
+            audit_point(150, Some("gpt-a"), 1_000),
+            audit_point(1_150, Some("gpt-b"), 1_000),
+        ];
+        let rows = build_turn_audit(&calls, &[100, 1_100]);
+        assert_eq!(rows.len(), 2);
+        assert!(!rows[0].signals.contains(&"model".to_string()));
+        assert!(rows[1].signals.contains(&"model".to_string()));
+    }
+
+    #[test]
+    fn turn_audit_flags_requested_model_mismatch() {
+        let mut point = audit_point(150, Some("gpt-b"), 1_000);
+        point.model_requested = Some("gpt-a".to_string());
+        let rows = build_turn_audit(&[point], &[100]);
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].signals.contains(&"model".to_string()));
+    }
+
+    #[test]
+    fn turn_audit_flags_effort_change_between_turns() {
+        let mut first = audit_point(150, Some("gpt-a"), 1_000);
+        first.effort_or_variant = Some("high".to_string());
+        let mut second = audit_point(1_150, Some("gpt-a"), 1_000);
+        second.effort_or_variant = Some("max".to_string());
+        let rows = build_turn_audit(&[first, second], &[100, 1_100]);
+        assert!(!rows[0].signals.contains(&"effort".to_string()));
+        assert!(rows[1].signals.contains(&"effort".to_string()));
+    }
+
+    #[test]
+    fn turn_audit_flags_low_output_below_median() {
+        let turns: Vec<u64> = (0..4).map(|index| 100 + index * 1_000).collect();
+        let outputs = [1_000_u64, 1_000, 1_000, 100];
+        let calls: Vec<LifecycleCallPoint> = outputs
+            .iter()
+            .enumerate()
+            .map(|(index, output)| {
+                audit_point(150 + index as u64 * 1_000, Some("gpt-a"), *output)
+            })
+            .collect();
+        let rows = build_turn_audit(&calls, &turns);
+        assert!(!rows[0].signals.contains(&"low-output".to_string()));
+        assert!(!rows[2].signals.contains(&"low-output".to_string()));
+        assert!(rows[3].signals.contains(&"low-output".to_string()));
+    }
+
+    #[test]
+    fn turn_audit_low_output_needs_three_reference_turns() {
+        let turns = vec![100_u64, 1_100];
+        let calls = vec![
+            audit_point(150, Some("gpt-a"), 1_000),
+            audit_point(1_150, Some("gpt-a"), 100),
+        ];
+        let rows = build_turn_audit(&calls, &turns);
+        assert!(rows
+            .iter()
+            .all(|row| !row.signals.contains(&"low-output".to_string())));
+    }
+
+    #[test]
+    fn turn_audit_flags_reliability_signals() {
+        let mut point = audit_point(150, Some("gpt-a"), 1_000);
+        point.retries = Some(2);
+        point.error_type = Some("rate_limited".to_string());
+        point.context_exceeded = true;
+        let rows = build_turn_audit(&[point], &[100]);
+        assert!(rows[0].signals.contains(&"retry".to_string()));
+        assert!(rows[0].signals.contains(&"error".to_string()));
+        assert!(rows[0].signals.contains(&"context-exceeded".to_string()));
     }
 
     #[test]
@@ -17186,7 +17647,13 @@ mod tests {
                     cache_read_input_tokens integer,
                     duration_ms integer,
                     started_at integer,
-                    completed_at integer
+                    completed_at integer,
+                    variant text,
+                    reasoning_tokens integer,
+                    time_to_first_token_ms integer,
+                    retry_count integer,
+                    error_type text,
+                    context_exceeded integer
                 )",
                 [],
             )
@@ -17204,6 +17671,13 @@ mod tests {
         insert_usage("mu3", "GLM-5.3-Flash", 300, 20, 100, 101_000);
         // in-flight 或零行不进时间轴
         insert_usage("mu4", "GLM-5.3", 0, 0, 0, 101_200);
+        // 逐轮审计列：档位与重试在真实库里同表，这里补一行带值的
+        connection
+            .execute(
+                "update model_usage set variant = 'max', retry_count = 1, reasoning_tokens = 12, time_to_first_token_ms = 700 where id = 'mu1'",
+                [],
+            )
+            .unwrap();
         connection
             .execute(
                 "insert into message (id, session_id, time_created, time_updated, data, sequence) values ('m1', 'sess_z', 99_000, 99_000, '{\"role\":\"user\",\"semantics\":{\"origin\":\"real_user\"}}', 1)",
@@ -17229,6 +17703,10 @@ mod tests {
         assert_eq!(calls.len(), 3);
         assert_eq!(calls[0].input_tokens, 1000);
         assert_eq!(calls[0].context_tokens, Some(1000));
+        assert_eq!(calls[0].effort_or_variant.as_deref(), Some("max"));
+        assert_eq!(calls[0].retries, Some(1));
+        assert_eq!(calls[0].reasoning_tokens, Some(12));
+        assert_eq!(calls[0].ttft_ms, Some(700));
         assert_eq!(calls[1].model.as_deref(), Some("GLM-5.3"));
         assert_eq!(calls[2].model.as_deref(), Some("GLM-5.3-Flash"));
         assert_eq!(
