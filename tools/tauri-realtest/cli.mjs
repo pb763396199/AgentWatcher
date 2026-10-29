@@ -63,6 +63,12 @@ const aliasToFlow = new Map([
   ['zcode-handoff-context', 'zcode-handoff-context'],
   ['zcode-handoff', 'zcode-handoff-context'],
   ['zcode接续', 'zcode-handoff-context'],
+  ['workbuddy-session', 'workbuddy-session'],
+  ['workbuddy-card', 'workbuddy-session'],
+  ['workbuddy', 'workbuddy-session'],
+  ['wb', 'workbuddy-session'],
+  ['workbuddy会话', 'workbuddy-session'],
+  ['workbuddy卡片', 'workbuddy-session'],
   ['settings-performance', 'settings-performance'],
   ['settings-perf', 'settings-performance'],
   ['设置性能', 'settings-performance'],
@@ -90,6 +96,7 @@ const flowDisplay = {
   'opencode-handoff-context': 'OpenCode 接续上下文流程',
   'zcode-session': 'ZCode 会话卡片流程',
   'zcode-handoff-context': 'ZCode 接续上下文流程',
+  'workbuddy-session': 'WorkBuddy 会话卡片流程',
   'settings-performance': '设置切换性能流程',
   'session-package': '会话打包跨电脑交接流程',
   filtering: '主面板筛选流程',
@@ -200,6 +207,8 @@ try {
       await runStep('点击真实 OpenCode 会话卡片', () => runOpenCodeSessionFlow());
     } else if (flow === 'zcode-session') {
       await runStep('点击真实 ZCode 会话卡片（TUI 恢复）', () => runZcodeSessionFlow());
+    } else if (flow === 'workbuddy-session') {
+      await runStep('点击真实 WorkBuddy 会话卡片（深链跳转）', () => runWorkBuddySessionFlow());
     } else if (flow === 'zcode-handoff-context') {
       await runStep('验证 ZCode 接续 Prompt 可读取来源文件', () => runZcodeHandoffContextFlow());
     } else if (flow === 'opencode-handoff-context') {
@@ -1093,6 +1102,65 @@ async function runZcodeSessionFlow() {
   return {
     点击目标: '.lane .session-card[data-provider="zcode"]',
     卡片: cardInfo,
+    Toast: toastText,
+    截图: screenshot,
+  };
+}
+
+async function runWorkBuddySessionFlow() {
+  const page = await getMainPage();
+  await assertTauriPage(page, '主窗口');
+
+  const includeWorkbuddy = page.locator('#includeWorkbuddy');
+  if (await includeWorkbuddy.count()) {
+    const enabled = await includeWorkbuddy.isChecked().catch(() => true);
+    if (!enabled) {
+      await page.locator('#settingsToggle').click();
+      await includeWorkbuddy.check();
+      await page.waitForTimeout(500);
+    }
+  }
+
+  await page.waitForFunction(() => {
+    return Array.from(document.querySelectorAll('.lane .session-card'))
+      .some(card => card.dataset.provider === 'workbuddy');
+  }, null, { timeout: 30000 });
+
+  const card = page.locator('.lane .session-card[data-provider="workbuddy"]').first();
+  await card.scrollIntoViewIfNeeded();
+  const cardInfo = await card.evaluate(element => ({
+    sessionId: element.dataset.sessionId || '',
+    workspace: element.dataset.workspaceLabel || element.dataset.workspace || '',
+    workspacePath: element.dataset.workspacePath || element.dataset.open || '',
+    status: element.dataset.status || '',
+    title: element.dataset.sessionTitle || element.querySelector('.session-title')?.textContent || '',
+    文本片段: element.innerText.slice(0, 180),
+  }));
+  const badge = await card.locator('.provider').first().textContent().catch(() => '');
+  if (!/WB/i.test(badge || '')) {
+    throw new Error(`WorkBuddy 卡片徽标异常：${badge}`);
+  }
+
+  await page.locator('#toast').evaluate(element => {
+    element.textContent = '';
+    element.classList.remove('show', 'error');
+  });
+  await card.click();
+  // 成功：toast 走「已打开会话」；失败：必须给明确报错（不许静默）
+  await page.waitForFunction(() => {
+    const text = document.querySelector('#toast')?.textContent || '';
+    return text && !/正在打开会话|Opening session/i.test(text);
+  }, null, { timeout: 30000 });
+  const toastText = await page.locator('#toast').textContent().catch(() => '');
+  if (!/已打开会话|Opened session|WorkBuddy session launch failed/i.test(toastText)) {
+    throw new Error(`WorkBuddy 卡片点击后 toast 异常：${toastText}`);
+  }
+  const screenshot = await saveScreenshot(page, 'workbuddy-card-after-click.png');
+
+  return {
+    点击目标: '.lane .session-card[data-provider="workbuddy"]',
+    卡片: cardInfo,
+    徽标: badge,
     Toast: toastText,
     截图: screenshot,
   };
