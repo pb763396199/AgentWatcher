@@ -1155,9 +1155,13 @@ fn session_watch_roots() -> Vec<PathBuf> {
             &mut roots,
             user_profile_path.join(".claude").join("projects"),
         );
-        // WorkBuddy：只挂 projects（正文 JSONL）；~/.workbuddy 根下有秒级心跳文件
-        // （sessions/<pid>.json 等），挂根目录会把 250ms 防抖刷爆。
+        // WorkBuddy：挂 projects（正文 JSONL）与 workbuddy.db/-wal（改名/删除只写库）；
+        // 不挂 ~/.workbuddy 根——根下有秒级心跳文件（sessions/<pid>.json 等），会把
+        // 250ms 防抖刷爆。
         push_existing_path(&mut roots, user_profile_path.join(".workbuddy").join("projects"));
+        let workbuddy_db = user_profile_path.join(".workbuddy").join("workbuddy.db");
+        push_existing_path(&mut roots, workbuddy_db.clone());
+        push_existing_path(&mut roots, workbuddy_db.with_extension("db-wal"));
         for codex_path in [
             codex_home.join("sessions"),
             codex_home.join("archived_sessions"),
@@ -4394,8 +4398,41 @@ fn collect_session_package_entries(
                 .ok_or_else(|| "ZCode database not found".to_string())?;
             sqlite_session_package_entries("zcode", &db_path, &key)
         }
+        "workbuddy" => workbuddy_package_entries(request),
         other => Err(format!("Unsupported session package provider: {}", other)),
     }
+}
+
+/// WorkBuddy 打包：正文是 projects/<工作区>/<会话 id>.jsonl 单文件，原样进包；
+/// UI 传来的 sessionPath 缺失时按文件名在 projects 下重新定位（与 Claude 同款兜底）。
+fn workbuddy_package_entries(
+    request: &HandoffSourceContextRequest,
+) -> Result<Vec<SessionPackageEntry>, String> {
+    let key = package_session_key(request, "workbuddy")?;
+    let path = clean_option(request.session_path.as_deref())
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+        .or_else(|| {
+            workbuddy_home_dir().map(|home| {
+                locate_session_file_under(&home.join("projects"), &format!("{key}.jsonl"))
+            })?
+        })
+        .ok_or_else(|| {
+            format!(
+                "WorkBuddy session file not found for {}; no {}.jsonl under ~/.workbuddy/projects",
+                key, key
+            )
+        })?;
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .ok_or_else(|| "WorkBuddy session file has no file name".to_string())?;
+    Ok(vec![SessionPackageEntry {
+        zip_path: format!("raw/workbuddy/{}", file_name),
+        source_path: Some(path_to_string(&path)),
+        source_kind: "file",
+        payload: SessionPackagePayload::File(path),
+    }])
 }
 
 fn package_session_key(request: &HandoffSourceContextRequest, provider: &str) -> Result<String, String> {
@@ -14447,8 +14484,8 @@ fn workbuddy_candidate_rows(
         "select id, cwd, title, custom_title, created_at, updated_at, last_activity_at, \
                 model, context_window \
          from sessions \
-         where deleted_at is null \
-           and is_playground = 0 \
+         where (?3 = 0 or deleted_at is null) \
+           and coalesce(is_playground, 0) = 0 \
            and cwd is not null and cwd <> '' \
            and (?2 = 0 or coalesce(last_activity_at, updated_at, created_at) >= ?2) \
          order by coalesce(last_activity_at, updated_at, created_at) desc \
@@ -14461,10 +14498,14 @@ fn workbuddy_candidate_rows(
     } else {
         scan_time_ms.saturating_sub(options.active_window_ms) as i64
     };
+    // WorkBuddy 没有归档目录，deleted_at 软删就是它的「归档」口径：跟其他 provider
+    // 一样挂在 hide_archived 上（GUI 默认隐藏，CLI --include-archived / 全历史放开）。
+    let hide_deleted = if options.hide_archived { 1_i64 } else { 0_i64 };
     let Ok(rows) = statement.query_map(
         rusqlite::params![
             sqlite_session_scan_limit(options, WORKBUDDY_SESSION_SCAN_LIMIT_MAX) as i64,
-            active_cutoff_ms
+            active_cutoff_ms,
+            hide_deleted
         ],
         workbuddy_session_row_from_sql,
     ) else {
@@ -14660,8 +14701,18 @@ fn summarize_workbuddy_transcript_tail_text(tail_text: &str) -> WorkbuddyTailSum
                 } else if role == "assistant" {
                     let text = workbuddy_message_text(&event, "output_text");
                     let status = event.get("status").and_then(Value::as_str);
-                    last_assistant_message_open =
-                        !matches!(status, Some("completed") | Some("incomplete"));
+                    // 终态词表：本机样本只见 completed/incomplete；error/failed/
+                    // cancelled 是防御位（上游扩词表时同步，否则失败回复会被当
+                    // 「无终态」误判 running 最长 2 小时）。
+                    last_assistant_message_open = !matches!(
+                        status,
+                        Some("completed")
+                            | Some("incomplete")
+                            | Some("error")
+                            | Some("failed")
+                            | Some("cancelled")
+                            | Some("canceled")
+                    );
                     if let Some(cleaned) = clean_preview_text(&text).filter(|text| {
                         !is_ai_model_noise_text(text) && !is_user_system_error_text(text)
                     }) {
@@ -14848,14 +14899,6 @@ fn read_workbuddy_session_row(
         &[last_user_message.as_deref(), last_ai_message.as_deref()],
     );
     let mut merged_usage = usage;
-    if let Some(usage) = merged_usage.as_mut() {
-        if usage.duration_ms.is_none() {
-            usage.duration_ms = row
-                .updated_at
-                .checked_sub(row.created_at)
-                .filter(|duration| *duration > 0);
-        }
-    }
     // 卡片消息数没有库表可数：用「用户轮次 + 模型调用数」近似（均为全量正文口径）
     let message_count = merged_usage
         .as_ref()
@@ -14901,13 +14944,7 @@ fn lookup_workbuddy_session_by_key(scan_time_ms: u64, key: &str) -> Option<Agent
         return None;
     }
     let db_path = workbuddy_db_path().filter(|path| path.exists())?;
-    let connection = Connection::open_with_flags(
-        &db_path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .ok()?;
-    let _ = connection.busy_timeout(Duration::from_millis(WORKBUDDY_SQLITE_BUSY_TIMEOUT_MS));
-    let _ = connection.pragma_update(None, "query_only", "ON");
+    let connection = open_readonly_sqlite(&db_path, WORKBUDDY_SQLITE_BUSY_TIMEOUT_MS)?;
     let mut statement = connection
         .prepare(
             "select id, cwd, title, custom_title, created_at, updated_at, last_activity_at, \
@@ -14945,18 +14982,18 @@ fn open_workbuddy_session(session: &OpenSessionRequest) -> Result<(), String> {
     let session_id = raw_request_session_id(session.id.as_deref()).ok_or_else(|| {
         "Missing WorkBuddy session id: 卡片请求里没有会话 ID，无法跳转".to_string()
     })?;
-    // WorkBuddy 注册的会话级深链：workbuddy://chat/<会话id>（正式包 navigateToSession）
-    let deep_link = format!("workbuddy://chat/{session_id}");
-    let mut protocol_command = Command::new("rundll32.exe");
-    protocol_command.args(["url.dll,FileProtocolHandler", &deep_link]);
-    spawn_hidden(protocol_command)
-        .map(|_| ())
-        .map_err(|error| {
-            format!(
-                "WorkBuddy session launch failed ({error}): 无法通过 workbuddy:// 协议拉起 \
-                 WorkBuddy，请确认桌面端已安装并关联了该协议"
-            )
-        })
+    // WorkBuddy 注册的会话级深链：workbuddy://chat/<会话id>（正式包 navigateToSession
+    // 原文即 encodeURIComponent，这里按 path segment 口径百分号编码）
+    let deep_link = format!(
+        "workbuddy://chat/{}",
+        percent_encode_path_segment(session_id)
+    );
+    open_windows_url(&deep_link).map_err(|error| {
+        format!(
+            "WorkBuddy session launch failed ({error}): 无法通过 workbuddy:// 协议拉起 \
+             WorkBuddy，请确认桌面端已安装并关联了该协议"
+        )
+    })
 }
 
 #[cfg(test)]
@@ -19529,7 +19566,8 @@ mod tests {
 
         let summary = summarize_workbuddy_transcript_tail_text(&text);
 
-        assert_ne!(summary.status_hint, Some(SessionStatusHint::Waiting));
+        // 闭合后既不是 waiting 也不是 running：交给时间窗口判 idle
+        assert_eq!(summary.status_hint, None);
     }
 
     #[test]
@@ -19635,8 +19673,9 @@ mod tests {
         assert_eq!(parsed.user_turns, Some(2));
         assert_eq!(parsed.model_calls, Some(2));
         assert_eq!(parsed.tool_calls, Some(1));
-        // 两次调用间隔 61 分钟，超过 5 分钟空闲阈值：活跃时长只累计两段内的活跃时间
-        assert!(parsed.active_duration_ms.is_some());
+        // 两次调用间隔 61 分钟，超过 5 分钟空闲阈值：活跃时长只累计两段内的活跃
+        // 时间（首簇 1s→3s 共 3000ms + 次簇 1s 共 1000ms，61 分钟空档不计入）
+        assert_eq!(parsed.active_duration_ms, Some(4_000));
         assert_eq!(
             top_tools.iter().find(|(name, _)| name == "Bash").map(|(_, count)| *count),
             Some(1)
@@ -19732,6 +19771,43 @@ mod tests {
         assert_eq!(usage.models, vec!["deepseek-v4.1-flash".to_string()]);
         assert!((usage.copilot_credits.unwrap() - 45.22).abs() < 0.01);
         assert_eq!(session.message_count, 2);
+    }
+
+    #[test]
+    #[test]
+    fn workbuddy_package_entries_use_session_path_as_raw_jsonl() {
+        let root = env::temp_dir().join(format!("aw-wb-pkg-{}", current_time_ms()));
+        fs::create_dir_all(&root).unwrap();
+        let transcript = root.join("sess-pkg.jsonl");
+        fs::write(&transcript, "{\"type\":\"message\"}\n").unwrap();
+
+        let request = HandoffSourceContextRequest {
+            provider: Some("workbuddy".to_string()),
+            id: Some("workbuddy:sess-pkg".to_string()),
+            workspace_path: None,
+            session_path: Some(path_to_string(&transcript)),
+            session_resource: None,
+            title: None,
+        };
+
+        let entries = workbuddy_package_entries(&request).unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].zip_path, "raw/workbuddy/sess-pkg.jsonl");
+        assert_eq!(entries[0].source_kind, "file");
+        assert!(entries[0].source_path.as_deref().is_some_and(|p| p.ends_with("sess-pkg.jsonl")));
+
+        let missing = workbuddy_package_entries(&HandoffSourceContextRequest {
+            provider: Some("workbuddy".to_string()),
+            id: Some("workbuddy:no-such-session".to_string()),
+            workspace_path: None,
+            session_path: None,
+            session_resource: None,
+            title: None,
+        });
+        assert!(missing.is_err());
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

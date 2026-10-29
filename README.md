@@ -61,7 +61,7 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - **Codex 会话接入**：接入 Codex 桌面会话，支持与 Copilot、Claude 一起显示状态与跳转
 - **OpenCode 会话接入**：读取本机 OpenCode 数据库，支持状态、预览、打开和 handoff
 - **ZCode 会话接入**：读取本机 ZCode 会话库，支持状态、预览和作为接续来源导出上下文（跳转暂不实现）
-- **WorkBuddy 会话接入**：读取本机 WorkBuddy 桌面端数据（SQLite 元数据 + 正文 JSONL），支持状态卡片、悬浮预览、用量展示（token 求和、上下文占用、credits）和深链跳转
+- **WorkBuddy 会话接入**：读取本机 WorkBuddy 桌面端数据（SQLite 元数据 + 正文 JSONL），支持状态卡片、悬浮预览、用量展示（token 求和、上下文占用、credits）、深链跳转和会话打包交接，也可作为接续来源（不作接续目标）
 - **AI 命令行**：随发布包附带 `agentwatcher-cli.exe`，AI 助手和终端用户不启动 GUI 即可查询会话、用量并导出接续上下文，输出机器可解析的 JSON 信封（详见下文「AI 命令行」一节）
 - **独立 Copilot CLI provider**：独立筛选、配额和标识，不与 VS Code Copilot 合并
 - **VS Code 连接组件**：首次启动自动安装连接组件，实现精确 session 跳转、handoff 路由和 ack 成功确认

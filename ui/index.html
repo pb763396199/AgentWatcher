@@ -6981,6 +6981,7 @@
         handoffParserHintCodex: 'Codex sessions are available through the Codex desktop app-server. Use the provider resource to open the source thread when needed, and rely on the snapshot if the source thread is not accessible.',
         handoffParserHintOpenCode: 'OpenCode sessions are exported by AgentWatcher from the local SQLite database into the primary source file. Read that file first; the provider resource is only a navigation hint.',
         handoffParserHintZcode: 'ZCode sessions are exported by AgentWatcher from the local ZCode SQLite database into the primary source file. Read that file first; there is no provider resource link for ZCode.',
+        handoffParserHintWorkbuddy: 'WorkBuddy transcripts are JSONL event streams stored under ~/.workbuddy/projects/<workspace>/<session id>.jsonl. The primary source file is that raw JSONL; read it with a JSONL-aware viewer.',
         agentTaskTitle: 'AgentTask',
         watcherWindowLabel: 'AgentWatcher Windows app window',
         agentTaskFaceLabel: 'AgentTask workspace todo',
@@ -7163,6 +7164,7 @@
         handoffParserHintCodex: 'Codex 会话通过 Codex 桌面端 app-server 访问。需要时使用 provider resource 打开来源线程；若无法访问来源线程，则从快照继续。',
         handoffParserHintOpenCode: 'OpenCode 会话由 AgentWatcher 从本机 SQLite 数据库导出为主要来源文件。先读取该文件；provider resource 只是导航提示。',
         handoffParserHintZcode: 'ZCode 会话由 AgentWatcher 从本机 ZCode SQLite 数据库导出为主要来源文件。先读取该文件；ZCode 没有 provider resource 链接。',
+        handoffParserHintWorkbuddy: 'WorkBuddy 正文是 ~/.workbuddy/projects/<工作区>/<会话 id>.jsonl 的事件流。主要来源文件就是这份原始 JSONL；用支持 JSONL 的查看器读取。',
         agentTaskTitle: 'AgentTask',
         watcherWindowLabel: 'AgentWatcher 主窗口',
         agentTaskFaceLabel: 'AgentTask 工作区待办',
@@ -13298,7 +13300,9 @@
               ? t('handoffParserHintOpenCode')
               : provider === 'zcode'
                 ? t('handoffParserHintZcode')
-                : t('handoffParserHintUnknown');
+                : provider === 'workbuddy'
+                  ? t('handoffParserHintWorkbuddy')
+                  : t('handoffParserHintUnknown');
       return [
         '',
         t('handoffSourceAccessTitle'),
