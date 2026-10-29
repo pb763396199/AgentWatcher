@@ -1618,6 +1618,38 @@
       white-space: nowrap;
     }
 
+    .usage-audit-line {
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--muted);
+      cursor: pointer;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .usage-audit-line b {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .usage-audit-line .n {
+      color: var(--waiting);
+      font-weight: 700;
+    }
+
+    .audit-badge {
+      display: inline-block;
+      border: 1px solid;
+      border-radius: 8px;
+      padding: 0 6px;
+      margin: 0 3px 2px 0;
+      font-size: 10px;
+      font-weight: 600;
+      line-height: 16px;
+      white-space: nowrap;
+    }
+
     .usage-empty-note {
       margin-top: 6px;
       color: var(--soft);
@@ -6176,6 +6208,27 @@
             <div id="analyticsRhythmChart"></div>
           </div>
         </section>
+        <section class="analytics-traj-panel" id="analyticsTurnAuditPanel" hidden>
+          <div class="analytics-traj-head">
+            <strong data-i18n="analyticsTurnAuditTitle">Turn audit</strong>
+            <span class="analytics-traj-note" id="analyticsTurnAuditNote"></span>
+            <span class="spring"></span>
+            <button type="button" class="analytics-traj-toggle" id="analyticsTurnAuditToggle" aria-expanded="true"></button>
+          </div>
+          <div class="analytics-agents-scroll" id="analyticsTurnAuditBody"><table class="analytics-agents-table">
+            <thead>
+              <tr>
+                <th data-i18n="auditColTurn">Turn</th>
+                <th data-i18n="auditColModel">Model</th>
+                <th data-i18n="auditColEffort">Effort</th>
+                <th class="num" data-i18n="auditColOutput">Output</th>
+                <th class="num" data-i18n="auditColTtft">First token</th>
+                <th data-i18n="auditColSignals">Signals</th>
+              </tr>
+            </thead>
+            <tbody id="analyticsTurnAuditRows"></tbody>
+          </table></div>
+        </section>
         <section class="analytics-traj-panel" id="analyticsTrajPanel" hidden>
           <div class="analytics-traj-head">
             <strong data-i18n="analyticsTrajTitle">Trajectory lanes</strong>
@@ -6828,7 +6881,7 @@
         workspaceSearchPlaceholder: 'Search workspace, path, branch',
         workspacePickerShowAllPaths: 'Show every workspace path',
         workspacePickerNoMatch: 'No matching workspace',
-        usage: 'Usage', usageTotalInput: 'Total input', usageOutput: 'Total output', usageContext: 'Context', usageTurns: 'User turns', usageToolCalls: 'Tool calls', usageModelCalls: 'Model calls', usageModels: 'Model', usageDuration: 'Duration', usageCost: 'Cost', usageTurnsUnit: 'turns', usageToolsUnit: 'tools', usageCached: 'cached {percent}%', usageOfWindow: 'of {window} window', usageActiveSpan: '{active} active · {span} span', usageSpanOnly: 'span {span}', usageModelMore: '+{count}', usageNoDataNote: 'This source does not report usage data', usageCredits: 'credits'
+        usage: 'Usage', usageTotalInput: 'Total input', usageOutput: 'Total output', usageContext: 'Context', usageTurns: 'User turns', usageToolCalls: 'Tool calls', usageModelCalls: 'Model calls', usageModels: 'Model', usageDuration: 'Duration', usageCost: 'Cost', usageTurnsUnit: 'turns', usageToolsUnit: 'tools', usageCached: 'cached {percent}%', usageOfWindow: 'of {window} window', usageActiveSpan: '{active} active · {span} span', usageSpanOnly: 'span {span}', usageModelMore: '+{count}', usageNoDataNote: 'This source does not report usage data', usageCredits: 'credits', analyticsTurnAuditTitle: 'Turn audit', auditColTurn: 'Turn', auditColModel: 'Model', auditColEffort: 'Effort', auditColOutput: 'Output', auditColTtft: 'First token', auditColSignals: 'Signals', auditSignalModel: 'model swap', auditSignalEffort: 'effort change', auditSignalLowOutput: 'low output', auditSignalRetry: 'retry', auditSignalError: 'error', auditSignalContextExceeded: 'context exceeded', auditNoteSummary: '{turns} turns · {signals} signals', auditNoteDegraded: 'downsampled', auditNotSupported: 'This source does not support turn audit', auditToggleCollapse: 'Collapse ▾', auditToggleExpand: 'Expand ▸', auditRequestArrow: '→', previewAuditSignals: '{count} signals · open session analytics'
       },
       zh: {
         allSessions: '全部 Agent 会话', watched: '已监控 83 个工作区', filterActive: '已启用工作区过滤', waitingChip: '8 待回复', workspace: '工作区', allWorkspaces: '全部工作区', perRow: '每排数量', visibleNow: '当前可见', inQueue: '在滚动队列', sessions: '个会话', updated: '2 秒前更新', workspacePrefix: '工作区：', overflow: '按优先级继续滚动：待回复、运行中、闲置', priority: '优先', live: '实时', quiet: '静默', waiting: '待回复', running: '运行中', idle: '闲置', all: '全部', wait: '待回', run: '运行', col: '列', cols: '列', perRowButton: '/ 排', iconsPerRow: '个/排', windowSize: '窗口尺寸', openWorkspace: '打开 VS Code 工作区：', openingAgents: '正在打开会话...', openedAgents: '已打开会话', themeLight: '浅色主题', themeDark: '深色主题', settings: '设置', appearance: '外观', language: '语言', theme: '主题', layout: '布局', horizontal: '横版', vertical: '竖版', agentTaskFlipSpeed: '翻转速度（毫秒）', lastUser: '最后用户输入', lastAi: '最后 AI 回复', noUserMessage: '未捕获到用户输入', noAiMessage: '未捕获到 AI 回复', tailOnly: '尾部', errorExcerpt: '错误', windowBehavior: '窗口', alwaysOnTop: '永远置顶', dataSources: '数据', includeCopilot: 'Copilot 会话', includeClaude: 'Claude 会话', hideArchived: '隐藏归档', scanLimits: '扫描限制', activeWindowDays: '活跃窗口（天）', maxSessions: '每个提供方会话数', refreshInterval: '刷新间隔（秒）', settingsSaved: '设置已更新', maxCardsPerRow: '每排最大数量', waitingAlertSize: '待回复提醒尺寸', waitingAlertDuration: '待回复持续时间（秒）', small: '小', medium: '中', large: '大', waitingAlertAria: '新的待回复会话', handoffCreate: '创建接续会话...', handoffCopyPrompt: '复制接续提示词', handoffPackageSession: '打包会话用于跨电脑交接', handoffPackaging: '正在打包会话...', handoffPackagedClipboard: '已打包并复制到剪贴板，可直接粘贴发送', handoffPackagedNoClipboard: '已打包，但写入剪贴板失败，文件在', handoffPackagePreviewOnly: '浏览器预览模式不支持打包', handoffOpenSource: '打开原会话', analyticsOpenEntry: '会话分析', analyticsPanelTitle: '会话分析', analyticsPanelSub: '单会话全生命周期', analyticsUsageTitle: '用量时间轴', analyticsUsageNote: '按模型分色的毛输入（含缓存读取）', analyticsGAuto: '自动', analyticsGHour: '小时', analyticsG6h: '6 小时', analyticsGDay: '天', analyticsByType: '按类型', analyticsByModel: '按模型', analyticsByTool: '高频工具', analyticsCacheRead: '缓存读取', analyticsFreshInput: '净输入', analyticsOutput: '输出', analyticsCtxTitle: '上下文占用', analyticsRhythmTitle: '活动节奏', analyticsCompact: '压缩', analyticsDegraded: '调用点超出预算，时间轴已按同模型合并降采样', analyticsNoTimeline: '这个数据源没有可用的时序数据', analyticsChipHint: '点按切换该模型在时间轴上的显示', analyticsWindowLimit: '窗口上限 {tokens}', analyticsTipIn: '输入', analyticsTipOut: '输出', analyticsTipCtx: '上下文末', analyticsModelCallsUnit: '次调用', analyticsToolNoteRest: '其余 {count} 次未列出', analyticsLoadFailed: '会话时序加载失败', analyticsNoSession: '找不到要分析的会话', analyticsTrajTitle: '轨迹泳道', analyticsTrajNote: '点泳道展开合并明细（面积=毛输入 · 折线=上下文）', analyticsTrajMain: '主代理', analyticsTrajGuardians: 'guardian 审查者', analyticsTrajApprox: '（估算）', analyticsTrajDetailCap: '面积=输入 · 线=上下文', analyticsTrajLoading: '加载中…', analyticsTrajWaitEstimate: '等待中（估算）', analyticsTrajParallel: '并行子代理数随时间（峰值 {peak}）', analyticsTrajExpand: '子代理 {count} 条 · {total} · 峰值 {peak} ▸', analyticsTrajCollapse: '收起子代理 ▾', analyticsTrajTruncated: '已截断', analyticsTrajNoAgents: '该会话没有子代理', analyticsAgentsTitle: '子代理开销排行', analyticsAgentsNote: '按毛输入排序 · 含效率（输出/毛输入）', analyticsAgentsColAgent: '子代理', analyticsAgentsColModel: '模型', analyticsAgentsColIn: '毛输入', analyticsAgentsColOut: '输出', analyticsAgentsColEff: '效率', analyticsAgentsColTurns: '轮次', analyticsAgentsColTools: '工具', analyticsAgentsColSpan: '活跃', analyticsAgentsTotal: '合计', analyticsAgentsExpand: '展开 {count} 条 ▸', analyticsAgentsCollapse: '收起 ▾', handoffTitle: '创建接续会话', handoffNewSessionIn: '在', handoffWithProvider: '使用', handoffLatestSnapshot: '最新快照', handoffSourceLocator: '来源定位', handoffPreview: '预览', handoffCopy: '复制', handoffLaunch: '启动', handoffSaveTodo: '存为 Todo', handoffPromptPreview: '提示词预览', handoffTaskPlaceholder: '希望新会话做什么？', handoffWorkspacePlaceholder: '搜索或粘贴工作区路径', handoffUsePastedPath: '使用粘贴路径', handoffNoWorkspace: '没有匹配的工作区', handoffSelected: '已选', handoffCopied: '已复制接续提示词', handoffClipboardFallback: '无法直接写剪贴板，已选中提示词', handoffLaunching: '正在启动接续会话...', handoffLaunched: '已请求启动接续会话', handoffNoSession: '未选择来源会话', handoffOpenFailed: '接续面板打开失败', handoffSelectWorkspace: '选择工作区', handoffAgentsLabel: 'Copilot 编辑器', handoffCodeChatLabel: 'Copilot CLI 编辑器', handoffClaudeLabel: 'Claude Code 编辑器', handoffAgentsDescription: '在 VS Code 编辑器标签页中打开 Copilot 并填入接续提示词', handoffCodeChatDescription: '打开 Copilot CLI 编辑器标签页并填入接续提示词', handoffClaudeDescription: '在 VS Code 编辑器标签页中打开 Claude Code', bridgeTitle: 'VS Code Bridge', bridgePreviewOnly: '仅预览', bridgeChecking: '正在检查...', bridgeInstalled: 'Bridge 已安装', bridgeNeedsUpdate: 'Bridge 有可用更新', bridgeNotInstalled: 'Bridge 未安装', bridgeInstall: '安装', bridgeUpdate: '更新', bridgeRetry: '重试', bridgeInstalling: '正在安装...', bridgeInstallFailed: 'Bridge 安装失败', todoWindowTitle: 'AI 任务输入法', todoWindowSubtitle: '工作区 Todo 队列', todoOpen: '打开 Todo', todoReadyNudge: '可推进 Todo：', todoRefresh: '刷新', todoUsePath: '使用路径', todoCancel: '取消', todoAdd: '添加', todoSave: '保存', todoActive: '进行中', todoShowDone: '完成项', todoTitlePlaceholder: '任务标题', todoDescriptionPlaceholder: '任务说明', todoAcceptancePlaceholder: '完成标准', todoPathPlaceholder: '粘贴工作区路径', todoNoWorkspace: '选择工作区', todoEmpty: '这个工作区没有待办任务', todoNoDone: '还没有完成项', todoPendingReview: '待确认完成', todoPromptPreview: '提示词', todoDispatch: '启动', todoComplete: '完成', todoRetry: '返工', todoBlock: '阻塞', todoUnblock: '解除阻塞', todoDelete: '删除', todoEdit: '编辑', todoSaved: 'Todo 已保存', todoLaunched: '已请求启动 Todo', todoCopied: '提示词已复制', todoBlocked: '已阻塞', todoDone: '已完成', todoReady: '就绪', todoRunning: '运行中', todoReview: '待确认', todoUnbound: '已派发，未绑定', todoBound: '已绑定会话', todoCountsText: '待办 {active} / 完成 {done}', todoCreateFromHandoff: '已将接续保存为 Todo',
@@ -6874,7 +6927,7 @@
         workspaceSearchPlaceholder: '搜索 workspace、路径、分支',
         workspacePickerShowAllPaths: '显示所有 workspace 路径',
         workspacePickerNoMatch: '没有匹配的 workspace',
-        usage: '用量', usageTotalInput: '累计输入', usageOutput: '累计输出', usageContext: '当前上下文', usageTurns: '对话轮次', usageToolCalls: '工具调用', usageModelCalls: '模型调用', usageModels: '模型', usageDuration: '时长', usageCost: '成本', usageTurnsUnit: '轮', usageToolsUnit: '工具', usageCached: '缓存 {percent}%', usageOfWindow: '/ {window} 窗口', usageActiveSpan: '{active} 活跃 · {span} 跨度', usageSpanOnly: '跨度 {span}', usageModelMore: '+{count}', usageNoDataNote: '该数据源不提供用量数据', usageCredits: 'credits'
+        usage: '用量', usageTotalInput: '累计输入', usageOutput: '累计输出', usageContext: '当前上下文', usageTurns: '对话轮次', usageToolCalls: '工具调用', usageModelCalls: '模型调用', usageModels: '模型', usageDuration: '时长', usageCost: '成本', usageTurnsUnit: '轮', usageToolsUnit: '工具', usageCached: '缓存 {percent}%', usageOfWindow: '/ {window} 窗口', usageActiveSpan: '{active} 活跃 · {span} 跨度', usageSpanOnly: '跨度 {span}', usageModelMore: '+{count}', usageNoDataNote: '该数据源不提供用量数据', usageCredits: 'credits', analyticsTurnAuditTitle: '逐轮审计', auditColTurn: '轮次', auditColModel: '模型', auditColEffort: '档位', auditColOutput: '输出', auditColTtft: '首 token', auditColSignals: '信号', auditSignalModel: '模型变化', auditSignalEffort: '档位变化', auditSignalLowOutput: '低输出', auditSignalRetry: '重试', auditSignalError: '错误', auditSignalContextExceeded: '上下文超限', auditNoteSummary: '{turns} 轮 · {signals} 个信号', auditNoteDegraded: '已降采样', auditNotSupported: '该数据源不支持逐轮审计', auditToggleCollapse: '收起 ▾', auditToggleExpand: '展开 ▸', auditRequestArrow: '→', previewAuditSignals: '{count} 个信号 · 点开查看会话分析'
       }
     };
       Object.assign(i18n.en, {
@@ -13919,6 +13972,27 @@ function analyticsRememberSession(normalized) {
       const hit = analyticsSvgEl('rect', { x: pad.left, y: padT, width: analyticsPlotWidth(W), height: H - padT - padB, fill: 'transparent', 'data-analytics-hit': '' });
       hit.style.cursor = 'crosshair';
       svg.appendChild(hit);
+      // 逐轮审计标记：模型切换画竖参考线，带信号的轮画点；点击定位审计表行
+      if (span) {
+        (analyticsState.lifecycle?.turnAudit || []).forEach((row, index) => {
+          if (!row.signals || !row.signals.length) return;
+          const x = analyticsXOf(row.tMs, span, W);
+          if (x < pad.left || x > W - pad.right) return;
+          if (row.signals.includes('model')) {
+            svg.appendChild(analyticsSvgEl('line', { x1: x, x2: x, y1: padT, y2: H - padB, stroke: 'var(--waiting)', 'stroke-width': '1.2', 'stroke-dasharray': '4 3' }));
+          }
+          const dot = analyticsSvgEl('circle', { cx: x, cy: padT + 4, r: 4, fill: 'var(--waiting)', style: 'cursor:pointer' });
+          const label = analyticsSvgEl('title');
+          label.textContent = `#${row.turnIndex || index + 1} ${row.signals.map(code => t(AUDIT_SIGNAL_KEYS[code] || 'auditColSignals')).join(' · ')}`;
+          dot.appendChild(label);
+          dot.addEventListener('click', event => {
+            event.stopPropagation();
+            const targetRow = document.getElementById('audit-row-' + index);
+            if (targetRow) targetRow.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          });
+          svg.appendChild(dot);
+        });
+      }
       host.appendChild(svg);
       analyticsChartRefs.usage = { svg, guide, W, H };
     }
@@ -14246,14 +14320,24 @@ function analyticsRememberSession(normalized) {
         const sums = analyticsModelSums();
         const models = analyticsState.modelOrder.filter(model => sums[model] && sums[model].in + sums[model].out > 0);
         if (models.length) {
+          // 模型 × 档位：同一模型的多个档位并列进该模型的行标签
+          const effortsByModel = {};
+          (analyticsState.lifecycle?.calls || []).forEach(call => {
+            const model = call.model || '—';
+            if (!call.effortOrVariant) return;
+            effortsByModel[model] = effortsByModel[model] || new Set();
+            effortsByModel[model].add(String(call.effortOrVariant));
+          });
           modelBar.innerHTML = models.map(model =>
             `<span style="width:${(sums[model].in / Math.max(1, sums.total) * 100).toFixed(2)}%;background:${analyticsModelColor(model)}"></span>`
           ).join('');
-          modelList.innerHTML = models.map(model =>
-            `<div class="analytics-bd-row"><span class="d" style="background:${analyticsModelColor(model)}"></span>` +
-            `<span class="n">${model}</span>` +
-            `<span class="x">${formatUsageTokens(sums[model].in)} · ${Math.round(sums[model].in * 100 / Math.max(1, sums.total))}% · ${sums[model].calls.toLocaleString('en-US')} ${t('analyticsModelCallsUnit')}</span></div>`
-          ).join('');
+          modelList.innerHTML = models.map(model => {
+            const efforts = effortsByModel[model] ? Array.from(effortsByModel[model]).join(' · ') : '';
+            const label = efforts ? `${model} · ${efforts}` : model;
+            return `<div class="analytics-bd-row"><span class="d" style="background:${analyticsModelColor(model)}"></span>` +
+              `<span class="n">${label}</span>` +
+              `<span class="x">${formatUsageTokens(sums[model].in)} · ${Math.round(sums[model].in * 100 / Math.max(1, sums.total))}% · ${sums[model].calls.toLocaleString('en-US')} ${t('analyticsModelCallsUnit')}</span></div>`;
+          }).join('');
         } else {
           modelBar.innerHTML = '';
           modelList.innerHTML = `<div class="analytics-bd-row"><span class="n">${dash}</span></div>`;
@@ -14281,6 +14365,80 @@ function analyticsRememberSession(normalized) {
             : '';
         }
       }
+    }
+
+    // ===== 逐轮审计（降智信号） =====
+    const AUDIT_SIGNAL_KEYS = {
+      model: 'auditSignalModel',
+      effort: 'auditSignalEffort',
+      'low-output': 'auditSignalLowOutput',
+      retry: 'auditSignalRetry',
+      error: 'auditSignalError',
+      'context-exceeded': 'auditSignalContextExceeded'
+    };
+    const AUDIT_SIGNAL_COLORS = {
+      model: 'var(--waiting)',
+      effort: 'var(--running)',
+      'low-output': 'var(--accent)',
+      retry: 'var(--idle)',
+      error: 'var(--waiting)',
+      'context-exceeded': 'var(--running)'
+    };
+
+    function renderAnalyticsTurnAudit() {
+      const panel = document.getElementById('analyticsTurnAuditPanel');
+      const body = document.getElementById('analyticsTurnAuditBody');
+      const rowsHost = document.getElementById('analyticsTurnAuditRows');
+      const note = document.getElementById('analyticsTurnAuditNote');
+      const toggle = document.getElementById('analyticsTurnAuditToggle');
+      if (!panel || !body || !rowsHost || !note || !toggle) return;
+      const lifecycle = analyticsState.lifecycle;
+      const rows = lifecycle?.turnAudit || [];
+      const provider = String(analyticsState.target?.provider || '');
+      const isCliSource = provider === 'copilot-cli' || String(analyticsState.target?.id || '').startsWith('copilot-cli:');
+      if (!rows.length) {
+        if (isCliSource) {
+          panel.hidden = false;
+          body.hidden = true;
+          note.textContent = t('auditNotSupported');
+          toggle.hidden = true;
+          rowsHost.replaceChildren();
+        } else {
+          panel.hidden = true;
+        }
+        return;
+      }
+      panel.hidden = false;
+      toggle.hidden = false;
+      const signalCount = rows.reduce((acc, row) => acc + (row.signals?.length || 0), 0);
+      note.textContent = t('auditNoteSummary').replace('{turns}', String(rows.length)).replace('{signals}', String(signalCount))
+        + (lifecycle?.degraded ? ` · ${t('auditNoteDegraded')}` : '');
+      const dash = '—';
+      rowsHost.replaceChildren(...rows.map((row, index) => {
+        const tr = document.createElement('tr');
+        tr.id = 'audit-row-' + index;
+        const modelText = row.modelRequested && row.modelServed && row.modelRequested !== row.modelServed
+          ? `${row.modelRequested} ${t('auditRequestArrow')} ${row.modelServed}`
+          : (row.modelServed || dash);
+        const signals = (row.signals || []).map(code =>
+          `<span class="audit-badge" style="color:${AUDIT_SIGNAL_COLORS[code] || 'var(--muted)'};border-color:${AUDIT_SIGNAL_COLORS[code] || 'var(--muted)'}">${t(AUDIT_SIGNAL_KEYS[code] || 'auditColSignals')}</span>`
+        ).join('') || `<span style="color:var(--soft)">${dash}</span>`;
+        tr.innerHTML =
+          `<td style="color:var(--soft)">#${row.turnIndex}</td>` +
+          `<td>${modelText}</td>` +
+          `<td style="color:var(--soft)">${row.effortOrVariant || dash}</td>` +
+          `<td class="num">${formatUsageTokens(Number(row.outputTokens) || 0)}</td>` +
+          `<td class="num" style="color:var(--soft)">${row.ttftMs != null ? formatUsageDuration(Number(row.ttftMs)) : dash}</td>` +
+          `<td>${signals}</td>`;
+        return tr;
+      }));
+      toggle.onclick = () => {
+        const expanded = body.hidden !== true;
+        body.hidden = expanded;
+        toggle.setAttribute('aria-expanded', String(!expanded));
+        toggle.textContent = t(expanded ? 'auditToggleExpand' : 'auditToggleCollapse');
+      };
+      toggle.textContent = t(body.hidden ? 'auditToggleExpand' : 'auditToggleCollapse');
     }
 
     // ===== 轨迹泳道（子代理派发与模型归因） =====
@@ -14781,6 +14939,7 @@ function analyticsRememberSession(normalized) {
       }
       renderAnalyticsIdentity();
       renderAnalyticsCards();
+      renderAnalyticsTurnAudit();
       drawAnalyticsUsageChart();
       drawAnalyticsContextChart();
       drawAnalyticsRhythmChart();
@@ -16848,6 +17007,62 @@ function analyticsRememberSession(normalized) {
       });
     }
 
+    // 逐轮审计摘要行：悬停预览打开时懒加载一次生命周期，只显示模型链与信号数，
+    // 点击进入会话分析看完整逐轮审计表；不写 localStorage
+    const previewAuditLineCache = new Map();
+
+    function fillPreviewAuditLine(line, summary, data) {
+      if (!summary || !line.isConnected) return;
+      line.hidden = false;
+      const signals = summary.signalCount > 0
+        ? ` <span class="n">${t('previewAuditSignals').replace('{count}', String(summary.signalCount))}</span>`
+        : '';
+      line.innerHTML = `<b>${summary.models.join(` ${t('auditRequestArrow')} `)}</b>${signals}`;
+      line.title = t('analyticsOpenEntry');
+      line.onclick = () => {
+        if (isPreviewWindow) {
+          tauriEmitTo?.('main', 'agentwatcher-analytics-open', {
+            target: analyticsTargetFromSession(data),
+            sessionId: data.sessionId
+          }).catch(() => {});
+          return;
+        }
+        openAnalyticsForSession(data.sessionId);
+      };
+    }
+
+    function appendPreviewAuditLine(section, data) {
+      if (typeof tauriInvoke !== 'function' || !data?.sessionId) return;
+      const line = document.createElement('div');
+      line.className = 'usage-audit-line';
+      line.hidden = true;
+      section.appendChild(line);
+      const key = String(data.sessionId);
+      const cached = previewAuditLineCache.get(key);
+      if (cached) {
+        fillPreviewAuditLine(line, cached, data);
+        return;
+      }
+      const target = analyticsTargetFromSession(data);
+      tauriInvoke('get_session_lifecycle', {
+        request: { id: target.id, provider: target.provider, sessionPath: target.sessionPath || null }
+      }).then(lifecycle => {
+        const rows = lifecycle?.turnAudit || [];
+        if (!rows.length) return;
+        const models = [];
+        rows.forEach(row => {
+          const model = row.modelServed || row.modelRequested;
+          if (model && !models.includes(model)) models.push(model);
+        });
+        const summary = {
+          models,
+          signalCount: rows.reduce((acc, row) => acc + (row.signals?.length || 0), 0)
+        };
+        previewAuditLineCache.set(key, summary);
+        fillPreviewAuditLine(line, summary, data);
+      }).catch(() => {});
+    }
+
     function renderSessionPreviewUsage(data, body) {
       const usage = sessionUsageOf(data);
       const sessionId = String(data.sessionId || '');
@@ -16970,6 +17185,7 @@ function analyticsRememberSession(normalized) {
       addItem('usageCost', costText, '', costMissing);
 
         section.appendChild(grid);
+      appendPreviewAuditLine(section, data);
       if (isCliSource) appendText(section, 'div', 'usage-empty-note', t('usageNoDataNote'));
       const analyzeButton = document.createElement('button');
       analyzeButton.type = 'button';
