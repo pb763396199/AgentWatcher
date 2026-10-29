@@ -744,6 +744,7 @@ pub struct ScanOptions {
     pub include_codex: Option<bool>,
     pub include_open_code: Option<bool>,
     pub include_zcode: Option<bool>,
+    pub include_workbuddy: Option<bool>,
     pub workspace_path_blacklist: Option<Vec<String>>,
 }
 
@@ -758,6 +759,7 @@ struct ResolvedScanOptions {
     include_codex: bool,
     include_open_code: bool,
     include_zcode: bool,
+    include_workbuddy: bool,
     workspace_path_blacklist: Vec<String>,
 }
 
@@ -770,6 +772,7 @@ struct PerformanceProviderCounts {
     codex: usize,
     opencode: usize,
     zcode: usize,
+    workbuddy: usize,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -1152,6 +1155,9 @@ fn session_watch_roots() -> Vec<PathBuf> {
             &mut roots,
             user_profile_path.join(".claude").join("projects"),
         );
+        // WorkBuddy：只挂 projects（正文 JSONL）；~/.workbuddy 根下有秒级心跳文件
+        // （sessions/<pid>.json 等），挂根目录会把 250ms 防抖刷爆。
+        push_existing_path(&mut roots, user_profile_path.join(".workbuddy").join("projects"));
         for codex_path in [
             codex_home.join("sessions"),
             codex_home.join("archived_sessions"),
@@ -1356,6 +1362,9 @@ pub fn scan_sessions_blocking(options: Option<ScanOptions>) -> Vec<AgentSession>
     if options.include_zcode {
         sessions.extend(scan_zcode_sessions(scan_time_ms, &options));
     }
+    if options.include_workbuddy {
+        sessions.extend(scan_workbuddy_sessions(scan_time_ms, &options));
+    }
 
     apply_workspace_path_blacklist(&mut sessions, &options.workspace_path_blacklist);
     sessions.sort_by(|left_session, right_session| {
@@ -1381,13 +1390,16 @@ pub fn lookup_session_full_history(id: &str) -> Option<AgentSession> {
     if trimmed.starts_with("copilot-cli:") {
         return lookup_session_via_wide_scan(scan_time_ms, trimmed, "copilot-cli");
     }
-    for provider in ["zcode", "opencode", "codex", "copilot", "claude"] {
+    for provider in [
+        "zcode", "opencode", "workbuddy", "codex", "copilot", "claude",
+    ] {
         let Some(key) = trimmed.strip_prefix(&format!("{provider}:")) else {
             continue;
         };
         return match provider {
             "zcode" => lookup_zcode_session_by_key(scan_time_ms, key),
             "opencode" => lookup_opencode_session_by_key(scan_time_ms, key),
+            "workbuddy" => lookup_workbuddy_session_by_key(scan_time_ms, key),
             "codex" => lookup_codex_session_by_key(scan_time_ms, key),
             other => lookup_session_via_wide_scan(scan_time_ms, trimmed, other),
         };
@@ -1406,6 +1418,7 @@ fn full_history_scan_options() -> ScanOptions {
         include_codex: None,
         include_open_code: None,
         include_zcode: None,
+        include_workbuddy: None,
         workspace_path_blacklist: None,
     }
 }
@@ -1427,6 +1440,7 @@ fn lookup_session_via_wide_scan(
         options.include_codex = Some(provider == "codex");
         options.include_open_code = Some(provider == "opencode");
         options.include_zcode = Some(provider == "zcode");
+        options.include_workbuddy = Some(provider == "workbuddy");
     }
     let _ = scan_time_ms;
     scan_sessions_blocking(Some(options))
@@ -3661,6 +3675,7 @@ fn update_performance_scan_snapshot(sessions: &[AgentSession], duration: Duratio
             "codex" => provider_counts.codex += 1,
             "opencode" => provider_counts.opencode += 1,
             "zcode" => provider_counts.zcode += 1,
+            "workbuddy" => provider_counts.workbuddy += 1,
             _ => {}
         }
     }
@@ -4054,6 +4069,9 @@ fn open_session(session: OpenSessionRequest) -> Result<(), String> {
     }
     if clean_option(session.provider.as_deref()) == Some("zcode") {
         return open_zcode_session(&session);
+    }
+    if clean_option(session.provider.as_deref()) == Some("workbuddy") {
+        return open_workbuddy_session(&session);
     }
 
     if bridge_extension_installed() && request_session_resource(&session).is_some() {
@@ -12460,6 +12478,7 @@ fn resolve_scan_options(options: Option<ScanOptions>) -> ResolvedScanOptions {
         include_codex: None,
         include_open_code: None,
         include_zcode: None,
+        include_workbuddy: None,
         workspace_path_blacklist: None,
     });
     // 0 是显式的全历史开关（不限时间）；非 0 值维持 1–30 天夹取。GUI 调用方不会传 0，
@@ -12494,6 +12513,7 @@ fn resolve_scan_options(options: Option<ScanOptions>) -> ResolvedScanOptions {
         include_codex: options.include_codex.unwrap_or(true),
         include_open_code: options.include_open_code.unwrap_or(true),
         include_zcode: options.include_zcode.unwrap_or(true),
+        include_workbuddy: options.include_workbuddy.unwrap_or(true),
         workspace_path_blacklist: options
             .workspace_path_blacklist
             .unwrap_or_else(default_workspace_path_blacklist)
@@ -14291,6 +14311,654 @@ fn apply_native_always_on_top<R: tauri::Runtime>(
     }
 }
 
+// ---------- WorkBuddy 桌面端 provider ----------
+// 元数据：`%USERPROFILE%\.workbuddy\workbuddy.db`（SQLite，只读；sessions/session_usage 表）。
+// 正文：`%USERPROFILE%\.workbuddy\projects\<工作区>\<会话 id>.jsonl`（事件流，文件名即会话 ID）。
+// 跳转：`workbuddy://chat/<会话id>` 深链（WorkBuddy 注册的 URL 协议，正式包内
+// navigateToSession 即此格式），经 rundll32 FileProtocolHandler 拉起。
+// 数据结构证据见任务「AgentWatcher-支持-WorkBuddy-Provider」的调查记录。
+
+const WORKBUDDY_SQLITE_BUSY_TIMEOUT_MS: u64 = 500;
+/// 单轮候选行上限（与 ZCODE_SESSION_SCAN_LIMIT_MAX 同档；全历史模式放宽）。
+const WORKBUDDY_SESSION_SCAN_LIMIT_MAX: usize = 240;
+
+#[derive(Debug, Clone)]
+struct WorkbuddySessionRow {
+    id: String,
+    cwd: String,
+    title: Option<String>,
+    custom_title: Option<String>,
+    created_at: u64,
+    updated_at: u64,
+    last_activity_at: Option<u64>,
+    model: Option<String>,
+    context_window: Option<u64>,
+}
+
+impl WorkbuddySessionRow {
+    fn activity_ms(&self) -> u64 {
+        self.last_activity_at
+            .unwrap_or(0)
+            .max(self.updated_at)
+            .max(self.created_at)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct WorkbuddyTailSummary {
+    last_user_message: Option<String>,
+    last_ai_message: Option<String>,
+    latest_event_ms: u64,
+    status_hint: Option<SessionStatusHint>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct WorkbuddyUsageRow {
+    used: Option<u64>,
+    size: Option<u64>,
+    credits: Option<f64>,
+}
+
+fn workbuddy_home_dir() -> Option<PathBuf> {
+    env::var_os("USERPROFILE").map(PathBuf::from).map(|home| home.join(".workbuddy"))
+}
+
+fn workbuddy_db_path() -> Option<PathBuf> {
+    workbuddy_home_dir().map(|home| home.join("workbuddy.db"))
+}
+
+fn scan_workbuddy_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<AgentSession> {
+    let Some(db_path) = workbuddy_db_path().filter(|path| path.exists()) else {
+        return Vec::new();
+    };
+    let Some(connection) = open_readonly_sqlite(&db_path, WORKBUDDY_SQLITE_BUSY_TIMEOUT_MS)
+    else {
+        return Vec::new();
+    };
+    let candidate_rows = workbuddy_candidate_rows(&connection, options, scan_time_ms);
+    if candidate_rows.is_empty() {
+        return Vec::new();
+    }
+    let usage_rows = workbuddy_usage_rows(
+        &connection,
+        &candidate_rows
+            .iter()
+            .map(|row| row.id.as_str())
+            .collect::<Vec<_>>(),
+    );
+    let transcript_paths = workbuddy_transcript_paths();
+
+    let mut sessions = Vec::new();
+    for row in &candidate_rows {
+        let transcript_path = transcript_paths.get(&row.id);
+        let tail_summary = transcript_path
+            .map(|path| summarize_workbuddy_transcript_tail(path))
+            .unwrap_or_default();
+        let full_usage_entry = transcript_path
+            .and_then(|path| cached_jsonl_usage_for_path(path, parse_workbuddy_usage));
+        if let Some(entry) = &full_usage_entry {
+            store_jsonl_usage_detail(&format!("workbuddy:{}", row.id), entry);
+        }
+        let usage = workbuddy_merged_usage(
+            row,
+            full_usage_entry.map(|entry| entry.usage),
+            usage_rows.get(&row.id),
+        );
+        if let Some(session) = read_workbuddy_session_row(
+            row,
+            tail_summary,
+            transcript_path.cloned(),
+            scan_time_ms,
+            options,
+            usage,
+        ) {
+            sessions.push(session);
+            if sessions.len() >= options.max_sessions {
+                break;
+            }
+        }
+    }
+    sessions
+}
+
+fn workbuddy_session_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkbuddySessionRow> {
+    let positive_u64 = |value: Option<i64>| value.map(|ms| ms.max(0) as u64);
+    Ok(WorkbuddySessionRow {
+        id: row.get(0)?,
+        cwd: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+        title: row.get(2)?,
+        custom_title: row.get(3)?,
+        created_at: positive_u64(row.get(4)?).unwrap_or(0),
+        updated_at: positive_u64(row.get(5)?).unwrap_or(0),
+        last_activity_at: positive_u64(row.get(6)?),
+        model: row.get(7)?,
+        context_window: positive_u64(row.get(8)?),
+    })
+}
+
+/// 候选行 = 未删除、非 playground、有工作区的会话，按活跃时间倒序取窗口内前 N 条。
+/// playground 行的 cwd 为空串（自动化任务产物），没有工作区归属，不进卡片。
+fn workbuddy_candidate_rows(
+    connection: &Connection,
+    options: &ResolvedScanOptions,
+    scan_time_ms: u64,
+) -> Vec<WorkbuddySessionRow> {
+    let Ok(mut statement) = connection.prepare(
+        "select id, cwd, title, custom_title, created_at, updated_at, last_activity_at, \
+                model, context_window \
+         from sessions \
+         where deleted_at is null \
+           and is_playground = 0 \
+           and cwd is not null and cwd <> '' \
+           and (?2 = 0 or coalesce(last_activity_at, updated_at, created_at) >= ?2) \
+         order by coalesce(last_activity_at, updated_at, created_at) desc \
+         limit ?1",
+    ) else {
+        return Vec::new();
+    };
+    let active_cutoff_ms = if is_full_history(options) {
+        0_i64
+    } else {
+        scan_time_ms.saturating_sub(options.active_window_ms) as i64
+    };
+    let Ok(rows) = statement.query_map(
+        rusqlite::params![
+            sqlite_session_scan_limit(options, WORKBUDDY_SESSION_SCAN_LIMIT_MAX) as i64,
+            active_cutoff_ms
+        ],
+        workbuddy_session_row_from_sql,
+    ) else {
+        return Vec::new();
+    };
+    rows.filter_map(Result::ok)
+        .filter(|row| is_active_session(row.activity_ms(), scan_time_ms, options))
+        .collect()
+}
+
+/// session_usage：当前上下文占用（used/size）与累计 credits（credit_json 数值求和，
+/// 键是哈希看不出含义）。没有行或字段缺省时保持 None。
+fn workbuddy_usage_rows(
+    connection: &Connection,
+    session_ids: &[&str],
+) -> HashMap<String, WorkbuddyUsageRow> {
+    let mut usage_rows = HashMap::new();
+    if session_ids.is_empty() {
+        return usage_rows;
+    }
+    let Ok(ids_json) = serde_json::to_string(session_ids) else {
+        return usage_rows;
+    };
+    let Ok(mut statement) = connection.prepare(
+        "select session_id, used, size, credit_json from session_usage \
+         where session_id in (select value from json_each(?1))",
+    ) else {
+        return usage_rows;
+    };
+    let Ok(rows) = statement.query_map(rusqlite::params![ids_json], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, Option<i64>>(1)?.map(|value| value.max(0) as u64),
+            row.get::<_, Option<i64>>(2)?.map(|value| value.max(0) as u64),
+            row.get::<_, Option<String>>(3)?,
+        ))
+    }) else {
+        return usage_rows;
+    };
+    for (session_id, used, size, credit_json) in rows.filter_map(Result::ok) {
+        let credits = credit_json
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .and_then(|value| value.as_object().cloned())
+            .map(|object| object.values().filter_map(Value::as_f64).sum::<f64>())
+            .filter(|total| *total > 0.0);
+        usage_rows.insert(
+            session_id,
+            WorkbuddyUsageRow { used, size, credits },
+        );
+    }
+    usage_rows
+}
+
+/// 会话 ID 是全局唯一的 UUID，直接按文件名在 projects 下的工作区目录里找正文，
+/// 不推导目录的 slug 规则。
+fn workbuddy_transcript_paths() -> HashMap<String, PathBuf> {
+    let Some(projects_dir) = workbuddy_home_dir().map(|home| home.join("projects")) else {
+        return HashMap::new();
+    };
+    let mut paths = HashMap::new();
+    for workspace_entry in read_directory(&projects_dir) {
+        if !workspace_entry
+            .file_type()
+            .map(|file_type| file_type.is_dir())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        for file_entry in read_directory(&workspace_entry.path()) {
+            let path = file_entry.path();
+            if !has_extension(&path, "jsonl") {
+                continue;
+            }
+            let Some(session_id) = file_stem(&path) else {
+                continue;
+            };
+            paths.entry(session_id).or_insert(path);
+        }
+    }
+    paths
+}
+
+fn summarize_workbuddy_transcript_tail(transcript_path: &Path) -> WorkbuddyTailSummary {
+    let Ok(metadata) = fs::metadata(transcript_path) else {
+        return WorkbuddyTailSummary::default();
+    };
+    let Some(tail_text) =
+        read_file_suffix_text(transcript_path, metadata.len(), JSONL_TAIL_SAMPLE_BYTES)
+    else {
+        return WorkbuddyTailSummary::default();
+    };
+    summarize_workbuddy_transcript_tail_text(&tail_text)
+}
+
+fn workbuddy_event_timestamp_ms(event: &Value) -> Option<u64> {
+    event.get("timestamp").and_then(|value| {
+        value_as_u64(value).or_else(|| {
+            value
+                .as_str()
+                .and_then(|text| text.trim().parse::<u64>().ok())
+        })
+    })
+}
+
+/// WorkBuddy 的问题类工具名单（名字归一化后比对）；证据来自正式包 app.asar 的
+/// 交互工具集合。普通工具（Bash/Read/…）不算 waiting。
+fn is_workbuddy_question_tool(name: &str) -> bool {
+    let normalized = name
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['-', ' '], "_");
+    matches!(
+        normalized.as_str(),
+        "askuserquestion"
+            | "ask_user_question"
+            | "askfollowupquestion"
+            | "ask_followup_question"
+            | "pick_location"
+    )
+}
+
+/// 正文部件数组 → 纯文本（input_text / output_text 各取各的）。
+fn workbuddy_message_text(event: &Value, part_type: &str) -> String {
+    let Some(parts) = event.get("content").and_then(Value::as_array) else {
+        return String::new();
+    };
+    parts
+        .iter()
+        .filter_map(|part| {
+            let kind = part.get("type").and_then(Value::as_str)?;
+            (kind == part_type).then(|| {
+                part
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 首条用户消息会拼进 `<system-reminder …>…</system-reminder>` 身份注入块，
+/// 提取预览时整段剔除；没有闭合标签时按「后半段都是注入」处理。
+fn strip_workbuddy_system_reminder_spans(text: &str) -> String {
+    const OPEN_TAG: &str = "<system-reminder";
+    const CLOSE_TAG: &str = "</system-reminder>";
+    let mut output = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(OPEN_TAG) {
+        output.push_str(&rest[..start]);
+        let after_open = &rest[start..];
+        match after_open.find(CLOSE_TAG) {
+            Some(end) => rest = &after_open[end + CLOSE_TAG.len()..],
+            None => {
+                rest = "";
+                break;
+            }
+        }
+    }
+    output.push_str(rest);
+    output
+}
+
+/// 尾部采样的状态机输入：最后用户输入 / 最后 AI 正文 / 最新内容时间戳 / 状态提示。
+/// 状态提示：问题类 function_call 未闭合 → Waiting；最后一条 assistant message 没有
+/// 终态 status 或普通工具调用未闭合 → Running；否则交给时间窗口分 running/idle。
+fn summarize_workbuddy_transcript_tail_text(tail_text: &str) -> WorkbuddyTailSummary {
+    let mut summary = WorkbuddyTailSummary::default();
+    // callId → 是否问题类工具；result 按 callId 精确闭合，不误清并行调用
+    let mut open_calls: HashMap<String, bool> = HashMap::new();
+    let mut last_assistant_message_open = false;
+
+    for line in jsonl_lines(tail_text) {
+        let Some(event) = json_value_from_jsonl_line(line) else {
+            continue;
+        };
+        if let Some(timestamp_ms) = workbuddy_event_timestamp_ms(&event) {
+            summary.latest_event_ms = summary.latest_event_ms.max(timestamp_ms);
+        }
+        match event.get("type").and_then(Value::as_str) {
+            Some("message") => {
+                let role = event.get("role").and_then(Value::as_str).unwrap_or("");
+                if role == "user" {
+                    let text = strip_workbuddy_system_reminder_spans(
+                        &workbuddy_message_text(&event, "input_text"),
+                    );
+                    if let Some(cleaned) = clean_preview_text(&text)
+                        .filter(|text| !is_skip_sentinel(text))
+                    {
+                        summary.last_user_message = Some(cleaned);
+                    }
+                } else if role == "assistant" {
+                    let text = workbuddy_message_text(&event, "output_text");
+                    let status = event.get("status").and_then(Value::as_str);
+                    last_assistant_message_open =
+                        !matches!(status, Some("completed") | Some("incomplete"));
+                    if let Some(cleaned) = clean_preview_text(&text).filter(|text| {
+                        !is_ai_model_noise_text(text) && !is_user_system_error_text(text)
+                    }) {
+                        summary.last_ai_message = Some(cleaned);
+                    }
+                }
+            }
+            Some("function_call") => {
+                let call_id = event
+                    .get("callId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let name = event.get("name").and_then(Value::as_str).unwrap_or("");
+                if !call_id.trim().is_empty() {
+                    open_calls.insert(call_id.to_string(), is_workbuddy_question_tool(name));
+                }
+            }
+            Some("function_call_result") => {
+                let call_id = event
+                    .get("callId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if !call_id.trim().is_empty() {
+                    open_calls.remove(call_id);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if open_calls.values().any(|is_question| *is_question) {
+        summary.status_hint = Some(SessionStatusHint::Waiting);
+    } else if last_assistant_message_open || !open_calls.is_empty() {
+        summary.status_hint = Some(SessionStatusHint::Running);
+    }
+    summary
+}
+
+/// 全量正文的用量聚合（经 cached_jsonl_usage_for_path 预算与缓存）：
+/// token 口径来自 assistant message 的 message.usage（一次模型调用一笔），
+/// 工具计数来自 function_call，活跃时长按事件时间戳聚类（5 分钟空闲不计）。
+fn parse_workbuddy_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u32)>)> {
+    let mut usage = SessionUsage::default();
+    let mut event_timestamps: Vec<u64> = Vec::new();
+    let mut top_tools: HashMap<String, u32> = HashMap::new();
+    let mut total_input_tokens: u64 = 0;
+    let mut cached_input_tokens: u64 = 0;
+    let mut total_output_tokens: u64 = 0;
+    let mut has_usage_signal = false;
+
+    for line in jsonl_lines(text) {
+        let Some(event) = json_value_from_jsonl_line(line) else {
+            continue;
+        };
+        if let Some(timestamp_ms) = workbuddy_event_timestamp_ms(&event) {
+            event_timestamps.push(timestamp_ms);
+        }
+        match event.get("type").and_then(Value::as_str) {
+            Some("message") => {
+                let role = event.get("role").and_then(Value::as_str).unwrap_or("");
+                if role == "user" {
+                    usage.user_turns = Some(usage.user_turns.unwrap_or(0) + 1);
+                    has_usage_signal = true;
+                } else if role == "assistant" {
+                    if let Some(model_usage) = event.pointer("/message/usage") {
+                        usage.model_calls = Some(usage.model_calls.unwrap_or(0) + 1);
+                        total_input_tokens += count_value_u64(model_usage, "input_tokens");
+                        cached_input_tokens +=
+                            count_value_u64(model_usage, "cache_read_input_tokens");
+                        total_output_tokens += count_value_u64(model_usage, "output_tokens");
+                        has_usage_signal = true;
+                    }
+                }
+            }
+            Some("function_call") => {
+                if let Some(tool_name) = event
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.trim().is_empty())
+                {
+                    *top_tools.entry(tool_name.to_string()).or_insert(0) += 1;
+                    usage.tool_calls = Some(usage.tool_calls.unwrap_or(0) + 1);
+                    has_usage_signal = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    if !has_usage_signal {
+        return None;
+    }
+
+    usage.total_input_tokens = Some(total_input_tokens);
+    usage.cached_input_tokens = Some(cached_input_tokens);
+    usage.total_output_tokens = Some(total_output_tokens);
+    usage.active_duration_ms = active_duration_ms_from_timestamps(&event_timestamps);
+    Some((usage, top_tools.into_iter().collect()))
+}
+
+fn workbuddy_merged_usage(
+    row: &WorkbuddySessionRow,
+    full: Option<SessionUsage>,
+    db_usage: Option<&WorkbuddyUsageRow>,
+) -> Option<SessionUsage> {
+    let mut usage = full.unwrap_or_default();
+    let db_row = db_usage.cloned().unwrap_or_default();
+    usage.context_tokens = db_row.used;
+    usage.context_window_tokens = db_row.size.or(row.context_window);
+    usage.copilot_credits = db_row.credits;
+    if usage.models.is_empty() {
+        if let Some(model) = row
+            .model
+            .as_deref()
+            .filter(|model| !model.trim().is_empty())
+        {
+            usage.models = vec![model.to_string()];
+        }
+    }
+    if usage.duration_ms.is_none() {
+        usage.duration_ms = row
+            .updated_at
+            .checked_sub(row.created_at)
+            .filter(|duration| *duration > 0);
+    }
+    (!usage.is_empty()).then_some(usage)
+}
+
+fn read_workbuddy_session_row(
+    row: &WorkbuddySessionRow,
+    tail_summary: WorkbuddyTailSummary,
+    transcript_path: Option<PathBuf>,
+    scan_time_ms: u64,
+    options: &ResolvedScanOptions,
+    usage: Option<SessionUsage>,
+) -> Option<AgentSession> {
+    // db 的 cwd 是正斜杠（F:/x/y），卡片与深链统一用 Windows 反斜杠形态
+    let workspace_path = clean_option(Some(row.cwd.as_str())).map(|text| text.replace('/', "\\"));
+    let workspace_hint = workspace_path
+        .as_deref()
+        .and_then(|path_text| path_segments_basename(&workspace_path_segments(path_text)))
+        .unwrap_or_else(|| "WorkBuddy".to_string());
+    let title = clean_option(row.custom_title.as_deref().or(row.title.as_deref()))
+        .and_then(title_candidate_from_text)
+        .or_else(|| {
+            tail_summary
+                .last_user_message
+                .as_deref()
+                .and_then(title_candidate_from_text)
+        })
+        .unwrap_or_else(|| fallback_session_title("WorkBuddy", &workspace_hint, &row.id));
+    // 状态新鲜度用正文内容时间戳；库行时间只做没有正文时的兜底（与 ZCode 的
+    // session.time_updated 心跳教训同源：库行时间戳不代表内容活动）。
+    let latest_content_ms = tail_summary.latest_event_ms;
+    let updated_ms = latest_content_ms.max(row.activity_ms());
+    if !is_active_session(updated_ms, scan_time_ms, options) {
+        return None;
+    }
+    let status = status_from_activity(
+        latest_content_ms.max(row.created_at),
+        scan_time_ms,
+        ActivitySource::ContentTimestamp,
+        tail_summary.status_hint,
+    );
+    let workspace_identity = build_workspace_identity(
+        "workbuddy",
+        &row.id,
+        &workspace_hint,
+        workspace_path.as_deref(),
+        None,
+        None,
+    );
+    let mut todo_ids = Vec::new();
+    collect_todo_ids_from_text(&title, &mut todo_ids);
+    collect_todo_ids_from_text(
+        tail_summary.last_user_message.as_deref().unwrap_or(""),
+        &mut todo_ids,
+    );
+    let (last_user_message, last_user_message_truncated) =
+        apply_user_preview_budget(tail_summary.last_user_message);
+    let (last_ai_message, last_ai_message_truncated, last_ai_message_excerpt_kind) =
+        apply_ai_preview_budget(tail_summary.last_ai_message);
+    let plugin_workflow = detect_plugin_workflow_session_marker(
+        "workbuddy",
+        &[last_user_message.as_deref(), last_ai_message.as_deref()],
+    );
+    let mut merged_usage = usage;
+    if let Some(usage) = merged_usage.as_mut() {
+        if usage.duration_ms.is_none() {
+            usage.duration_ms = row
+                .updated_at
+                .checked_sub(row.created_at)
+                .filter(|duration| *duration > 0);
+        }
+    }
+    // 卡片消息数没有库表可数：用「用户轮次 + 模型调用数」近似（均为全量正文口径）
+    let message_count = merged_usage
+        .as_ref()
+        .map(|usage| usage.user_turns.unwrap_or(0) + usage.model_calls.unwrap_or(0))
+        .unwrap_or(0);
+
+    Some(AgentSession {
+        id: format!("workbuddy:{}", row.id),
+        provider: "workbuddy".to_string(),
+        provider_label: "WB".to_string(),
+        title,
+        workspace: workspace_identity.name.clone(),
+        workspace_path,
+        workspace_key: workspace_identity.key,
+        workspace_name: workspace_identity.name,
+        workspace_label: workspace_identity.label,
+        workspace_group: workspace_identity.group,
+        workspace_discriminator: workspace_identity.discriminator,
+        session_path: transcript_path
+            .as_ref()
+            .map(|path| path_to_string(path)),
+        session_resource: None,
+        status,
+        time_label: time_label(updated_ms, scan_time_ms),
+        updated_ms,
+        message_count,
+        last_user_message,
+        last_user_message_truncated,
+        last_ai_message,
+        last_ai_message_truncated,
+        last_ai_message_excerpt_kind,
+        branch: None,
+        todo_ids,
+        plugin_workflow,
+        usage: merged_usage,
+    })
+}
+
+/// CLI 的定向兜底：按会话 ID 直查库行（含窗口外/已删除行），全历史口径映射。
+fn lookup_workbuddy_session_by_key(scan_time_ms: u64, key: &str) -> Option<AgentSession> {
+    let session_id = key.trim();
+    if session_id.is_empty() {
+        return None;
+    }
+    let db_path = workbuddy_db_path().filter(|path| path.exists())?;
+    let connection = Connection::open_with_flags(
+        &db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .ok()?;
+    let _ = connection.busy_timeout(Duration::from_millis(WORKBUDDY_SQLITE_BUSY_TIMEOUT_MS));
+    let _ = connection.pragma_update(None, "query_only", "ON");
+    let mut statement = connection
+        .prepare(
+            "select id, cwd, title, custom_title, created_at, updated_at, last_activity_at, \
+                    model, context_window from sessions where id = ?1",
+        )
+        .ok()?;
+    let row = statement
+        .query_row(rusqlite::params![session_id], workbuddy_session_row_from_sql)
+        .ok()?;
+    let usage_row = workbuddy_usage_rows(&connection, &[row.id.as_str()]).remove(&row.id);
+    let transcript_path = workbuddy_transcript_paths().get(&row.id).cloned();
+    let tail_summary = transcript_path
+        .as_ref()
+        .map(|path| summarize_workbuddy_transcript_tail(path))
+        .unwrap_or_default();
+    let full_usage_entry = transcript_path
+        .as_ref()
+        .and_then(|path| cached_jsonl_usage_for_path(path, parse_workbuddy_usage));
+    let usage = workbuddy_merged_usage(
+        &row,
+        full_usage_entry.map(|entry| entry.usage),
+        usage_row.as_ref(),
+    );
+    read_workbuddy_session_row(
+        &row,
+        tail_summary,
+        transcript_path,
+        scan_time_ms,
+        &full_history_resolved_options(),
+        usage,
+    )
+}
+
+fn open_workbuddy_session(session: &OpenSessionRequest) -> Result<(), String> {
+    let session_id = raw_request_session_id(session.id.as_deref()).ok_or_else(|| {
+        "Missing WorkBuddy session id: 卡片请求里没有会话 ID，无法跳转".to_string()
+    })?;
+    // WorkBuddy 注册的会话级深链：workbuddy://chat/<会话id>（正式包 navigateToSession）
+    let deep_link = format!("workbuddy://chat/{session_id}");
+    let mut protocol_command = Command::new("rundll32.exe");
+    protocol_command.args(["url.dll,FileProtocolHandler", &deep_link]);
+    spawn_hidden(protocol_command)
+        .map(|_| ())
+        .map_err(|error| {
+            format!(
+                "WorkBuddy session launch failed ({error}): 无法通过 workbuddy:// 协议拉起 \
+                 WorkBuddy，请确认桌面端已安装并关联了该协议"
+            )
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -14820,6 +15488,7 @@ mod tests {
             include_codex: Some(false),
             include_open_code: None,
             include_zcode: None,
+            include_workbuddy: None,
             workspace_path_blacklist: None,
         }));
 
@@ -14838,6 +15507,7 @@ mod tests {
             include_codex: None,
             include_open_code: None,
             include_zcode: None,
+            include_workbuddy: None,
             workspace_path_blacklist: None,
         }));
 
@@ -14983,6 +15653,7 @@ mod tests {
             include_codex: None,
             include_open_code: None,
             include_zcode: None,
+            include_workbuddy: None,
             workspace_path_blacklist: Some(Vec::new()),
         }));
         assert!(explicit_empty.workspace_path_blacklist.is_empty());
@@ -15002,6 +15673,7 @@ mod tests {
             include_codex: None,
             include_open_code: Some(false),
             include_zcode: Some(false),
+            include_workbuddy: None,
             workspace_path_blacklist: None,
         }));
 
@@ -15022,6 +15694,7 @@ mod tests {
             include_codex: None,
             include_open_code: None,
             include_zcode: Some(false),
+            include_workbuddy: None,
             workspace_path_blacklist: None,
         }));
 
@@ -15058,6 +15731,7 @@ mod tests {
             include_codex: Some(false),
             include_open_code: Some(false),
             include_zcode: Some(true),
+            include_workbuddy: None,
             workspace_path_blacklist: None,
         }));
 
@@ -15648,6 +16322,7 @@ mod tests {
             include_codex: Some(true),
             include_open_code: Some(false),
             include_zcode: Some(false),
+            include_workbuddy: None,
             workspace_path_blacklist: None,
         }));
         let session = read_codex_jsonl_session(&session_path, scan_time_ms, &options).unwrap();
@@ -15733,6 +16408,7 @@ mod tests {
             include_codex: Some(true),
             include_open_code: Some(false),
             include_zcode: Some(false),
+            include_workbuddy: None,
             workspace_path_blacklist: None,
         }));
 
@@ -15927,6 +16603,7 @@ mod tests {
             include_codex: Some(false),
             include_open_code: Some(true),
             include_zcode: Some(false),
+            include_workbuddy: None,
             workspace_path_blacklist: None,
         }));
 
@@ -16101,6 +16778,7 @@ mod tests {
             include_codex: Some(false),
             include_open_code: Some(true),
             include_zcode: Some(false),
+            include_workbuddy: None,
             workspace_path_blacklist: None,
         }));
         let start = Instant::now();
@@ -16184,6 +16862,7 @@ mod tests {
             include_codex: Some(true),
             include_open_code: Some(false),
             include_zcode: Some(false),
+            include_workbuddy: None,
             workspace_path_blacklist: None,
         }));
         let thread = json!({
@@ -16270,6 +16949,7 @@ mod tests {
             include_codex: Some(true),
             include_open_code: Some(false),
             include_zcode: Some(false),
+            include_workbuddy: None,
             workspace_path_blacklist: None,
         }));
         let thread = json!({
@@ -16324,6 +17004,7 @@ mod tests {
             include_codex: Some(true),
             include_open_code: Some(false),
             include_zcode: Some(false),
+            include_workbuddy: None,
             workspace_path_blacklist: None,
         }));
         let thread = json!({
@@ -16360,6 +17041,7 @@ mod tests {
             include_codex: Some(true),
             include_open_code: Some(false),
             include_zcode: Some(false),
+            include_workbuddy: None,
             workspace_path_blacklist: None,
         }));
         let thread = json!({
@@ -16461,6 +17143,7 @@ mod tests {
             include_codex: Some(false),
             include_open_code: Some(false),
             include_zcode: Some(false),
+            include_workbuddy: None,
             workspace_path_blacklist: None,
         }));
         let sessions = scan_copilot_cli_sessions_from_connection(
@@ -16523,6 +17206,7 @@ mod tests {
             include_codex: Some(true),
             include_open_code: Some(false),
             include_zcode: Some(false),
+            include_workbuddy: None,
             workspace_path_blacklist: None,
         }));
 
@@ -16569,6 +17253,7 @@ mod tests {
             include_codex: Some(true),
             include_open_code: Some(false),
             include_zcode: Some(false),
+            include_workbuddy: None,
             workspace_path_blacklist: None,
         }));
 
@@ -17301,6 +17986,7 @@ mod tests {
                 include_codex: None,
                 include_open_code: None,
                 include_zcode: None,
+                include_workbuddy: None,
                 workspace_path_blacklist: None,
             }
         }
@@ -18567,5 +19253,497 @@ mod tests {
         assert!(sources_dir.is_dir(), "清理只删文件不删目录");
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    // ---------- WorkBuddy provider 测试 ----------
+
+    fn scan_options_workbuddy_only() -> ScanOptions {
+        ScanOptions {
+            max_sessions: None,
+            active_window_days: None,
+            hide_archived: None,
+            include_copilot: Some(false),
+            include_copilot_cli: Some(false),
+            include_claude: Some(false),
+            include_codex: Some(false),
+            include_open_code: Some(false),
+            include_zcode: Some(false),
+            include_workbuddy: Some(true),
+            workspace_path_blacklist: None,
+        }
+    }
+
+    fn workbuddy_memory_connection() -> Connection {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute(
+                "create table sessions (
+                    id text primary key,
+                    cwd text,
+                    title text,
+                    custom_title text,
+                    created_at integer,
+                    updated_at integer,
+                    last_activity_at integer,
+                    deleted_at integer,
+                    is_playground integer,
+                    model text,
+                    context_window integer
+                )",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "create table session_usage (
+                    session_id text primary key,
+                    used integer not null,
+                    size integer not null,
+                    updated_at integer not null,
+                    credit_json text
+                )",
+                [],
+            )
+            .unwrap();
+        connection
+    }
+
+    fn insert_workbuddy_session(
+        connection: &Connection,
+        id: &str,
+        cwd: &str,
+        title: Option<&str>,
+        custom_title: Option<&str>,
+        created_at: i64,
+        updated_at: i64,
+        last_activity_at: Option<i64>,
+        deleted_at: Option<i64>,
+        is_playground: i64,
+        model: Option<&str>,
+        context_window: Option<i64>,
+    ) {
+        connection
+            .execute(
+                "insert into sessions (id, cwd, title, custom_title, created_at, updated_at, \
+                 last_activity_at, deleted_at, is_playground, model, context_window) \
+                 values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                rusqlite::params![
+                    id,
+                    cwd,
+                    title,
+                    custom_title,
+                    created_at,
+                    updated_at,
+                    last_activity_at,
+                    deleted_at,
+                    is_playground,
+                    model,
+                    context_window
+                ],
+            )
+            .unwrap();
+    }
+
+    fn workbuddy_user_message_event(timestamp_ms: u64, text: &str) -> Value {
+        serde_json::json!({
+            "id": format!("msg-u-{timestamp_ms}"),
+            "timestamp": timestamp_ms,
+            "type": "message",
+            "role": "user",
+            "content": [{ "type": "input_text", "text": text }],
+            "sessionId": "wb-test-session",
+        })
+    }
+
+    fn workbuddy_assistant_message_event(
+        timestamp_ms: u64,
+        text: &str,
+        status: Option<&str>,
+        usage: Option<Value>,
+    ) -> Value {
+        let mut event = serde_json::json!({
+            "id": format!("msg-a-{timestamp_ms}"),
+            "timestamp": timestamp_ms,
+            "type": "message",
+            "role": "assistant",
+            "content": [{ "type": "output_text", "text": text }],
+            "sessionId": "wb-test-session",
+        });
+        if let Some(status) = status {
+            event["status"] = Value::String(status.to_string());
+        }
+        if let Some(usage) = usage {
+            event["message"] = serde_json::json!({ "usage": usage });
+        }
+        event
+    }
+
+    fn workbuddy_function_call_event(
+        timestamp_ms: u64,
+        call_id: &str,
+        name: &str,
+    ) -> Value {
+        serde_json::json!({
+            "id": format!("call-{call_id}"),
+            "timestamp": timestamp_ms,
+            "type": "function_call",
+            "callId": call_id,
+            "name": name,
+            "arguments": "{}",
+        })
+    }
+
+    fn workbuddy_function_result_event(timestamp_ms: u64, call_id: &str) -> Value {
+        serde_json::json!({
+            "id": format!("result-{call_id}"),
+            "timestamp": timestamp_ms,
+            "type": "function_call_result",
+            "callId": call_id,
+            "name": "AskUserQuestion",
+            "status": "completed",
+        })
+    }
+
+    fn workbuddy_jsonl_text(events: &[Value]) -> String {
+        events
+            .iter()
+            .map(|event| event.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn scan_options_include_workbuddy_by_default_and_can_disable_it() {
+        assert!(resolve_scan_options(None).include_workbuddy);
+
+        let mut options = scan_options_workbuddy_only();
+        options.include_workbuddy = Some(false);
+
+        assert!(!resolve_scan_options(Some(options)).include_workbuddy);
+    }
+
+    #[test]
+    fn workbuddy_candidate_rows_skip_deleted_playground_and_empty_cwd() {
+        let connection = workbuddy_memory_connection();
+        let scan_time_ms = 1_780_651_255_000_u64;
+        let options = resolve_scan_options(Some(scan_options_workbuddy_only()));
+        let now = scan_time_ms as i64;
+        insert_workbuddy_session(
+            &connection,
+            "keep-me",
+            "F:/AiProject/AgentWatcher",
+            Some("正常会话"),
+            None,
+            now - 600_000,
+            now - 60_000,
+            Some(now - 60_000),
+            None,
+            0,
+            Some("deepseek-v4.1-flash"),
+            Some(1_000_000),
+        );
+        insert_workbuddy_session(
+            &connection,
+            "deleted",
+            "F:/AiProject/AgentWatcher",
+            None,
+            None,
+            now - 600_000,
+            now - 60_000,
+            None,
+            Some(now),
+            0,
+            None,
+            None,
+        );
+        insert_workbuddy_session(
+            &connection,
+            "playground",
+            "",
+            Some("京东到货监控"),
+            None,
+            now - 600_000,
+            now - 60_000,
+            None,
+            None,
+            1,
+            None,
+            None,
+        );
+        insert_workbuddy_session(
+            &connection,
+            "too-old",
+            "F:/AiProject/AgentWatcher",
+            None,
+            None,
+            now - 40 * 24 * 60 * 60 * 1000,
+            now - 40 * 24 * 60 * 60 * 1000,
+            None,
+            None,
+            0,
+            None,
+            None,
+        );
+
+        let rows = workbuddy_candidate_rows(&connection, &options, scan_time_ms);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "keep-me");
+        assert_eq!(rows[0].cwd, "F:/AiProject/AgentWatcher");
+        assert_eq!(rows[0].model.as_deref(), Some("deepseek-v4.1-flash"));
+        assert_eq!(rows[0].context_window, Some(1_000_000));
+    }
+
+    #[test]
+    fn workbuddy_tail_marks_pending_question_waiting() {
+        let text = workbuddy_jsonl_text(&[
+            workbuddy_user_message_event(1_000, "帮我看看构建为什么失败"),
+            workbuddy_assistant_message_event(
+                2_000,
+                "我需要先确认一个选择。",
+                Some("completed"),
+                Some(serde_json::json!({
+                    "input_tokens": 100, "output_tokens": 10,
+                    "total_tokens": 110, "cache_read_input_tokens": 50
+                })),
+            ),
+            workbuddy_function_call_event(3_000, "call-q1", "AskUserQuestion"),
+        ]);
+
+        let summary = summarize_workbuddy_transcript_tail_text(&text);
+
+        assert_eq!(summary.status_hint, Some(SessionStatusHint::Waiting));
+        assert_eq!(summary.latest_event_ms, 3_000);
+        assert_eq!(
+            summary.last_user_message.as_deref(),
+            Some("帮我看看构建为什么失败")
+        );
+    }
+
+    #[test]
+    fn workbuddy_tail_clears_waiting_after_result() {
+        let text = workbuddy_jsonl_text(&[
+            workbuddy_function_call_event(1_000, "call-q1", "ask_user_question"),
+            workbuddy_function_result_event(2_000, "call-q1"),
+        ]);
+
+        let summary = summarize_workbuddy_transcript_tail_text(&text);
+
+        assert_ne!(summary.status_hint, Some(SessionStatusHint::Waiting));
+    }
+
+    #[test]
+    fn workbuddy_tail_marks_running_for_open_assistant_and_open_tool_call() {
+        let open_assistant = summarize_workbuddy_transcript_tail_text(&workbuddy_jsonl_text(&[
+            workbuddy_user_message_event(1_000, "继续"),
+            workbuddy_assistant_message_event(2_000, "正在跑测试……", None, None),
+        ]));
+        assert_eq!(open_assistant.status_hint, Some(SessionStatusHint::Running));
+
+        let open_tool = summarize_workbuddy_transcript_tail_text(&workbuddy_jsonl_text(&[
+            workbuddy_assistant_message_event(
+                1_000,
+                "开始执行。",
+                Some("completed"),
+                None,
+            ),
+            workbuddy_function_call_event(2_000, "call-b1", "Bash"),
+        ]));
+        assert_eq!(open_tool.status_hint, Some(SessionStatusHint::Running));
+    }
+
+    #[test]
+    fn workbuddy_tail_extracts_previews_and_filters_injection() {
+        let injected = "<system-reminder data-role=\"user-context\">\n身份上下文\n</system-reminder>\n\
+            真正的用户输入：跑一下冒烟测试";
+        let text = workbuddy_jsonl_text(&[
+            workbuddy_user_message_event(1_000, injected),
+            workbuddy_assistant_message_event(
+                2_000,
+                "冒烟测试通过：主窗口、任务面板、接续面板全部识别。",
+                Some("completed"),
+                None,
+            ),
+        ]);
+
+        let summary = summarize_workbuddy_transcript_tail_text(&text);
+
+        assert_eq!(
+            summary.last_user_message.as_deref(),
+            Some("真正的用户输入：跑一下冒烟测试")
+        );
+        assert!(summary
+            .last_ai_message
+            .as_deref()
+            .is_some_and(|text| text.contains("冒烟测试通过")));
+        assert_eq!(summary.status_hint, None);
+    }
+
+    #[test]
+    fn workbuddy_tail_ignores_unknown_event_types() {
+        let text = workbuddy_jsonl_text(&[
+            serde_json::json!({
+                "timestamp": 5_000,
+                "type": "goal-progress",
+                "payload": { "anything": true },
+            }),
+            serde_json::json!({
+                "timestamp": "6000",
+                "type": "future-event",
+            }),
+        ]);
+
+        let summary = summarize_workbuddy_transcript_tail_text(&text);
+
+        assert_eq!(summary.latest_event_ms, 6_000);
+        assert_eq!(summary.status_hint, None);
+        assert_eq!(summary.last_user_message, None);
+    }
+
+    #[test]
+    fn workbuddy_usage_aggregates_tokens_counts_and_top_tools() {
+        let usage = serde_json::json!({
+            "input_tokens": 51808,
+            "output_tokens": 696,
+            "total_tokens": 52504,
+            "cache_read_input_tokens": 51328
+        });
+        let text = workbuddy_jsonl_text(&[
+            workbuddy_user_message_event(1_000, "第一轮"),
+            workbuddy_assistant_message_event(
+                2_000,
+                "回复一",
+                Some("completed"),
+                Some(usage.clone()),
+            ),
+            workbuddy_function_call_event(3_000, "call-b1", "Bash"),
+            workbuddy_function_result_event(4_000, "call-b1"),
+            workbuddy_user_message_event(61 * 60 * 1000, "第二轮"),
+            workbuddy_assistant_message_event(
+                61 * 60 * 1000 + 1_000,
+                "回复二",
+                Some("completed"),
+                Some(usage),
+            ),
+        ]);
+
+        let (parsed, top_tools) = parse_workbuddy_usage(&text).unwrap();
+
+        assert_eq!(parsed.total_input_tokens, Some(103_616));
+        assert_eq!(parsed.cached_input_tokens, Some(102_656));
+        assert_eq!(parsed.total_output_tokens, Some(1_392));
+        assert_eq!(parsed.user_turns, Some(2));
+        assert_eq!(parsed.model_calls, Some(2));
+        assert_eq!(parsed.tool_calls, Some(1));
+        // 两次调用间隔 61 分钟，超过 5 分钟空闲阈值：活跃时长只累计两段内的活跃时间
+        assert!(parsed.active_duration_ms.is_some());
+        assert_eq!(
+            top_tools.iter().find(|(name, _)| name == "Bash").map(|(_, count)| *count),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn workbuddy_usage_rows_parse_credit_json() {
+        let connection = workbuddy_memory_connection();
+        connection
+            .execute(
+                "insert into session_usage (session_id, used, size, updated_at, credit_json) \
+                 values ('sess-a', 231344, 600000, 1, ?1)",
+                rusqlite::params![r#"{"hash1": 34.57, "hash2": 10.65}"#],
+            )
+            .unwrap();
+
+        let rows = workbuddy_usage_rows(&connection, &["sess-a", "missing"]);
+
+        let usage = rows.get("sess-a").unwrap();
+        assert_eq!(usage.used, Some(231_344));
+        assert_eq!(usage.size, Some(600_000));
+        assert!((usage.credits.unwrap() - 45.22).abs() < 0.01);
+        assert!(!rows.contains_key("missing"));
+    }
+
+    #[test]
+    fn workbuddy_session_row_maps_to_agent_session() {
+        let scan_time_ms = 1_780_651_255_000;
+        let row = WorkbuddySessionRow {
+            id: "ed8dfafb-0a50".to_string(),
+            cwd: "F:/AiProject/adt-scene-agent".to_string(),
+            title: Some("启动adt-3dgs-to-bim技能".to_string()),
+            custom_title: None,
+            created_at: scan_time_ms - 600_000,
+            updated_at: scan_time_ms - 120_000,
+            last_activity_at: Some(scan_time_ms - 120_000),
+            model: Some("deepseek-v4.1-flash".to_string()),
+            context_window: Some(1_000_000),
+        };
+        let tail = WorkbuddyTailSummary {
+            last_user_message: Some("请启动技能".to_string()),
+            last_ai_message: Some("工作区已准备完成。".to_string()),
+            latest_event_ms: scan_time_ms - 60_000,
+            status_hint: Some(SessionStatusHint::Waiting),
+        };
+        let options = resolve_scan_options(Some(scan_options_workbuddy_only()));
+        let merged_usage = workbuddy_merged_usage(
+            &row,
+            Some(SessionUsage {
+                total_input_tokens: Some(51_808),
+                total_output_tokens: Some(696),
+                user_turns: Some(1),
+                model_calls: Some(1),
+                tool_calls: Some(4),
+                ..SessionUsage::default()
+            }),
+            Some(&WorkbuddyUsageRow {
+                used: Some(231_344),
+                size: Some(600_000),
+                credits: Some(45.22),
+            }),
+        );
+
+        let session = read_workbuddy_session_row(
+            &row,
+            tail,
+            Some(PathBuf::from(r"C:\Users\wb\.workbuddy\projects\f-x\ed8dfafb-0a50.jsonl")),
+            scan_time_ms,
+            &options,
+            merged_usage,
+        )
+        .unwrap();
+
+        assert_eq!(session.id, "workbuddy:ed8dfafb-0a50");
+        assert_eq!(session.provider, "workbuddy");
+        assert_eq!(session.provider_label, "WB");
+        assert_eq!(session.title, "启动adt-3dgs-to-bim技能");
+        assert_eq!(session.workspace_name, "adt-scene-agent");
+        assert_eq!(
+            session.workspace_path.as_deref(),
+            Some(r"F:\AiProject\adt-scene-agent")
+        );
+        assert_eq!(session.status, "waiting");
+        assert_eq!(
+            session.session_path.as_deref(),
+            Some(r"C:\Users\wb\.workbuddy\projects\f-x\ed8dfafb-0a50.jsonl")
+        );
+        let usage = session.usage.unwrap();
+        assert_eq!(usage.context_tokens, Some(231_344));
+        assert_eq!(usage.context_window_tokens, Some(600_000));
+        assert_eq!(usage.total_input_tokens, Some(51_808));
+        assert_eq!(usage.models, vec!["deepseek-v4.1-flash".to_string()]);
+        assert!((usage.copilot_credits.unwrap() - 45.22).abs() < 0.01);
+        assert_eq!(session.message_count, 2);
+    }
+
+    #[test]
+    fn open_workbuddy_session_requires_session_id() {
+        let error = open_workbuddy_session(&OpenSessionRequest {
+            id: None,
+            provider: Some("workbuddy".to_string()),
+            workspace_path: None,
+            session_resource: None,
+        })
+        .unwrap_err();
+
+        assert!(error.contains("Missing WorkBuddy session id"));
     }
 }

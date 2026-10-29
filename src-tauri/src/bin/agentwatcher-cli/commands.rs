@@ -38,6 +38,7 @@ fn scan_options(
         include_codex: None,
         include_open_code: None,
         include_zcode: None,
+        include_workbuddy: None,
         workspace_path_blacklist: None,
     };
     if !provider.is_empty() {
