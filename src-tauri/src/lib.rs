@@ -4206,6 +4206,31 @@ fn export_session_package_blocking(
     let session_id = clean_option(request.id.as_deref())
         .ok_or_else(|| "Missing session id for session package".to_string())?;
     let entries = collect_session_package_entries(request)?;
+    let mut entries = entries;
+    // 逐轮降智审计随包导出：复用会话分析的同一解析路径，纯元数据无正文；
+    // 数据源没有逐轮数据（如 Copilot CLI）时不加这个文件。
+    {
+        let lifecycle = session_lifecycle(SessionLifecycleRequest {
+            id: session_id.to_string(),
+            provider: Some(provider.to_string()),
+            session_path: request.session_path.clone(),
+        });
+        if !lifecycle.turn_audit.is_empty() {
+            let mut audit_ndjson = String::new();
+            for row in &lifecycle.turn_audit {
+                if let Ok(line) = serde_json::to_string(row) {
+                    audit_ndjson.push_str(&line);
+                    audit_ndjson.push('\n');
+                }
+            }
+            entries.push(SessionPackageEntry {
+                zip_path: "audit/turns.ndjson".to_string(),
+                source_path: None,
+                source_kind: "turn-audit",
+                payload: SessionPackagePayload::Bytes(audit_ndjson.into_bytes()),
+            });
+        }
+    }
     let workspace_path = clean_option(request.workspace_path.as_deref())
         .unwrap_or("")
         .to_string();
