@@ -11896,7 +11896,49 @@
       const payload = { ...data, version: 1, updatedAt: Date.now() };
       latestSessionPreviewData = payload;
       tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', payload).catch(() => {});
+      enrichPreviewAuditSummary(data);
       return payload;
+    }
+
+    // 预览摘要的主窗口侧计算：session-preview 窗口的能力面不允许自己 invoke
+    // 命令（正文只走事件的隐私边界同源），摘要由主窗口算好随事件补发。
+    function enrichPreviewAuditSummary(data) {
+      if (typeof tauriInvoke !== 'function' || !data?.sessionId) return;
+      const key = String(data.sessionId);
+      if (previewAuditLineCache.has(key)) {
+        const cached = previewAuditLineCache.get(key);
+        if (!latestSessionPreviewData || latestSessionPreviewData.auditSummary === cached) return;
+        const payload = { ...latestSessionPreviewData, auditSummary: cached };
+        latestSessionPreviewData = payload;
+        tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', payload).catch(() => {});
+        return;
+      }
+      // 预览数据用的是 sessionId 字段（analyticsTargetFromSession 读 session.id，
+      // 对不上会拿到空 id），这里直接按预览字段构造请求
+      const request = {
+        id: key,
+        provider: String(data.provider || key.split(':')[0] || ''),
+        sessionPath: data.sessionPath || null
+      };
+      tauriInvoke('get_session_lifecycle', { request }).then(lifecycle => {
+        const rows = lifecycle?.turnAudit || [];
+        if (!rows.length) return;
+        const models = [];
+        rows.forEach(row => {
+          const model = row.modelServed || row.modelRequested;
+          if (model && !models.includes(model)) models.push(model);
+        });
+        const summary = {
+          models,
+          signalCount: rows.reduce((acc, row) => acc + (row.signals?.length || 0), 0)
+        };
+        previewAuditLineCache.set(key, summary);
+        if (!latestSessionPreviewData || String(latestSessionPreviewData.sessionId) !== key) return;
+        const payload = { ...latestSessionPreviewData, auditSummary: summary };
+        latestSessionPreviewData = payload;
+        tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', payload).catch(() => {});
+        renderSessionPreview(latestSessionPreviewData);
+      }).catch(() => {});
     }
 
     function handoffPayload() {
@@ -17007,12 +17049,13 @@ function analyticsRememberSession(normalized) {
       });
     }
 
-    // 逐轮审计摘要行：悬停预览打开时懒加载一次生命周期，只显示模型链与信号数，
+    // 逐轮审计摘要行：主窗口懒加载一次生命周期，只取模型链与信号数随事件下发，
     // 点击进入会话分析看完整逐轮审计表；不写 localStorage
     const previewAuditLineCache = new Map();
 
     function fillPreviewAuditLine(line, summary, data) {
-      if (!summary || !line.isConnected) return;
+      // 预览的 body 先离屏构建再整体挂载，这里不能用 isConnected 做卫语句
+      if (!summary) return;
       line.hidden = false;
       const signals = summary.signalCount > 0
         ? ` <span class="n">${t('previewAuditSignals').replace('{count}', String(summary.signalCount))}</span>`
@@ -17032,35 +17075,13 @@ function analyticsRememberSession(normalized) {
     }
 
     function appendPreviewAuditLine(section, data) {
-      if (typeof tauriInvoke !== 'function' || !data?.sessionId) return;
+      if (!data?.sessionId) return;
+      const summary = data.auditSummary || previewAuditLineCache.get(String(data.sessionId));
+      if (!summary) return;
       const line = document.createElement('div');
       line.className = 'usage-audit-line';
-      line.hidden = true;
       section.appendChild(line);
-      const key = String(data.sessionId);
-      const cached = previewAuditLineCache.get(key);
-      if (cached) {
-        fillPreviewAuditLine(line, cached, data);
-        return;
-      }
-      const target = analyticsTargetFromSession(data);
-      tauriInvoke('get_session_lifecycle', {
-        request: { id: target.id, provider: target.provider, sessionPath: target.sessionPath || null }
-      }).then(lifecycle => {
-        const rows = lifecycle?.turnAudit || [];
-        if (!rows.length) return;
-        const models = [];
-        rows.forEach(row => {
-          const model = row.modelServed || row.modelRequested;
-          if (model && !models.includes(model)) models.push(model);
-        });
-        const summary = {
-          models,
-          signalCount: rows.reduce((acc, row) => acc + (row.signals?.length || 0), 0)
-        };
-        previewAuditLineCache.set(key, summary);
-        fillPreviewAuditLine(line, summary, data);
-      }).catch(() => {});
+      fillPreviewAuditLine(line, summary, data);
     }
 
     function renderSessionPreviewUsage(data, body) {
