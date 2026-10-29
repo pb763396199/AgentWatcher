@@ -14805,9 +14805,14 @@ fn parse_workbuddy_usage(text: &str) -> Option<(SessionUsage, Vec<(String, u32)>
         return None;
     }
 
-    usage.total_input_tokens = Some(total_input_tokens);
-    usage.cached_input_tokens = Some(cached_input_tokens);
-    usage.total_output_tokens = Some(total_output_tokens);
+    // token 三项只在实际记过 usage 的会话上给值：正文里没有 message.usage 的会话
+    // （部分模式的模型调用不落 usage）保持 None，与「数据源没有的项为 null」的
+    // 口径一致，不写 0 冒充实测值。
+    if usage.model_calls.unwrap_or(0) > 0 {
+        usage.total_input_tokens = Some(total_input_tokens);
+        usage.cached_input_tokens = Some(cached_input_tokens);
+        usage.total_output_tokens = Some(total_output_tokens);
+    }
     usage.active_duration_ms = active_duration_ms_from_timestamps(&event_timestamps);
     Some((usage, top_tools.into_iter().collect()))
 }
@@ -19680,6 +19685,24 @@ mod tests {
             top_tools.iter().find(|(name, _)| name == "Bash").map(|(_, count)| *count),
             Some(1)
         );
+    }
+
+    #[test]
+    fn workbuddy_usage_without_model_usage_keeps_tokens_null() {
+        let text = workbuddy_jsonl_text(&[
+            workbuddy_user_message_event(1_000, "这个会话的模型调用不落 usage"),
+            workbuddy_assistant_message_event(2_000, "回复", Some("completed"), None),
+            workbuddy_function_call_event(3_000, "call-x", "Read"),
+            workbuddy_function_result_event(4_000, "call-x"),
+        ]);
+
+        let (parsed, _) = parse_workbuddy_usage(&text).unwrap();
+
+        assert_eq!(parsed.model_calls, None);
+        assert_eq!(parsed.total_input_tokens, None);
+        assert_eq!(parsed.total_output_tokens, None);
+        assert_eq!(parsed.user_turns, Some(1));
+        assert_eq!(parsed.tool_calls, Some(1));
     }
 
     #[test]
