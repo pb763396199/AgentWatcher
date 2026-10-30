@@ -6306,6 +6306,7 @@ fn fetch_codex_turn_summary(
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             scan_sessions,
             get_session_usage_detail,
