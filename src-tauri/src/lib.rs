@@ -6314,6 +6314,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             scan_sessions,
+            send_zcode_message,
             get_session_usage_detail,
             get_session_lifecycle,
             get_performance_snapshot,
@@ -15269,6 +15270,8 @@ struct SuggestionRuntime {
     in_flight: HashSet<String>,
     /// 最近一条建议，全局热键作用在它上面。
     latest: Option<SessionSuggestion>,
+    /// 每个会话当前有效的建议（发送前做防陈旧校验用）。
+    current: HashMap<String, SessionSuggestion>,
     /// 每个会话已经「换一个」的次数与要避开的上一条建议。
     regen_counts: HashMap<String, u32>,
     last_avoid: HashMap<String, String>,
@@ -15347,6 +15350,7 @@ fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSessio
             };
             if let Some(runtime) = runtime.as_deref_mut() {
                 runtime.latest = Some(suggestion.clone());
+                runtime.current.insert(session.id.clone(), suggestion.clone());
             }
             let _ = app.emit(SUGGESTIONS_EVENT, &suggestion);
             maybe_auto_answer(&app, &session, &suggestion);
@@ -15355,13 +15359,21 @@ fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSessio
 }
 
 /// 从 ZCode 会话库提取建议上下文：最近几轮对话、待选问题与选项、指纹。
-fn zcode_suggestion_context(session: &AgentSession) -> Option<SuggestionContext> {
+fn zcode_suggestion_context(session_id: &str) -> Option<SuggestionContext> {
     let db_path = zcode_db_path()?;
     if !db_path.exists() {
         return None;
     }
     let connection = open_readonly_sqlite(&db_path, ZCODE_SQLITE_BUSY_TIMEOUT_MS)?;
-    let session_key = session.id.strip_prefix("zcode:")?;
+    let session_key = session_id.strip_prefix("zcode:")?;
+    let workspace_path: Option<String> = connection
+        .query_row(
+            "select directory from session where id = ?1 limit 1",
+            rusqlite::params![session_key],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .filter(|directory| !directory.trim().is_empty());
 
     // 指纹 = 最后一条消息的 id。
     let fingerprint: String = connection
@@ -15455,7 +15467,7 @@ fn zcode_suggestion_context(session: &AgentSession) -> Option<SuggestionContext>
     }
 
     Some(SuggestionContext {
-        workspace_path: session.workspace_path.clone().unwrap_or_default(),
+        workspace_path: workspace_path.unwrap_or_default(),
         turns,
         question,
         fingerprint,
@@ -15507,7 +15519,7 @@ fn call_suggestion_model(settings: &SuggestionSettings, prompt: &str) -> Option<
 
 /// 单个会话的完整生成流程：取上下文、组装提示词、调模型、解析、防陈旧自检。
 fn generate_zcode_suggestion(session: &AgentSession, avoid: Option<&str>) -> Option<SessionSuggestion> {
-    let context = zcode_suggestion_context(session)?;
+    let context = zcode_suggestion_context(&session.id)?;
     let prompt = build_suggestion_prompt(&context, avoid);
     let settings = suggestion_runtime()
         .lock()
@@ -15537,6 +15549,202 @@ fn generate_zcode_suggestion(session: &AgentSession, avoid: Option<&str>) -> Opt
 /// 全自动作答的挂接点：护栏全过才替用户把选项发出去。S6 填实现。
 fn maybe_auto_answer(app: &tauri::AppHandle, session: &AgentSession, suggestion: &SessionSuggestion) {
     let _ = (app, session, suggestion);
+}
+
+// ---- 发送通道：zcode.cjs headless 续话 ----
+
+const ZCODE_SEND_TIMEOUT_SECS: u64 = 120;
+
+/// 读注册表 zcode:// 协议的 open 命令串。
+fn resolve_zcode_command_string() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::HKEY_CLASSES_ROOT;
+        use winreg::RegKey;
+        let key = RegKey::predef(HKEY_CLASSES_ROOT)
+            .open_subkey(r"zcode\shell\open\command")
+            .ok()?;
+        let value: String = key.get_value("").ok()?;
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
+/// 从 `"C:\...\ZCode.exe" -- "%1"` 这样的命令串里剥出可执行文件路径。
+fn parse_exe_from_command(command: &str) -> Option<String> {
+    let trimmed = command.trim();
+    if let Some(rest) = trimmed.strip_prefix('"') {
+        let end = rest.find('"')?;
+        let exe = rest[..end].trim();
+        if exe.is_empty() {
+            None
+        } else {
+            Some(exe.to_string())
+        }
+    } else {
+        let exe = trimmed.split_whitespace().next()?;
+        Some(exe.to_string())
+    }
+}
+
+fn resolve_zcode_exe() -> Result<PathBuf, String> {
+    let command = resolve_zcode_command_string()
+        .ok_or("未找到 ZCode 桌面版（注册表里没有 zcode:// 协议）")?;
+    let exe = parse_exe_from_command(&command)
+        .ok_or("zcode:// 协议命令里解析不出 ZCode.exe 路径")?;
+    let path = PathBuf::from(&exe);
+    if !path.is_file() {
+        return Err(format!("ZCode.exe 不存在：{exe}"));
+    }
+    Ok(path)
+}
+
+fn zcode_cjs_path(exe: &Path) -> PathBuf {
+    exe.parent()
+        .map(|dir| dir.join("resources").join("glm").join("zcode.cjs"))
+        .unwrap_or_default()
+}
+
+/// 组装 zcode.cjs 参数。workspace 为空时不带 --cwd（用进程当前目录兜底）。
+fn zcode_send_args(cjs: &str, session_key: &str, workspace_path: &str, text: &str) -> Vec<String> {
+    let mut args = vec![cjs.to_string(), "--resume".to_string(), session_key.to_string()];
+    if !workspace_path.trim().is_empty() {
+        args.push("--cwd".to_string());
+        args.push(workspace_path.to_string());
+    }
+    args.push("-p".to_string());
+    args.push(text.to_string());
+    args.push("--json".to_string());
+    args
+}
+
+/// 拉起子进程并等它结束，带超时。成功返回 Ok，失败分类报错：
+/// 启动失败、非零退出（stderr 前 200 字）、超时。
+fn run_child_with_timeout(
+    command: &mut std::process::Command,
+    timeout_secs: u64,
+    timeout_message: &str,
+) -> Result<(), String> {
+    command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("无法启动子进程：{error}"))?;
+    let deadline = Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if status.success() {
+                    return Ok(());
+                }
+                let stderr = child
+                    .stderr
+                    .take()
+                    .map(|mut stream| {
+                        use std::io::Read;
+                        let mut buffer = String::new();
+                        let _ = stream.read_to_string(&mut buffer);
+                        buffer
+                    })
+                    .unwrap_or_default();
+                let head: String = stderr.trim().chars().take(200).collect();
+                return Err(format!(
+                    "ZCode 发送失败（退出码 {}）：{head}",
+                    status.code().unwrap_or(-1)
+                ));
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(timeout_message.to_string());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
+            Err(error) => return Err(format!("等待子进程失败：{error}")),
+        }
+    }
+}
+
+/// 阻塞发送：以纯 node 方式运行 zcode.cjs，把 text 写成该会话的下一条用户消息。
+fn send_zcode_message_blocking(session_key: &str, workspace_path: &str, text: &str) -> Result<(), String> {
+    let exe = resolve_zcode_exe()?;
+    let cjs = zcode_cjs_path(&exe);
+    if !cjs.is_file() {
+        return Err("ZCode 安装目录里没有 resources\\glm\\zcode.cjs，请升级 ZCode 桌面版".to_string());
+    }
+    let args = zcode_send_args(&path_to_string(&cjs), session_key, workspace_path, text);
+    let mut command = std::process::Command::new(&exe);
+    command.args(&args).env("ELECTRON_RUN_AS_NODE", "1");
+    run_child_with_timeout(
+        &mut command,
+        ZCODE_SEND_TIMEOUT_SECS,
+        "ZCode 发送超时（120 秒），已中止",
+    )
+}
+
+#[tauri::command]
+fn send_zcode_message(
+    app: tauri::AppHandle,
+    id: String,
+    text: String,
+) -> Result<(), String> {
+    if text.trim().is_empty() {
+        return Err("发送内容为空".to_string());
+    }
+    let Some(session_key) = id.strip_prefix("zcode:") else {
+        return Err("只支持 ZCode 会话的建议发送".to_string());
+    };
+
+    // 防陈旧：手头有该会话的建议时，先对一遍当前指纹。
+    let stale = {
+        let Ok(runtime) = suggestion_runtime().lock() else {
+            return Err("建议状态不可用".to_string());
+        };
+        match runtime.current.get(&id) {
+            Some(suggestion) => match zcode_suggestion_context(&id) {
+                // 会话已经查不到（刚归档）时按陈旧处理，宁可不发。
+                Some(context) => !suggestion_fingerprint_valid(suggestion, &context.fingerprint),
+                None => true,
+            },
+            // 没有存过建议（例如热键直接发送的手输文本）不拦。
+            None => false,
+        }
+    };
+    if stale {
+        return Err("会话已前进，这条建议失效了，请等新建议".to_string());
+    }
+
+    let workspace = suggestion_workspace_path(&id).unwrap_or_default();
+    send_zcode_message_blocking(session_key, &workspace, &text)?;
+
+    // 发送成功：用户手动动作解除熔断，并立刻让前端重扫让卡片状态流转。
+    if let Ok(mut runtime) = suggestion_runtime().lock() {
+        runtime.manual_sent_since_fuse.insert(id.clone(), true);
+        runtime.current.remove(&id);
+        runtime.regen_counts.remove(&id);
+        runtime.last_avoid.remove(&id);
+    }
+    let _ = app.emit(SESSIONS_CHANGED_EVENT, current_time_ms());
+    Ok(())
+}
+
+/// 查某个 ZCode 会话当前的工作区路径（发送要带 --cwd，保持会话目录一致）。
+fn suggestion_workspace_path(session_id: &str) -> Option<String> {
+    zcode_suggestion_context(session_id)
+        .map(|context| context.workspace_path)
+        .filter(|directory| !directory.trim().is_empty())
 }
 
 #[cfg(test)]
@@ -20535,5 +20743,65 @@ mod tests {
         assert_eq!(audit["chosen"], "继续修");
         assert_eq!(audit["outcome"], "sent");
         assert!(audit["atMs"].as_u64() == Some(now));
+    }
+
+    #[test]
+    fn zcode_send_resolves_exe_from_registry_string() {
+        assert_eq!(
+            parse_exe_from_command(r#""C:\Program Files\ZCode\ZCode.exe" -- "%1""#),
+            Some(r"C:\Program Files\ZCode\ZCode.exe".to_string())
+        );
+        assert_eq!(
+            parse_exe_from_command(r#"D:\ZCode\ZCode.exe -- "%1""#),
+            Some(r"D:\ZCode\ZCode.exe".to_string())
+        );
+        assert_eq!(parse_exe_from_command(r#"" "%1""#), None);
+        assert_eq!(parse_exe_from_command(""), None);
+    }
+
+    #[test]
+    fn zcode_send_args_assemble() {
+        let with_cwd = zcode_send_args(
+            r"C:\ZCode\zcode.cjs",
+            "sess_1",
+            r"F:\proj",
+            "继续修",
+        );
+        assert_eq!(
+            with_cwd,
+            vec![
+                r"C:\ZCode\zcode.cjs".to_string(),
+                "--resume".to_string(),
+                "sess_1".to_string(),
+                "--cwd".to_string(),
+                r"F:\proj".to_string(),
+                "-p".to_string(),
+                "继续修".to_string(),
+                "--json".to_string(),
+            ]
+        );
+        let without_cwd = zcode_send_args(r"C:\ZCode\zcode.cjs", "sess_1", "  ", "继续");
+        assert!(!without_cwd.contains(&"--cwd".to_string()));
+        assert_eq!(without_cwd.last().unwrap(), "--json");
+    }
+
+    #[test]
+    fn zcode_send_classifies_child_failure() {
+        // 非零退出：错误信息要带上退出码。
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/c", "exit 2"]).env_remove("ELECTRON_RUN_AS_NODE");
+        let error = run_child_with_timeout(&mut command, 10, "超时").unwrap_err();
+        assert!(error.contains("退出码 2"), "actual: {error}");
+
+        // 正常退出：成功。
+        let mut ok_command = std::process::Command::new("cmd");
+        ok_command.args(["/c", "exit 0"]);
+        assert!(run_child_with_timeout(&mut ok_command, 10, "超时").is_ok());
+
+        // 超时：长进程配 1 秒超时，要被杀掉并报超时。
+        let mut slow_command = std::process::Command::new("cmd");
+        slow_command.args(["/c", "ping -n 5 127.0.0.1 > nul"]);
+        let timeout_error = run_child_with_timeout(&mut slow_command, 1, "子进程超时").unwrap_err();
+        assert_eq!(timeout_error, "子进程超时");
     }
 }
