@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.1.10 - 2026-10-30
+
+- 新增 WorkBuddy 桌面端会话来源（第 7 个 provider，徽标 WB）：只读扫描本机 `~/.workbuddy/workbuddy.db`（SQLite，跳过已删除、playground、无工作区的行）与 `projects\<工作区>\<会话 id>.jsonl` 正文，按待回复/运行中/闲置出卡片；悬浮预览带最后用户输入与 AI 正文（过滤身份注入块）；用量带 token 求和、上下文占用、credits（数据源没有的项为 null）。
+- WorkBuddy 点击跳转走其注册的 `workbuddy://chat/<会话 id>` 会话级深链（会话 ID 百分号编码）；右键打包交接同样可用（正文 JSONL 原样进包）；文件监听挂 `projects` 与 `workbuddy.db/-wal`（不挂根目录，根下秒级心跳文件会刷爆防抖）；CLI `--provider workbuddy` 同步可用，显式查询绕开共享用量预算直读。
+- 新增逐轮降智审计：会话分析面板与悬浮预览可见每一轮是谁在回答、什么档位、花了多少、有没有换模型或重试（四类信号），用量时间轴上模型切换与异常轮有标记；右键打包的交接包新增 `audit/turns.ndjson`，接手方无需 AgentWatcher 即可核对。
+- 新增真实交互流程 `npm run test:tauri:flow -- workbuddy-session`；WorkBuddy provider 单测 14 条、逐轮审计单测随任务合入。
+
+发布包：`AgentWatcher-v0.1.10-windows-x64.zip`
+
+SHA256：`714FFA1C5E05BB07CE89CCDDF7AD1025AC1AEF3804C2C80D65EA9BDA09D47098`
+
+验证：`cargo test --manifest-path src-tauri/Cargo.toml`（140 lib + CLI 分类 9 + 契约 8 全通过）、`npm run test:tauri:flow -- workbuddy-session`（真实 Tauri 壳：卡片渲染、深链点击 toast 实证）、Bridge 语法与 handoff 路由测试、`git diff --check`、`npm run package:exe`；本机 9 条真实 WorkBuddy 会话卡片与 CLI 查询实证（含中文工作区路径）。已知限制：WorkBuddy 的 waiting 判定（AskUserQuestion 类工具未闭合）本机暂无真实样本，以合成事件流单测锁定；深链落点、浅色主题徽标等 4 项人工核对进行中。
+
 ## v0.1.9 - 2026-10-27
 
 - 新增「打包会话用于跨电脑交接」：右键会话卡片把整个会话打成单个 zip 交接包——`manifest.json`（逐文件 SHA256；工作区是 git 仓库时附 repo/分支/HEAD/未提交数/未推送提交数锚点）、`HANDOFF.md`（纯定位块，含一行代码锚点与隐私提醒，不带正文）、`README.md`（数据格式说明）与 `raw/` 原始内容全量。落 `%TEMP%\AgentWatcher\session-packages\` 并把 zip 文件本身写入系统剪贴板（CF_HDROP），在 IM/资源管理器 Ctrl+V 直接粘贴出发送；剪贴板被占用时退回显示完整路径并揭示所在文件夹。
