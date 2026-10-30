@@ -26,7 +26,9 @@ dependencies:
     content_digest: "sha256:d17e421222a8a15f1aca54b1872097d7907aa31031f0a21dd0e26af6321ddec4"
     branch_or_pr: "feature/逐轮降智审计器"
     workflow_excluded: true
-outcome: "ready_to_land"
+outcome: "delivered"
+landing_revision: "4d25d737cb4850e7db7b269dd4065b8d22b1a8ea"
+landing_branch: "dev"
 ---
 # 交付
 

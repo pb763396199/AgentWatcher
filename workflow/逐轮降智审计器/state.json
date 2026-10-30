@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "protocol": "1.3.0",
+  "generated_at": "2026-10-30T03:01:52Z",
+  "generated_by": {
+    "tool_revision": "awf-0.1.0"
+  },
+  "work_item": {
+    "id": "wi_5VYQZTXYZD0H5M6CN9TKTRFJC3",
+    "short_id": "fnv6stb3",
+    "slug": "逐轮降智审计器",
+    "title": "逐轮降智审计器",
+    "kind": "feature",
+    "status": "done",
+    "branch": "feature/逐轮降智审计器",
+    "home_repository": "file://F:\\AiProject\\AgentWatcher",
+    "contract_digest": "sha256:6848ab9fb6f89246f58decd1503a13d728d7aa614109393c23af3b6f2ffae203",
+    "acceptance_ids": [
+      "AC-001",
+      "AC-002",
+      "AC-003",
+      "AC-004",
+      "AC-005",
+      "AC-006"
+    ]
+  },
+  "artifacts": [
+    {
+      "artifact_id": "ar_3HX7BYZFZDKZJXHEXVV6K51TW5",
+      "type": "change-note",
+      "path": "change-note.md",
+      "outcome": "complete",
+      "freshness": "fresh",
+      "stage": 45,
+      "depends_on": [
+        "ar_3NP67ZZSEQ08S46B1CQ0Q649W5"
+      ]
+    },
+    {
+      "artifact_id": "ar_1QYEXVZEXY27Y7Z6GF8XTG24GQ",
+      "type": "delivery",
+      "path": "delivery.md",
+      "outcome": "delivered",
+      "freshness": "fresh",
+      "stage": 80,
+      "depends_on": [
+        "ar_79XFQVPPEZ69XS2MEC34B8B8X4",
+        "ar_2SMYZVPYBEMM6XCB8893WF3WYM"
+      ]
+    },
+    {
+      "artifact_id": "ar_7KQYQVDZFB4P0TY6T8K70B38QK",
+      "type": "design",
+      "path": "design.md",
+      "outcome": "superseded",
+      "freshness": "superseded",
+      "stage": 20,
+      "depends_on": [
+        "ar_51YQVBEYQZ5KTHC6V0BP3BT5B9"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M63D46ME00012C350EWBQ3AP",
+      "type": "design",
+      "path": "design/design-v2.md",
+      "outcome": "accepted",
+      "freshness": "fresh",
+      "stage": 20,
+      "depends_on": [
+        "ar_51YQVBEYQZ5KTHC6V0BP3BT5B9"
+      ]
+    },
+    {
+      "artifact_id": "ar_35QQ7HZD7QA793KM6KP7NWRYTB",
+      "type": "implementation",
+      "path": "implementation.md",
+      "outcome": "complete",
+      "freshness": "fresh",
+      "stage": 50,
+      "depends_on": [
+        "ar_3HX7BYZFZDKZJXHEXVV6K51TW5"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M65BVNP30000J2N0TEWEPY4S",
+      "type": "manual-test",
+      "path": "manual-test.md",
+      "outcome": "passed",
+      "freshness": "fresh",
+      "stage": 70,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_3NP67ZZSEQ08S46B1CQ0Q649W5",
+      "type": "plan",
+      "path": "plan.md",
+      "outcome": "ready",
+      "freshness": "fresh",
+      "stage": 30,
+      "depends_on": [
+        "ar_01M63D46ME00012C350EWBQ3AP"
+      ]
+    },
+    {
+      "artifact_id": "ar_51YQVBEYQZ5KTHC6V0BP3BT5B9",
+      "type": "research",
+      "path": "research/provider-audit-signals-research.md",
+      "outcome": "complete",
+      "freshness": "fresh",
+      "stage": 10,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_79XFQVPPEZ69XS2MEC34B8B8X4",
+      "type": "review",
+      "path": "reviews/code-review.md",
+      "outcome": "approved",
+      "freshness": "fresh",
+      "stage": 60,
+      "depends_on": [
+        "ar_35QQ7HZD7QA793KM6KP7NWRYTB"
+      ]
+    },
+    {
+      "artifact_id": "ar_2VY7KQSZYA2828K3VCWEH0TN1H",
+      "type": "summary",
+      "path": "summary.md",
+      "outcome": "complete",
+      "freshness": "fresh",
+      "stage": 55,
+      "depends_on": [
+        "ar_35QQ7HZD7QA793KM6KP7NWRYTB"
+      ]
+    },
+    {
+      "artifact_id": "ar_2SMYZVPYBEMM6XCB8893WF3WYM",
+      "type": "validation",
+      "path": "validation.md",
+      "outcome": "passed",
+      "freshness": "fresh",
+      "stage": 70,
+      "depends_on": [
+        "ar_35QQ7HZD7QA793KM6KP7NWRYTB"
+      ]
+    }
+  ],
+  "wayfinder": null,
+  "manual_test": {
+    "passed": 4,
+    "open": 0,
+    "failed": 0
+  },
+  "stage": {
+    "reached": "delivery",
+    "reached_stage": 80,
+    "next_skill": "aes-retrospect",
+    "waiting_on": null
+  },
+  "next": "已收口",
+  "computed_from": {
+    "documents": {
+      "change-note.md": "sha256:7435eae3413ef2e4f577e59c929651568ec6057457b615f1cb43fd248f3e030e",
+      "delivery.md": "sha256:9afbc56bd8aa6bbf950e6a252ceefe7e124c0f211d05ab75d28ad3702d0026af",
+      "design.md": "sha256:b4265360e76e620ef4b9911b636e3921c469be8faea087f49af39e09aa5df38a",
+      "design/design-v2.md": "sha256:5b6d8c50abaf801b0b2ffce7a94a5f1c7630dd0e90bae91c7b7c862c6aa32cb7",
+      "implementation.md": "sha256:a303aee1bb22ae0d4a75e29bec23c534f82d461e8f528e14945f735bd7f2c51d",
+      "manual-test.md": "sha256:05ae43a9233b5927645e6f05ad6356a7fd70cc2f1d1b5dc1d21bb085842246a6",
+      "plan.md": "sha256:6fa496255bfeaa3dbf896b1a9be1661da27558dc3db63bae2784a9b4e6edaf1e",
+      "research/provider-audit-signals-research.md": "sha256:721c8504ff733724f20fca1f61a6e81c08d981429a8fa2fbc058b5b81c14fcaf",
+      "reviews/code-review.md": "sha256:a0efd09d339cadb5ced47a8b1ff977b8b341b4645c6a0082b405b588ab554caa",
+      "summary.md": "sha256:c4c72d85164eccc9f8381a91c495991067a17abea8a280d12d3808be71b3893f",
+      "validation.md": "sha256:3a01d3831b75f276a55a3e6608b5db41128660924846382d17fdf5d225043ece",
+      "work-item.md": "sha256:508b2b1a0220a2d8de00510f37047b830ec7c1ba64df4323b90ed68e8d7e4af4"
+    },
+    "change_set": {
+      "revision": "4d25d733c4475ebf2a13810e6242a38a72510d91",
+      "tree": "f8466742f7f99bddb69511113eb1a451ac659f03",
+      "content_digest": "sha256:d17e421222a8a15f1aca54b1872097d7907aa31031f0a21dd0e26af6321ddec4"
+    }
+  }
+}
