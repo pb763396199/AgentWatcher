@@ -6311,11 +6311,10 @@ fn fetch_codex_turn_summary(
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             scan_sessions,
             send_zcode_message,
-            set_suggestion_settings,
+            set_zcode_auto_answer,
             regenerate_suggestion,
             get_session_usage_detail,
             get_session_lifecycle,
@@ -15052,37 +15051,11 @@ fn open_workbuddy_session(session: &OpenSessionRequest) -> Result<(), String> {
 
 // ===================== ZCode 会话 AI 建议 =====================
 
-/// AI 建议功能的设置。前端启动与保存时经 set_suggestion_settings 推给后端。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct SuggestionSettings {
-    pub enabled: bool,
-    pub api_base: String,
-    pub api_key: String,
-    pub model: String,
-    pub hotkey: String,
-    /// "copy" 或 "send"
-    pub hotkey_action: String,
-    pub auto_enabled: bool,
-    pub auto_hourly_limit: u32,
-    pub auto_wait_secs: u64,
-}
-
-impl Default for SuggestionSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            api_base: String::new(),
-            api_key: String::new(),
-            model: String::new(),
-            hotkey: "Ctrl+Alt+K".to_string(),
-            hotkey_action: "copy".to_string(),
-            auto_enabled: false,
-            auto_hourly_limit: 6,
-            auto_wait_secs: 20,
-        }
-    }
-}
+/// 全自动作答的护栏常量（零配置，设计 v2 拍板不进设置面板）。
+const AUTO_ANSWER_HOURLY_LIMIT: u32 = 6;
+const AUTO_ANSWER_WAIT_SECS: u64 = 20;
+/// 无头生成一轮的超时。实测 ZCode 一轮约 20-60 秒，给足三分钟。
+const ZCODE_GENERATE_TIMEOUT_SECS: u64 = 180;
 
 /// 一条挂在会话卡片上的建议。text 为给用户看的下一句；options 存在时
 /// 表示该会话有结构化待选问题，text 必须是其中一个选项的原文。
@@ -15193,7 +15166,6 @@ pub struct AutoAnswerDecision {
 /// auto_answers_last_hour 是该会话最近一小时的自动作答时间戳（毫秒）。
 #[allow(clippy::too_many_arguments)]
 fn auto_answer_decision(
-    settings: &SuggestionSettings,
     waiting_ms: u64,
     suggestion_text: &str,
     options: &[String],
@@ -15206,20 +15178,17 @@ fn auto_answer_decision(
         allowed: false,
         reason: reason.to_string(),
     };
-    if !settings.auto_enabled {
-        return denied("全自动作答未开启");
-    }
     if options.is_empty() {
         return denied("没有结构化待选项");
     }
-    if waiting_ms < settings.auto_wait_secs * 1_000 {
+    if waiting_ms < AUTO_ANSWER_WAIT_SECS * 1_000 {
         return denied("等待时长未到");
     }
     let in_hour = auto_answers_last_hour
         .iter()
         .filter(|&&at| now_ms.saturating_sub(at) < 3_600_000)
         .count();
-    if in_hour as u32 >= settings.auto_hourly_limit {
+    if in_hour as u32 >= AUTO_ANSWER_HOURLY_LIMIT {
         return denied("超过每小时预算");
     }
     let fused = last_two_answers.len() >= 2
@@ -15267,13 +15236,12 @@ const SUGGESTION_MODEL_TIMEOUT_SECS: u64 = 60;
 
 #[derive(Default)]
 struct SuggestionRuntime {
-    settings: SuggestionSettings,
+    /// 打开了「自动作答此会话的选项」的会话。
+    auto_enabled_sessions: HashSet<String>,
     /// 上一次扫描时各会话的状态。
     last_statuses: HashMap<String, String>,
     /// 正在生成建议的会话，防止重复触发。
     in_flight: HashSet<String>,
-    /// 最近一条建议，全局热键作用在它上面。
-    latest: Option<SessionSuggestion>,
     /// 每个会话当前有效的建议（发送前做防陈旧校验用）。
     current: HashMap<String, SessionSuggestion>,
     /// 每个会话已经「换一个」的次数与要避开的上一条建议。
@@ -15303,7 +15271,6 @@ fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSessio
         let Ok(mut runtime) = suggestion_runtime().lock() else {
             return;
         };
-        let settings = runtime.settings.clone();
         let mut seen: HashSet<&str> = HashSet::new();
         for session in sessions {
             if session.provider != "zcode" {
@@ -15317,12 +15284,7 @@ fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSessio
                     if prev != Some("waiting".to_string()) {
                         runtime.waiting_since.entry(session.id.clone()).or_insert(now_ms);
                     }
-                    let model_ready = !settings.api_base.is_empty()
-                        && !settings.api_key.is_empty()
-                        && !settings.model.is_empty();
-                    if settings.enabled
-                        && model_ready
-                        && suggestion_should_trigger(prev.as_deref(), "waiting")
+                    if suggestion_should_trigger(prev.as_deref(), "waiting")
                         && !runtime.in_flight.contains(&session.id)
                     {
                         runtime.in_flight.insert(session.id.clone());
@@ -15358,7 +15320,6 @@ fn spawn_suggestion_generation(app: tauri::AppHandle, session_id: String, avoid:
             return;
         };
         if let Some(runtime) = runtime.as_deref_mut() {
-            runtime.latest = Some(suggestion.clone());
             runtime.current.insert(session_id.clone(), suggestion.clone());
         }
         // 先放锁再进全自动判定：maybe_auto_answer 内部还要拿同一把锁，
@@ -15503,40 +15464,69 @@ fn suggestion_option_texts(options: Option<&Value>) -> Vec<String> {
         .collect()
 }
 
-/// 调用可配置的模型接口生成建议，返回建议文本。网络与配置问题都返回 None。
-fn call_suggestion_model(settings: &SuggestionSettings, prompt: &str) -> Option<String> {
-    if settings.api_base.is_empty() || settings.api_key.is_empty() || settings.model.is_empty() {
+/// 建议生成的临时工作区：落在 %TEMP% 下，AgentWatcher 默认工作区黑名单
+/// 本来就挡 %TEMP%，scratch 会话不会出现在卡片墙上。
+fn suggestion_scratch_dir() -> Option<std::path::PathBuf> {
+    let dir = std::env::temp_dir().join("AgentWatcher").join("suggestion-scratch");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+/// 无头生成的参数：-p 走纯提示词模式，--json 拿结构化信封。
+fn zcode_generate_args(cjs: &str, scratch: &str, prompt: &str) -> Vec<String> {
+    vec![
+        cjs.to_string(),
+        "-p".to_string(),
+        prompt.to_string(),
+        "--cwd".to_string(),
+        scratch.to_string(),
+        "--json".to_string(),
+    ]
+}
+
+/// 从 zcode.cjs --json 的信封里取模型回复文本。
+fn parse_headless_response(stdout: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(stdout.trim()).ok()?;
+    value.get("response").and_then(Value::as_str).map(str::to_string)
+}
+
+/// 生成改走 ZCode 自己：模型、账号、供应商全部沿用用户的 ZCode 配置，
+/// AgentWatcher 不碰任何凭据（设计 v2，零配置）。失败静默并留日志。
+fn generate_suggestion_via_zcode(prompt: &str) -> Option<String> {
+    let exe = match resolve_zcode_exe() {
+        Ok(exe) => exe,
+        Err(error) => {
+            eprintln!("suggestion generator: {error}");
+            return None;
+        }
+    };
+    let cjs = zcode_cjs_path(&exe);
+    if !cjs.is_file() {
+        eprintln!("suggestion generator: zcode.cjs 不存在");
         return None;
     }
-    let base = settings.api_base.trim_end_matches('/');
-    let url = format!("{base}/chat/completions");
-    let body = serde_json::json!({
-        "model": settings.model,
-        "messages": [{ "role": "user", "content": prompt }],
-        "temperature": 0.4,
-        "max_tokens": 300,
-    });
-    let response = ureq::post(&url)
-        .timeout(std::time::Duration::from_secs(SUGGESTION_MODEL_TIMEOUT_SECS))
-        .set("Authorization", &format!("Bearer {}", settings.api_key))
-        .send_json(body)
-        .ok()?;
-    let payload: Value = response.into_json().ok()?;
-    let content = payload
-        .pointer("/choices/0/message/content")
-        .and_then(Value::as_str)?;
-    Some(content.to_string())
+    let scratch = suggestion_scratch_dir()?;
+    let args = zcode_generate_args(&path_to_string(&cjs), &path_to_string(&scratch), prompt);
+    let mut command = std::process::Command::new(&exe);
+    command.args(&args).env("ELECTRON_RUN_AS_NODE", "1");
+    match run_child_with_timeout(
+        &mut command,
+        ZCODE_GENERATE_TIMEOUT_SECS,
+        "ZCode 建议生成超时（180 秒），已中止",
+    ) {
+        Ok(stdout) => parse_headless_response(&stdout),
+        Err(error) => {
+            eprintln!("suggestion generator: {error}");
+            None
+        }
+    }
 }
 
 /// 单个会话的完整生成流程：取上下文、组装提示词、调模型、解析、防陈旧自检。
 fn generate_zcode_suggestion(session_id: &str, avoid: Option<&str>) -> Option<SessionSuggestion> {
     let context = zcode_suggestion_context(session_id)?;
     let prompt = build_suggestion_prompt(&context, avoid);
-    let settings = suggestion_runtime()
-        .lock()
-        .ok()
-        .map(|runtime| runtime.settings.clone())?;
-    let raw = call_suggestion_model(&settings, &prompt)?;
+    let raw = generate_suggestion_via_zcode(&prompt)?;
     let text = parse_suggestion_response(&raw, SUGGESTION_MAX_CHARS)?;
     // 待选项场景必须命中选项集，命中不了就放弃。
     if let Some(question) = &context.question {
@@ -15569,7 +15559,7 @@ fn maybe_auto_answer(app: &tauri::AppHandle, session_id: &str, suggestion: &Sess
         return;
     };
     let now_ms = current_time_ms();
-    let (settings, waiting_ms, last_two, manual_sent, auto_times) = {
+    let (auto_on, waiting_ms, last_two, manual_sent, auto_times) = {
         let Ok(runtime) = suggestion_runtime().lock() else {
             return;
         };
@@ -15579,16 +15569,25 @@ fn maybe_auto_answer(app: &tauri::AppHandle, session_id: &str, suggestion: &Sess
             .map(|since| now_ms.saturating_sub(*since))
             .unwrap_or(0);
         (
-            runtime.settings.clone(),
+            runtime.auto_enabled_sessions.contains(session_id),
             waiting_ms,
             runtime.auto_last_two.get(session_id).cloned().unwrap_or_default(),
             runtime.manual_sent_since_fuse.get(session_id).copied().unwrap_or(false),
             runtime.auto_answer_times.get(session_id).cloned().unwrap_or_default(),
         )
     };
+    if !auto_on {
+        return;
+    }
+    // 生成完成时可能还没等满护栏要求的秒数：等到点再判，不等就放弃。
+    if waiting_ms < AUTO_ANSWER_WAIT_SECS * 1_000 {
+        let remaining = AUTO_ANSWER_WAIT_SECS * 1_000 - waiting_ms;
+        std::thread::sleep(std::time::Duration::from_millis(remaining));
+    }
+    let now_ms = current_time_ms();
+    let waiting_ms = waiting_ms + (now_ms - waiting_ms.saturating_sub(waiting_ms));
     let decision = auto_answer_decision(
-        &settings,
-        waiting_ms,
+        waiting_ms.max(AUTO_ANSWER_WAIT_SECS * 1_000),
         &suggestion.text,
         &options,
         &last_two,
@@ -15663,158 +15662,23 @@ fn append_audit_line_in_dir(dir: &std::path::Path, line: &str) {
     }
 }
 
-// ---- 设置、热键与「换一个」 ----
+// ---- 按会话的自动作答开关与「换一个」 ----
 
-const SUGGESTION_ACTION_EVENT: &str = "agentwatcher-suggestion-action";
-
-/// 文本写系统剪贴板（CF_UNICODETEXT），全局热键的复制动作用。
-#[cfg(target_os = "windows")]
-fn copy_text_to_clipboard(text: &str) -> bool {
-    use windows_sys::Win32::Foundation::{GlobalFree, HWND};
-    use windows_sys::Win32::System::DataExchange::{
-        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
-    };
-    use windows_sys::Win32::System::Memory::{
-        GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
-    };
-
-    const CF_UNICODETEXT: u32 = 13;
-    const CLIPBOARD_OPEN_ATTEMPTS: usize = 8;
-
-    let wide: Vec<u16> = text.encode_utf16().chain([0]).collect();
-    let total_bytes = wide.len() * 2;
-    unsafe {
-        let handle = GlobalAlloc(GMEM_MOVEABLE, total_bytes);
-        if handle.is_null() {
-            return false;
-        }
-        let base = GlobalLock(handle) as *mut u8;
-        if base.is_null() {
-            let _ = GlobalFree(handle);
-            return false;
-        }
-        std::ptr::copy_nonoverlapping(wide.as_ptr(), base as *mut u16, wide.len());
-        let _ = GlobalUnlock(handle);
-        let mut opened = false;
-        for _ in 0..CLIPBOARD_OPEN_ATTEMPTS {
-            if OpenClipboard(HWND::default()) != 0 {
-                opened = true;
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(25));
-        }
-        if !opened {
-            let _ = GlobalFree(handle);
-            return false;
-        }
-        let data_handle = if EmptyClipboard() != 0 {
-            SetClipboardData(CF_UNICODETEXT, handle as windows_sys::Win32::Foundation::HANDLE)
-        } else {
-            std::ptr::null_mut()
-        };
-        let succeeded = !data_handle.is_null();
-        if !succeeded {
-            let _ = GlobalFree(handle);
-        }
-        let _ = CloseClipboard();
-        succeeded
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn copy_text_to_clipboard(_text: &str) -> bool {
-    false
-}
-
-/// 注册（或换绑）建议热键。空热键表示只清不注。
-fn register_suggestion_hotkey(app: &tauri::AppHandle, hotkey: &str) -> Result<(), String> {
-    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
-    let manager = app.global_shortcut();
-    let _ = manager.unregister_all();
-    if hotkey.trim().is_empty() {
-        return Ok(());
-    }
-    manager
-        .on_shortcut(hotkey, move |app, _shortcut, event| {
-            if event.state() != ShortcutState::Pressed {
-                return;
-            }
-            run_hotkey_action(app);
-        })
-        .map_err(|error| format!("热键注册失败（{hotkey}）：{error}"))
-}
-
-/// 热键按下后的动作：复制最近一条建议到剪贴板，或直接发送。
-fn run_hotkey_action(app: &tauri::AppHandle) {
-    let (action, suggestion) = {
-        let Ok(runtime) = suggestion_runtime().lock() else {
-            return;
-        };
-        (runtime.settings.hotkey_action.clone(), runtime.latest.clone())
-    };
-    let Some(suggestion) = suggestion else {
-        let _ = app.emit(SUGGESTION_ACTION_EVENT, serde_json::json!({ "action": "none" }));
-        return;
-    };
-    match action.as_str() {
-        "send" => {
-            let id = suggestion.session_id.clone();
-            let text = suggestion.text.clone();
-            match send_zcode_message(app.clone(), id.clone(), text) {
-                Ok(()) => {
-                    let _ = app.emit(
-                        SUGGESTION_ACTION_EVENT,
-                        serde_json::json!({ "action": "sent", "sessionId": id }),
-                    );
-                }
-                Err(error) => {
-                    let _ = app.emit(
-                        SUGGESTION_ACTION_EVENT,
-                        serde_json::json!({ "action": "error", "message": error }),
-                    );
-                }
-            }
-        }
-        _ => {
-            if copy_text_to_clipboard(&suggestion.text) {
-                let _ = app.emit(
-                    SUGGESTION_ACTION_EVENT,
-                    serde_json::json!({
-                        "action": "copied",
-                        "text": suggestion.text,
-                        "sessionId": suggestion.session_id,
-                    }),
-                );
-            } else {
-                let _ = app.emit(
-                    SUGGESTION_ACTION_EVENT,
-                    serde_json::json!({ "action": "error", "message": "剪贴板写入失败" }),
-                );
-            }
-        }
-    }
-}
 
 #[tauri::command]
-fn set_suggestion_settings(
-    app: tauri::AppHandle,
-    settings: SuggestionSettings,
-) -> Result<(), String> {
-    let hotkey = settings.hotkey.clone();
-    {
-        let Ok(mut runtime) = suggestion_runtime().lock() else {
-            return Err("建议状态不可用".to_string());
-        };
-        runtime.settings = settings;
-        // 设置刚推送时清掉状态快照：已经等着的会话在下一轮扫描就能出建议，
-        // 不用等到状态再次变化。
-        runtime.last_statuses.clear();
-        runtime.waiting_since.clear();
+fn set_zcode_auto_answer(id: String, enabled: bool) -> Result<(), String> {
+    if !id.starts_with("zcode:") {
+        return Err("只支持 ZCode 会话的自动作答开关".to_string());
     }
-    if hotkey.trim().is_empty() {
-        return Ok(());
+    let Ok(mut runtime) = suggestion_runtime().lock() else {
+        return Err("建议状态不可用".to_string());
+    };
+    if enabled {
+        runtime.auto_enabled_sessions.insert(id);
+    } else {
+        runtime.auto_enabled_sessions.remove(&id);
     }
-    register_suggestion_hotkey(&app, &hotkey)
+    Ok(())
 }
 
 #[tauri::command]
@@ -15920,7 +15784,7 @@ fn run_child_with_timeout(
     command: &mut std::process::Command,
     timeout_secs: u64,
     timeout_message: &str,
-) -> Result<(), String> {
+) -> Result<String, String> {
     command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(target_os = "windows")]
     {
@@ -15934,7 +15798,17 @@ fn run_child_with_timeout(
         match child.try_wait() {
             Ok(Some(status)) => {
                 if status.success() {
-                    return Ok(());
+                    let stdout = child
+                        .stdout
+                        .take()
+                        .map(|mut stream| {
+                            use std::io::Read;
+                            let mut buffer = String::new();
+                            let _ = stream.read_to_string(&mut buffer);
+                            buffer
+                        })
+                        .unwrap_or_default();
+                    return Ok(stdout);
                 }
                 let stderr = child
                     .stderr
@@ -15980,6 +15854,7 @@ fn send_zcode_message_blocking(session_key: &str, workspace_path: &str, text: &s
         ZCODE_SEND_TIMEOUT_SECS,
         "ZCode 发送超时（120 秒），已中止",
     )
+    .map(|_| ())
 }
 
 #[tauri::command]
@@ -20944,6 +20819,22 @@ mod tests {
         );
         assert_eq!(parse_suggestion_response(r#"{"suggestion":"   "}"#, 120), None);
 
+        // 无头生成：参数与信封解析。
+        let gen_args = zcode_generate_args(
+            r"C:\ZCode\zcode.cjs",
+            r"C:\Temp\suggestion-scratch",
+            "预测下一句",
+        );
+        assert_eq!(gen_args[0], r"C:\ZCode\zcode.cjs");
+        assert!(gen_args.contains(&"-p".to_string()));
+        assert!(gen_args.contains(&"--json".to_string()));
+        assert!(gen_args.contains(&r"C:\Temp\suggestion-scratch".to_string()));
+        assert_eq!(
+            parse_headless_response(r#"{"sessionId":"sess_x","response":"{\"suggestion\":\"继续修\"}"}"#),
+            Some("{\"suggestion\":\"继续修\"}".to_string())
+        );
+        assert_eq!(parse_headless_response("not json"), None);
+
         // 指纹防陈旧。
         let suggestion = SessionSuggestion {
             session_id: "zcode:sess-1".to_string(),
@@ -20960,36 +20851,23 @@ mod tests {
 
     #[test]
     fn zcode_auto_answer_guardrails() {
-        let settings = SuggestionSettings {
-            enabled: true,
-            auto_enabled: true,
-            auto_hourly_limit: 6,
-            auto_wait_secs: 20,
-            ..Default::default()
-        };
         let options = vec!["跳过它".to_string(), "继续修".to_string()];
         let now = 1_000_000_u64;
 
-        // 总开关关掉：不放行。
-        let mut off = settings.clone();
-        off.auto_enabled = false;
-        assert!(!auto_answer_decision(&off, 60_000, "继续修", &options, &[], true, &[], now).allowed);
-
         // 没有待选项：不放行。
-        assert!(!auto_answer_decision(&settings, 60_000, "继续修", &[], &[], true, &[], now).allowed);
+        assert!(!auto_answer_decision(60_000, "继续修", &[], &[], true, &[], now).allowed);
 
         // 等待未满 20 秒：不放行。
-        assert!(!auto_answer_decision(&settings, 19_000, "继续修", &options, &[], true, &[], now).allowed);
+        assert!(!auto_answer_decision(19_000, "继续修", &options, &[], true, &[], now).allowed);
 
         // 每小时第 7 次：预算拦下。
         let spent: Vec<u64> = (0..6).map(|i| now - i * 60_000).collect();
-        let budget = auto_answer_decision(&settings, 60_000, "继续修", &options, &[], true, &spent, now);
+        let budget = auto_answer_decision( 60_000, "继续修", &options, &[], true, &spent, now);
         assert!(!budget.allowed);
         assert!(budget.reason.contains("预算"));
 
         // 连续两次同答案且用户没手动发过：熔断。
         let fused = auto_answer_decision(
-            &settings,
             60_000,
             "继续修",
             &options,
@@ -21003,7 +20881,6 @@ mod tests {
 
         // 熔断后用户手动发过一条：解除。
         let unfused = auto_answer_decision(
-            &settings,
             60_000,
             "继续修",
             &options,
@@ -21015,12 +20892,12 @@ mod tests {
         assert!(unfused.allowed);
 
         // 建议不在选项集里：不放行。
-        let stray = auto_answer_decision(&settings, 60_000, "都重跑", &options, &[], true, &[], now);
+        let stray = auto_answer_decision( 60_000, "都重跑", &options, &[], true, &[], now);
         assert!(!stray.allowed);
         assert!(stray.reason.contains("选项"));
 
         // 全部满足：放行。
-        let ok = auto_answer_decision(&settings, 60_000, "继续修", &options, &[], true, &[], now);
+        let ok = auto_answer_decision( 60_000, "继续修", &options, &[], true, &[], now);
         assert!(ok.allowed);
 
         // 审计行：JSON 字段齐全。

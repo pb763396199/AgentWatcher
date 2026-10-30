@@ -5693,8 +5693,6 @@
     body[data-theme="light"] .suggestion-btn.suggestion-send { border-color: rgba(30,100,200,0.5); color: rgba(20,90,190,0.95); }
     body[data-theme="light"] .suggestion-chip { border-color: rgba(30,100,200,0.45); background: rgba(30,100,200,0.06); color: rgba(20,90,190,0.95); }
     body[data-theme="light"] .suggestion-chip:hover { background: rgba(30,100,200,0.14); }
-    .setting-text { width: 200px; max-width: 60%; box-sizing: border-box; padding: 4px 8px; border-radius: 6px; border: 1px solid rgba(128,128,128,0.35); background: transparent; color: inherit; font-size: 12px; }
-    body[data-theme="light"] .setting-text { border-color: rgba(0,0,0,0.25); }
   </style>
 </head>
 <body data-theme="dark" data-lang="en" data-layout="horizontal">
@@ -5821,45 +5819,7 @@
             <textarea class="setting-path-list" id="workspacePathBlacklist" rows="2" spellcheck="false" data-i18n-placeholder="workspacePathBlacklistPlaceholder">%TEMP%</textarea>
           </div>
         </div>
-        <div class="settings-group">
-          <div class="settings-group-title" data-i18n="suggestionGroupTitle">AI suggestions</div>
-          <div class="setting-row">
-            <label for="suggestionEnabled" data-i18n="suggestionEnabled">Enable AI suggestions for ZCode sessions</label>
-            <input class="setting-check" id="suggestionEnabled" type="checkbox" />
-          </div>
-          <div class="setting-row">
-            <label for="suggestionApiBase" data-i18n="suggestionApiBase">Model API base URL</label>
-            <input class="setting-text" id="suggestionApiBase" type="text" autocomplete="off" spellcheck="false" placeholder="https://…/v1" />
-          </div>
-          <div class="setting-row">
-            <label for="suggestionApiKey" data-i18n="suggestionApiKey">API key</label>
-            <input class="setting-text" id="suggestionApiKey" type="password" autocomplete="off" spellcheck="false" />
-          </div>
-          <div class="setting-row">
-            <label for="suggestionModel" data-i18n="suggestionModel">Model name</label>
-            <input class="setting-text" id="suggestionModel" type="text" autocomplete="off" spellcheck="false" />
-          </div>
-          <div class="setting-row">
-            <label for="suggestionHotkey" data-i18n="suggestionHotkey">Global hotkey</label>
-            <input class="setting-text" id="suggestionHotkey" type="text" autocomplete="off" spellcheck="false" placeholder="Ctrl+Alt+K" />
-          </div>
-          <div class="setting-row">
-            <label for="suggestionHotkeySend" data-i18n="suggestionHotkeySend">Hotkey sends directly (default copies)</label>
-            <input class="setting-check" id="suggestionHotkeySend" type="checkbox" />
-          </div>
-          <div class="setting-row">
-            <label for="suggestionAutoEnabled" data-i18n="suggestionAutoEnabled">Auto-answer AskUserQuestion options</label>
-            <input class="setting-check" id="suggestionAutoEnabled" type="checkbox" />
-          </div>
-          <div class="setting-row">
-            <label for="suggestionAutoLimit" data-i18n="suggestionAutoLimit">Auto answers per hour</label>
-            <input class="setting-number" id="suggestionAutoLimit" type="number" min="1" max="60" step="1" inputmode="numeric" value="6" />
-          </div>
-          <div class="setting-row">
-            <label for="suggestionAutoWait" data-i18n="suggestionAutoWait">Wait before auto answer (sec)</label>
-            <input class="setting-number" id="suggestionAutoWait" type="number" min="5" max="600" step="5" inputmode="numeric" value="20" />
-          </div>
-        </div>
+                </div>
         <div class="settings-group">
           <div class="settings-group-title" data-i18n="scanLimits">Scan limits</div>
           <div class="setting-row">
@@ -6136,6 +6096,9 @@
         <button class="handoff-menu-item" id="handoffOpen" type="button" data-i18n="handoffCreate">Create handoff session...</button>
         <button class="handoff-menu-item" id="handoffQuickCopy" type="button" data-i18n="handoffCopyPrompt">Copy handoff prompt</button>
         <button class="handoff-menu-item" id="handoffPackageSession" type="button" data-i18n="handoffPackageSession">Package session for cross-PC handoff</button>
+        <div class="handoff-menu-sep" id="handoffSuggestSep" hidden></div>
+        <button class="handoff-menu-item" id="handoffSuggestRegen" type="button" data-i18n="suggestionMenuRegen" data-suggestion-menu="regen" hidden>换一条建议</button>
+        <button class="handoff-menu-item" id="handoffSuggestAuto" type="button" data-i18n="suggestionMenuAuto" data-suggestion-menu="auto" hidden>自动作答此会话的选项</button>
         <div class="handoff-menu-sep"></div>
         <button class="handoff-menu-item" id="handoffOpenSource" type="button" data-i18n="handoffOpenSource">Open source session</button>
         <button class="handoff-menu-item" id="handoffAnalyze" type="button" data-i18n="analyticsOpenEntry">Session analytics</button>
@@ -6592,15 +6555,6 @@
     const settingLayoutButtons = Array.from(document.querySelectorAll('[data-setting-layout]'));
     const waitingAlertSizeButtons = Array.from(document.querySelectorAll('[data-setting-alert-size]'));
     const alwaysOnTop = document.getElementById('alwaysOnTop');
-    const suggestionEnabledInput = document.getElementById('suggestionEnabled');
-    const suggestionApiBaseInput = document.getElementById('suggestionApiBase');
-    const suggestionApiKeyInput = document.getElementById('suggestionApiKey');
-    const suggestionModelInput = document.getElementById('suggestionModel');
-    const suggestionHotkeyInput = document.getElementById('suggestionHotkey');
-    const suggestionHotkeySendInput = document.getElementById('suggestionHotkeySend');
-    const suggestionAutoEnabledInput = document.getElementById('suggestionAutoEnabled');
-    const suggestionAutoLimitInput = document.getElementById('suggestionAutoLimit');
-    const suggestionAutoWaitInput = document.getElementById('suggestionAutoWait');
     const includeCopilot = document.getElementById('includeCopilot');
     const includeCopilotCli = document.getElementById('includeCopilotCli');
     const includeClaude = document.getElementById('includeClaude');
@@ -6919,23 +6873,12 @@
       waitingAlertDurationSeconds: 15,
       performanceDebug: false,
       performanceAgentProcesses: false,
-      performanceUpdateSpeed: 'normal',
-      suggestion: {
-        enabled: false,
-        apiBase: '',
-        apiKey: '',
-        model: '',
-        hotkey: 'Ctrl+Alt+K',
-        hotkeyActionSend: false,
-        autoEnabled: false,
-        autoHourlyLimit: 6,
-        autoWaitSecs: 20
-      }
+      performanceUpdateSpeed: 'normal'
     };
     let settings = loadSettings();
     const i18n = {
       en: {
-        allSessions: 'All agent sessions', watched: '83 workspaces watched', filterActive: 'Workspace filter active', waitingChip: '8 waiting', workspace: 'Workspace', allWorkspaces: 'All workspaces', perRow: 'Per row', visibleNow: 'visible now', inQueue: 'in scroll queue', sessions: 'sessions', updated: 'Updated 2s ago', workspacePrefix: 'Workspace: ', overflow: 'Scroll continues by priority: waiting, running, idle', priority: 'priority', live: 'live', quiet: 'quiet', waiting: 'Waiting', running: 'Running', idle: 'Idle', all: 'All', wait: 'Wait', run: 'Run', col: 'col', cols: 'cols', perRowButton: '/ row', iconsPerRow: 'icons per row', windowSize: 'Window size', openWorkspace: 'Open VS Code workspace: ', openingAgents: 'Opening session...', openedAgents: 'Session opened', themeLight: 'Light theme', themeDark: 'Dark theme', settings: 'Settings', appearance: 'Appearance', language: 'Language', theme: 'Theme', layout: 'Layout', horizontal: 'Horizontal', vertical: 'Vertical', agentTaskFlipSpeed: 'Flip speed (ms)', lastUser: 'Last user', lastAi: 'Last AI', noUserMessage: 'No user message captured', noAiMessage: 'No AI message captured', tailOnly: 'tail', errorExcerpt: 'error', windowBehavior: 'Window', alwaysOnTop: 'Always on top', dataSources: 'Data', includeCopilot: 'VS Code Copilot sessions', includeCopilotCli: 'Copilot CLI sessions', includeClaude: 'Claude sessions', hideArchived: 'Hide archived', scanLimits: 'Scan limits', activeWindowDays: 'Active window (days)', maxSessions: 'Sessions per provider', refreshInterval: 'Refresh interval (sec)', settingsSaved: 'Settings updated', maxCardsPerRow: 'Max cards per row', waitingAlertSize: 'Waiting alert size', waitingAlertDuration: 'Waiting alert duration (sec)', small: 'Small', medium: 'Medium', large: 'Large', waitingAlertAria: 'New waiting session', handoffCreate: 'Create handoff session...', handoffCopyPrompt: 'Copy handoff prompt', handoffPackageSession: 'Package session for cross-PC handoff', handoffPackaging: 'Packaging session...', handoffPackagedClipboard: 'Packaged and copied to clipboard; paste to send', handoffPackagedNoClipboard: 'Packaged, but clipboard write failed; file at', handoffPackagePreviewOnly: 'Packaging is unavailable in browser preview', handoffOpenSource: 'Open source session', analyticsOpenEntry: 'Session analytics', analyticsPanelTitle: 'Session analytics', analyticsPanelSub: 'Full session lifecycle', analyticsUsageTitle: 'Usage timeline', analyticsUsageNote: 'Gross input by model (incl. cache reads)', analyticsGAuto: 'Auto', analyticsGHour: 'Hour', analyticsG6h: '6h', analyticsGDay: 'Day', analyticsByType: 'By type', analyticsByModel: 'By model', analyticsByTool: 'Top tools', analyticsCacheRead: 'Cache read', analyticsFreshInput: 'Fresh input', analyticsOutput: 'Output', analyticsCtxTitle: 'Context usage', analyticsRhythmTitle: 'Activity rhythm', analyticsCompact: 'compact', analyticsDegraded: 'Timeline downsampled (call budget exceeded)', analyticsNoTimeline: 'No usage timeline from this data source', analyticsChipHint: 'Click to toggle this model on the timeline', analyticsWindowLimit: 'window {tokens}', analyticsTipIn: 'in', analyticsTipOut: 'out', analyticsTipCtx: 'ctx end', analyticsModelCallsUnit: 'calls', analyticsToolNoteRest: '{count} more calls not listed', analyticsLoadFailed: 'Failed to load session lifecycle', analyticsNoSession: 'No source session for analytics', analyticsTrajTitle: 'Trajectory lanes', analyticsTrajNote: 'Click a lane to expand merged detail (area=input, line=context)', analyticsTrajMain: 'Main agent', analyticsTrajGuardians: 'guardian reviewers', analyticsTrajApprox: '(est.)', analyticsTrajDetailCap: 'area=input · line=ctx', analyticsTrajLoading: 'loading…', analyticsTrajWaitEstimate: 'waiting (estimated)', analyticsTrajParallel: 'Active subagents over time (peak {peak})', analyticsTrajExpand: '{count} subagents · {total} · peak {peak} ▸', analyticsTrajCollapse: 'Collapse subagents ▾', analyticsTrajTruncated: 'list truncated', analyticsTrajNoAgents: 'No subagents in this session', analyticsAgentsTitle: 'Subagent cost ranking', analyticsAgentsNote: 'by gross input, incl. efficiency (out/in)', analyticsAgentsColAgent: 'Agent', analyticsAgentsColModel: 'Model', analyticsAgentsColIn: 'Gross input', analyticsAgentsColOut: 'Output', analyticsAgentsColEff: 'Eff.', analyticsAgentsColTurns: 'Turns', analyticsAgentsColTools: 'Tools', analyticsAgentsColSpan: 'Active', analyticsAgentsTotal: 'Total', analyticsAgentsExpand: 'Expand {count} rows ▸', analyticsAgentsCollapse: 'Collapse ▾', handoffTitle: 'Create handoff session', handoffNewSessionIn: 'New session in', handoffWithProvider: 'with', handoffLatestSnapshot: 'Latest snapshot', handoffSourceLocator: 'Source locator', handoffPreview: 'Preview', handoffCopy: 'Copy', handoffLaunch: 'Launch', handoffSaveTodo: 'Save Todo', handoffPromptPreview: 'Prompt preview', handoffTaskPlaceholder: 'What would you like session B to do?', handoffWorkspacePlaceholder: 'Search or paste workspace path', handoffUsePastedPath: 'Use pasted path', handoffNoWorkspace: 'No matching workspace', handoffSelected: 'selected', handoffCopied: 'Copied handoff prompt', handoffClipboardFallback: 'Clipboard write failed; prompt is selected', handoffLaunching: 'Launching handoff...', handoffLaunched: 'Handoff launch requested', handoffNoSession: 'No source session selected', handoffOpenFailed: 'Handoff panel failed to open', handoffSelectWorkspace: 'Select workspace', handoffAgentsLabel: 'Copilot Editor', handoffCodeChatLabel: 'Copilot CLI Editor', handoffClaudeLabel: 'Claude Code Editor', handoffAgentsDescription: 'Open Copilot in a VS Code editor tab and insert the handoff prompt', handoffCodeChatDescription: 'Open a Copilot CLI editor tab and insert the handoff prompt', handoffClaudeDescription: 'Open Claude Code in a VS Code editor tab', bridgeTitle: 'VS Code Bridge', suggestionGroupTitle: 'AI suggestions', suggestionEnabled: 'Enable AI suggestions for ZCode sessions', suggestionApiBase: 'Model API base URL', suggestionApiKey: 'API key', suggestionModel: 'Model name', suggestionHotkey: 'Global hotkey', suggestionHotkeySend: 'Hotkey sends directly (default copies)', suggestionAutoEnabled: 'Auto-answer AskUserQuestion options', suggestionAutoLimit: 'Auto answers per hour', suggestionAutoWait: 'Wait before auto answer (sec)', suggestionPreviewOnly: 'AI suggestions need the desktop app', suggestionCopy: 'Copy', suggestionSend: 'Send', suggestionRegen: 'New', suggestionCopied: 'Suggestion copied', suggestionSent: 'Sent to the session', suggestionSending: 'Sending...', suggestionQuestionLabel: 'Pick an option', bridgePreviewOnly: 'Preview only', bridgeChecking: 'Checking...', bridgeInstalled: 'Bridge installed', bridgeNeedsUpdate: 'Bridge update available', bridgeNotInstalled: 'Bridge not installed', bridgeInstall: 'Install', bridgeUpdate: 'Update', bridgeRetry: 'Retry', bridgeInstalling: 'Installing...', bridgeInstallFailed: 'Bridge install failed', todoWindowTitle: 'AI Task Input', todoWindowSubtitle: 'Workspace todo queue', todoOpen: 'Open Todo', todoReadyNudge: 'Ready todo in ', todoRefresh: 'Refresh', todoUsePath: 'Use Path', todoCancel: 'Cancel', todoAdd: 'Add', todoSave: 'Save', todoActive: 'Active', todoShowDone: 'Done', todoTitlePlaceholder: 'Task title', todoDescriptionPlaceholder: 'Task notes', todoAcceptancePlaceholder: 'Completion standard', todoPathPlaceholder: 'Paste workspace path', todoNoWorkspace: 'Choose workspace', todoEmpty: 'No active todo for this workspace', todoNoDone: 'No completed todo yet', todoPendingReview: 'Needs confirmation', todoPromptPreview: 'Prompt', todoDispatch: 'Launch', todoComplete: 'Done', todoRetry: 'Rework', todoBlock: 'Block', todoUnblock: 'Unblock', todoDelete: 'Delete', todoEdit: 'Edit', todoSaved: 'Todo saved', todoLaunched: 'Todo launch requested', todoCopied: 'Prompt copied', todoBlocked: 'Blocked', todoDone: 'Completed', todoReady: 'Ready', todoRunning: 'Running', todoReview: 'Review', todoUnbound: 'dispatched, unbound', todoBound: 'bound session', todoCountsText: 'active {active} / done {done}', todoCreateFromHandoff: 'Saved handoff as todo',
+        allSessions: 'All agent sessions', watched: '83 workspaces watched', filterActive: 'Workspace filter active', waitingChip: '8 waiting', workspace: 'Workspace', allWorkspaces: 'All workspaces', perRow: 'Per row', visibleNow: 'visible now', inQueue: 'in scroll queue', sessions: 'sessions', updated: 'Updated 2s ago', workspacePrefix: 'Workspace: ', overflow: 'Scroll continues by priority: waiting, running, idle', priority: 'priority', live: 'live', quiet: 'quiet', waiting: 'Waiting', running: 'Running', idle: 'Idle', all: 'All', wait: 'Wait', run: 'Run', col: 'col', cols: 'cols', perRowButton: '/ row', iconsPerRow: 'icons per row', windowSize: 'Window size', openWorkspace: 'Open VS Code workspace: ', openingAgents: 'Opening session...', openedAgents: 'Session opened', themeLight: 'Light theme', themeDark: 'Dark theme', settings: 'Settings', appearance: 'Appearance', language: 'Language', theme: 'Theme', layout: 'Layout', horizontal: 'Horizontal', vertical: 'Vertical', agentTaskFlipSpeed: 'Flip speed (ms)', lastUser: 'Last user', lastAi: 'Last AI', noUserMessage: 'No user message captured', noAiMessage: 'No AI message captured', tailOnly: 'tail', errorExcerpt: 'error', windowBehavior: 'Window', alwaysOnTop: 'Always on top', dataSources: 'Data', includeCopilot: 'VS Code Copilot sessions', includeCopilotCli: 'Copilot CLI sessions', includeClaude: 'Claude sessions', hideArchived: 'Hide archived', scanLimits: 'Scan limits', activeWindowDays: 'Active window (days)', maxSessions: 'Sessions per provider', refreshInterval: 'Refresh interval (sec)', settingsSaved: 'Settings updated', maxCardsPerRow: 'Max cards per row', waitingAlertSize: 'Waiting alert size', waitingAlertDuration: 'Waiting alert duration (sec)', small: 'Small', medium: 'Medium', large: 'Large', waitingAlertAria: 'New waiting session', handoffCreate: 'Create handoff session...', handoffCopyPrompt: 'Copy handoff prompt', handoffPackageSession: 'Package session for cross-PC handoff', handoffPackaging: 'Packaging session...', handoffPackagedClipboard: 'Packaged and copied to clipboard; paste to send', handoffPackagedNoClipboard: 'Packaged, but clipboard write failed; file at', handoffPackagePreviewOnly: 'Packaging is unavailable in browser preview', handoffOpenSource: 'Open source session', analyticsOpenEntry: 'Session analytics', analyticsPanelTitle: 'Session analytics', analyticsPanelSub: 'Full session lifecycle', analyticsUsageTitle: 'Usage timeline', analyticsUsageNote: 'Gross input by model (incl. cache reads)', analyticsGAuto: 'Auto', analyticsGHour: 'Hour', analyticsG6h: '6h', analyticsGDay: 'Day', analyticsByType: 'By type', analyticsByModel: 'By model', analyticsByTool: 'Top tools', analyticsCacheRead: 'Cache read', analyticsFreshInput: 'Fresh input', analyticsOutput: 'Output', analyticsCtxTitle: 'Context usage', analyticsRhythmTitle: 'Activity rhythm', analyticsCompact: 'compact', analyticsDegraded: 'Timeline downsampled (call budget exceeded)', analyticsNoTimeline: 'No usage timeline from this data source', analyticsChipHint: 'Click to toggle this model on the timeline', analyticsWindowLimit: 'window {tokens}', analyticsTipIn: 'in', analyticsTipOut: 'out', analyticsTipCtx: 'ctx end', analyticsModelCallsUnit: 'calls', analyticsToolNoteRest: '{count} more calls not listed', analyticsLoadFailed: 'Failed to load session lifecycle', analyticsNoSession: 'No source session for analytics', analyticsTrajTitle: 'Trajectory lanes', analyticsTrajNote: 'Click a lane to expand merged detail (area=input, line=context)', analyticsTrajMain: 'Main agent', analyticsTrajGuardians: 'guardian reviewers', analyticsTrajApprox: '(est.)', analyticsTrajDetailCap: 'area=input · line=ctx', analyticsTrajLoading: 'loading…', analyticsTrajWaitEstimate: 'waiting (estimated)', analyticsTrajParallel: 'Active subagents over time (peak {peak})', analyticsTrajExpand: '{count} subagents · {total} · peak {peak} ▸', analyticsTrajCollapse: 'Collapse subagents ▾', analyticsTrajTruncated: 'list truncated', analyticsTrajNoAgents: 'No subagents in this session', analyticsAgentsTitle: 'Subagent cost ranking', analyticsAgentsNote: 'by gross input, incl. efficiency (out/in)', analyticsAgentsColAgent: 'Agent', analyticsAgentsColModel: 'Model', analyticsAgentsColIn: 'Gross input', analyticsAgentsColOut: 'Output', analyticsAgentsColEff: 'Eff.', analyticsAgentsColTurns: 'Turns', analyticsAgentsColTools: 'Tools', analyticsAgentsColSpan: 'Active', analyticsAgentsTotal: 'Total', analyticsAgentsExpand: 'Expand {count} rows ▸', analyticsAgentsCollapse: 'Collapse ▾', handoffTitle: 'Create handoff session', handoffNewSessionIn: 'New session in', handoffWithProvider: 'with', handoffLatestSnapshot: 'Latest snapshot', handoffSourceLocator: 'Source locator', handoffPreview: 'Preview', handoffCopy: 'Copy', handoffLaunch: 'Launch', handoffSaveTodo: 'Save Todo', handoffPromptPreview: 'Prompt preview', handoffTaskPlaceholder: 'What would you like session B to do?', handoffWorkspacePlaceholder: 'Search or paste workspace path', handoffUsePastedPath: 'Use pasted path', handoffNoWorkspace: 'No matching workspace', handoffSelected: 'selected', handoffCopied: 'Copied handoff prompt', handoffClipboardFallback: 'Clipboard write failed; prompt is selected', handoffLaunching: 'Launching handoff...', handoffLaunched: 'Handoff launch requested', handoffNoSession: 'No source session selected', handoffOpenFailed: 'Handoff panel failed to open', handoffSelectWorkspace: 'Select workspace', handoffAgentsLabel: 'Copilot Editor', handoffCodeChatLabel: 'Copilot CLI Editor', handoffClaudeLabel: 'Claude Code Editor', handoffAgentsDescription: 'Open Copilot in a VS Code editor tab and insert the handoff prompt', handoffCodeChatDescription: 'Open a Copilot CLI editor tab and insert the handoff prompt', handoffClaudeDescription: 'Open Claude Code in a VS Code editor tab', bridgeTitle: 'VS Code Bridge', suggestionMenuRegen: 'New suggestion', suggestionMenuAuto: 'Auto-answer options for this session', suggestionGenerating: 'Generating suggestion...', suggestionAutoOn: 'Auto-answer on for this session', suggestionAutoOff: 'Auto-answer off for this session', suggestionPreviewOnly: 'AI suggestions need the desktop app', suggestionCopy: 'Copy', suggestionSend: 'Send', suggestionRegen: 'New', suggestionCopied: 'Suggestion copied', suggestionSent: 'Sent to the session', suggestionSending: 'Sending...', suggestionQuestionLabel: 'Pick an option', bridgePreviewOnly: 'Preview only', bridgeChecking: 'Checking...', bridgeInstalled: 'Bridge installed', bridgeNeedsUpdate: 'Bridge update available', bridgeNotInstalled: 'Bridge not installed', bridgeInstall: 'Install', bridgeUpdate: 'Update', bridgeRetry: 'Retry', bridgeInstalling: 'Installing...', bridgeInstallFailed: 'Bridge install failed', todoWindowTitle: 'AI Task Input', todoWindowSubtitle: 'Workspace todo queue', todoOpen: 'Open Todo', todoReadyNudge: 'Ready todo in ', todoRefresh: 'Refresh', todoUsePath: 'Use Path', todoCancel: 'Cancel', todoAdd: 'Add', todoSave: 'Save', todoActive: 'Active', todoShowDone: 'Done', todoTitlePlaceholder: 'Task title', todoDescriptionPlaceholder: 'Task notes', todoAcceptancePlaceholder: 'Completion standard', todoPathPlaceholder: 'Paste workspace path', todoNoWorkspace: 'Choose workspace', todoEmpty: 'No active todo for this workspace', todoNoDone: 'No completed todo yet', todoPendingReview: 'Needs confirmation', todoPromptPreview: 'Prompt', todoDispatch: 'Launch', todoComplete: 'Done', todoRetry: 'Rework', todoBlock: 'Block', todoUnblock: 'Unblock', todoDelete: 'Delete', todoEdit: 'Edit', todoSaved: 'Todo saved', todoLaunched: 'Todo launch requested', todoCopied: 'Prompt copied', todoBlocked: 'Blocked', todoDone: 'Completed', todoReady: 'Ready', todoRunning: 'Running', todoReview: 'Review', todoUnbound: 'dispatched, unbound', todoBound: 'bound session', todoCountsText: 'active {active} / done {done}', todoCreateFromHandoff: 'Saved handoff as todo',
         handoffPromptIdLabel: 'AgentWatcher Handoff ID',
         handoffSourceAccessTitle: '[Source Access]',
         handoffTargetAgentLabel: 'Target agent',
@@ -6981,7 +6924,7 @@
         usage: 'Usage', usageTotalInput: 'Total input', usageOutput: 'Total output', usageContext: 'Context', usageTurns: 'User turns', usageToolCalls: 'Tool calls', usageModelCalls: 'Model calls', usageModels: 'Model', usageDuration: 'Duration', usageCost: 'Cost', usageTurnsUnit: 'turns', usageToolsUnit: 'tools', usageCached: 'cached {percent}%', usageOfWindow: 'of {window} window', usageActiveSpan: '{active} active · {span} span', usageSpanOnly: 'span {span}', usageModelMore: '+{count}', usageNoDataNote: 'This source does not report usage data', usageCredits: 'credits', analyticsTurnAuditTitle: 'Turn audit', auditColTurn: 'Turn', auditColModel: 'Model', auditColEffort: 'Effort', auditColOutput: 'Output', auditColTtft: 'First token', auditColSignals: 'Signals', auditSignalModel: 'model swap', auditSignalEffort: 'effort change', auditSignalLowOutput: 'low output', auditSignalRetry: 'retry', auditSignalError: 'error', auditSignalContextExceeded: 'context exceeded', auditNoteSummary: '{turns} turns · {signals} signals', auditNoteDegraded: 'downsampled', auditNotSupported: 'This source does not support turn audit', auditToggleCollapse: 'Collapse ▾', auditToggleExpand: 'Expand ▸', auditRequestArrow: '→', previewAuditSignals: '{count} signals · open session analytics'
       },
       zh: {
-        allSessions: '全部 Agent 会话', watched: '已监控 83 个工作区', filterActive: '已启用工作区过滤', waitingChip: '8 待回复', workspace: '工作区', allWorkspaces: '全部工作区', perRow: '每排数量', visibleNow: '当前可见', inQueue: '在滚动队列', sessions: '个会话', updated: '2 秒前更新', workspacePrefix: '工作区：', overflow: '按优先级继续滚动：待回复、运行中、闲置', priority: '优先', live: '实时', quiet: '静默', waiting: '待回复', running: '运行中', idle: '闲置', all: '全部', wait: '待回', run: '运行', col: '列', cols: '列', perRowButton: '/ 排', iconsPerRow: '个/排', windowSize: '窗口尺寸', openWorkspace: '打开 VS Code 工作区：', openingAgents: '正在打开会话...', openedAgents: '已打开会话', themeLight: '浅色主题', themeDark: '深色主题', settings: '设置', appearance: '外观', language: '语言', theme: '主题', layout: '布局', horizontal: '横版', vertical: '竖版', agentTaskFlipSpeed: '翻转速度（毫秒）', lastUser: '最后用户输入', lastAi: '最后 AI 回复', noUserMessage: '未捕获到用户输入', noAiMessage: '未捕获到 AI 回复', tailOnly: '尾部', errorExcerpt: '错误', windowBehavior: '窗口', alwaysOnTop: '永远置顶', dataSources: '数据', includeCopilot: 'Copilot 会话', includeClaude: 'Claude 会话', hideArchived: '隐藏归档', scanLimits: '扫描限制', activeWindowDays: '活跃窗口（天）', maxSessions: '每个提供方会话数', refreshInterval: '刷新间隔（秒）', settingsSaved: '设置已更新', maxCardsPerRow: '每排最大数量', waitingAlertSize: '待回复提醒尺寸', waitingAlertDuration: '待回复持续时间（秒）', small: '小', medium: '中', large: '大', waitingAlertAria: '新的待回复会话', handoffCreate: '创建接续会话...', handoffCopyPrompt: '复制接续提示词', handoffPackageSession: '打包会话用于跨电脑交接', handoffPackaging: '正在打包会话...', handoffPackagedClipboard: '已打包并复制到剪贴板，可直接粘贴发送', handoffPackagedNoClipboard: '已打包，但写入剪贴板失败，文件在', handoffPackagePreviewOnly: '浏览器预览模式不支持打包', handoffOpenSource: '打开原会话', analyticsOpenEntry: '会话分析', analyticsPanelTitle: '会话分析', analyticsPanelSub: '单会话全生命周期', analyticsUsageTitle: '用量时间轴', analyticsUsageNote: '按模型分色的毛输入（含缓存读取）', analyticsGAuto: '自动', analyticsGHour: '小时', analyticsG6h: '6 小时', analyticsGDay: '天', analyticsByType: '按类型', analyticsByModel: '按模型', analyticsByTool: '高频工具', analyticsCacheRead: '缓存读取', analyticsFreshInput: '净输入', analyticsOutput: '输出', analyticsCtxTitle: '上下文占用', analyticsRhythmTitle: '活动节奏', analyticsCompact: '压缩', analyticsDegraded: '调用点超出预算，时间轴已按同模型合并降采样', analyticsNoTimeline: '这个数据源没有可用的时序数据', analyticsChipHint: '点按切换该模型在时间轴上的显示', analyticsWindowLimit: '窗口上限 {tokens}', analyticsTipIn: '输入', analyticsTipOut: '输出', analyticsTipCtx: '上下文末', analyticsModelCallsUnit: '次调用', analyticsToolNoteRest: '其余 {count} 次未列出', analyticsLoadFailed: '会话时序加载失败', analyticsNoSession: '找不到要分析的会话', analyticsTrajTitle: '轨迹泳道', analyticsTrajNote: '点泳道展开合并明细（面积=毛输入 · 折线=上下文）', analyticsTrajMain: '主代理', analyticsTrajGuardians: 'guardian 审查者', analyticsTrajApprox: '（估算）', analyticsTrajDetailCap: '面积=输入 · 线=上下文', analyticsTrajLoading: '加载中…', analyticsTrajWaitEstimate: '等待中（估算）', analyticsTrajParallel: '并行子代理数随时间（峰值 {peak}）', analyticsTrajExpand: '子代理 {count} 条 · {total} · 峰值 {peak} ▸', analyticsTrajCollapse: '收起子代理 ▾', analyticsTrajTruncated: '已截断', analyticsTrajNoAgents: '该会话没有子代理', analyticsAgentsTitle: '子代理开销排行', analyticsAgentsNote: '按毛输入排序 · 含效率（输出/毛输入）', analyticsAgentsColAgent: '子代理', analyticsAgentsColModel: '模型', analyticsAgentsColIn: '毛输入', analyticsAgentsColOut: '输出', analyticsAgentsColEff: '效率', analyticsAgentsColTurns: '轮次', analyticsAgentsColTools: '工具', analyticsAgentsColSpan: '活跃', analyticsAgentsTotal: '合计', analyticsAgentsExpand: '展开 {count} 条 ▸', analyticsAgentsCollapse: '收起 ▾', handoffTitle: '创建接续会话', handoffNewSessionIn: '在', handoffWithProvider: '使用', handoffLatestSnapshot: '最新快照', handoffSourceLocator: '来源定位', handoffPreview: '预览', handoffCopy: '复制', handoffLaunch: '启动', handoffSaveTodo: '存为 Todo', handoffPromptPreview: '提示词预览', handoffTaskPlaceholder: '希望新会话做什么？', handoffWorkspacePlaceholder: '搜索或粘贴工作区路径', handoffUsePastedPath: '使用粘贴路径', handoffNoWorkspace: '没有匹配的工作区', handoffSelected: '已选', handoffCopied: '已复制接续提示词', handoffClipboardFallback: '无法直接写剪贴板，已选中提示词', handoffLaunching: '正在启动接续会话...', handoffLaunched: '已请求启动接续会话', handoffNoSession: '未选择来源会话', handoffOpenFailed: '接续面板打开失败', handoffSelectWorkspace: '选择工作区', handoffAgentsLabel: 'Copilot 编辑器', handoffCodeChatLabel: 'Copilot CLI 编辑器', handoffClaudeLabel: 'Claude Code 编辑器', handoffAgentsDescription: '在 VS Code 编辑器标签页中打开 Copilot 并填入接续提示词', handoffCodeChatDescription: '打开 Copilot CLI 编辑器标签页并填入接续提示词', handoffClaudeDescription: '在 VS Code 编辑器标签页中打开 Claude Code', bridgeTitle: 'VS Code Bridge', suggestionGroupTitle: 'AI 建议', suggestionEnabled: '给 ZCode 会话出 AI 建议', suggestionApiBase: '模型 API 地址', suggestionApiKey: 'API 密钥', suggestionModel: '模型名', suggestionHotkey: '全局热键', suggestionHotkeySend: '热键直接发送（默认复制）', suggestionAutoEnabled: '自动作答提问选项', suggestionAutoLimit: '每小时自动作答上限', suggestionAutoWait: '自动作答前等待（秒）', suggestionPreviewOnly: '浏览器预览不支持 AI 建议', suggestionCopy: '复制', suggestionSend: '发送', suggestionRegen: '换一个', suggestionCopied: '建议已复制', suggestionSent: '已发送到会话', suggestionSending: '正在发送...', suggestionQuestionLabel: '选一个选项', bridgePreviewOnly: '仅预览', bridgeChecking: '正在检查...', bridgeInstalled: 'Bridge 已安装', bridgeNeedsUpdate: 'Bridge 有可用更新', bridgeNotInstalled: 'Bridge 未安装', bridgeInstall: '安装', bridgeUpdate: '更新', bridgeRetry: '重试', bridgeInstalling: '正在安装...', bridgeInstallFailed: 'Bridge 安装失败', todoWindowTitle: 'AI 任务输入法', todoWindowSubtitle: '工作区 Todo 队列', todoOpen: '打开 Todo', todoReadyNudge: '可推进 Todo：', todoRefresh: '刷新', todoUsePath: '使用路径', todoCancel: '取消', todoAdd: '添加', todoSave: '保存', todoActive: '进行中', todoShowDone: '完成项', todoTitlePlaceholder: '任务标题', todoDescriptionPlaceholder: '任务说明', todoAcceptancePlaceholder: '完成标准', todoPathPlaceholder: '粘贴工作区路径', todoNoWorkspace: '选择工作区', todoEmpty: '这个工作区没有待办任务', todoNoDone: '还没有完成项', todoPendingReview: '待确认完成', todoPromptPreview: '提示词', todoDispatch: '启动', todoComplete: '完成', todoRetry: '返工', todoBlock: '阻塞', todoUnblock: '解除阻塞', todoDelete: '删除', todoEdit: '编辑', todoSaved: 'Todo 已保存', todoLaunched: '已请求启动 Todo', todoCopied: '提示词已复制', todoBlocked: '已阻塞', todoDone: '已完成', todoReady: '就绪', todoRunning: '运行中', todoReview: '待确认', todoUnbound: '已派发，未绑定', todoBound: '已绑定会话', todoCountsText: '待办 {active} / 完成 {done}', todoCreateFromHandoff: '已将接续保存为 Todo',
+        allSessions: '全部 Agent 会话', watched: '已监控 83 个工作区', filterActive: '已启用工作区过滤', waitingChip: '8 待回复', workspace: '工作区', allWorkspaces: '全部工作区', perRow: '每排数量', visibleNow: '当前可见', inQueue: '在滚动队列', sessions: '个会话', updated: '2 秒前更新', workspacePrefix: '工作区：', overflow: '按优先级继续滚动：待回复、运行中、闲置', priority: '优先', live: '实时', quiet: '静默', waiting: '待回复', running: '运行中', idle: '闲置', all: '全部', wait: '待回', run: '运行', col: '列', cols: '列', perRowButton: '/ 排', iconsPerRow: '个/排', windowSize: '窗口尺寸', openWorkspace: '打开 VS Code 工作区：', openingAgents: '正在打开会话...', openedAgents: '已打开会话', themeLight: '浅色主题', themeDark: '深色主题', settings: '设置', appearance: '外观', language: '语言', theme: '主题', layout: '布局', horizontal: '横版', vertical: '竖版', agentTaskFlipSpeed: '翻转速度（毫秒）', lastUser: '最后用户输入', lastAi: '最后 AI 回复', noUserMessage: '未捕获到用户输入', noAiMessage: '未捕获到 AI 回复', tailOnly: '尾部', errorExcerpt: '错误', windowBehavior: '窗口', alwaysOnTop: '永远置顶', dataSources: '数据', includeCopilot: 'Copilot 会话', includeClaude: 'Claude 会话', hideArchived: '隐藏归档', scanLimits: '扫描限制', activeWindowDays: '活跃窗口（天）', maxSessions: '每个提供方会话数', refreshInterval: '刷新间隔（秒）', settingsSaved: '设置已更新', maxCardsPerRow: '每排最大数量', waitingAlertSize: '待回复提醒尺寸', waitingAlertDuration: '待回复持续时间（秒）', small: '小', medium: '中', large: '大', waitingAlertAria: '新的待回复会话', handoffCreate: '创建接续会话...', handoffCopyPrompt: '复制接续提示词', handoffPackageSession: '打包会话用于跨电脑交接', handoffPackaging: '正在打包会话...', handoffPackagedClipboard: '已打包并复制到剪贴板，可直接粘贴发送', handoffPackagedNoClipboard: '已打包，但写入剪贴板失败，文件在', handoffPackagePreviewOnly: '浏览器预览模式不支持打包', handoffOpenSource: '打开原会话', analyticsOpenEntry: '会话分析', analyticsPanelTitle: '会话分析', analyticsPanelSub: '单会话全生命周期', analyticsUsageTitle: '用量时间轴', analyticsUsageNote: '按模型分色的毛输入（含缓存读取）', analyticsGAuto: '自动', analyticsGHour: '小时', analyticsG6h: '6 小时', analyticsGDay: '天', analyticsByType: '按类型', analyticsByModel: '按模型', analyticsByTool: '高频工具', analyticsCacheRead: '缓存读取', analyticsFreshInput: '净输入', analyticsOutput: '输出', analyticsCtxTitle: '上下文占用', analyticsRhythmTitle: '活动节奏', analyticsCompact: '压缩', analyticsDegraded: '调用点超出预算，时间轴已按同模型合并降采样', analyticsNoTimeline: '这个数据源没有可用的时序数据', analyticsChipHint: '点按切换该模型在时间轴上的显示', analyticsWindowLimit: '窗口上限 {tokens}', analyticsTipIn: '输入', analyticsTipOut: '输出', analyticsTipCtx: '上下文末', analyticsModelCallsUnit: '次调用', analyticsToolNoteRest: '其余 {count} 次未列出', analyticsLoadFailed: '会话时序加载失败', analyticsNoSession: '找不到要分析的会话', analyticsTrajTitle: '轨迹泳道', analyticsTrajNote: '点泳道展开合并明细（面积=毛输入 · 折线=上下文）', analyticsTrajMain: '主代理', analyticsTrajGuardians: 'guardian 审查者', analyticsTrajApprox: '（估算）', analyticsTrajDetailCap: '面积=输入 · 线=上下文', analyticsTrajLoading: '加载中…', analyticsTrajWaitEstimate: '等待中（估算）', analyticsTrajParallel: '并行子代理数随时间（峰值 {peak}）', analyticsTrajExpand: '子代理 {count} 条 · {total} · 峰值 {peak} ▸', analyticsTrajCollapse: '收起子代理 ▾', analyticsTrajTruncated: '已截断', analyticsTrajNoAgents: '该会话没有子代理', analyticsAgentsTitle: '子代理开销排行', analyticsAgentsNote: '按毛输入排序 · 含效率（输出/毛输入）', analyticsAgentsColAgent: '子代理', analyticsAgentsColModel: '模型', analyticsAgentsColIn: '毛输入', analyticsAgentsColOut: '输出', analyticsAgentsColEff: '效率', analyticsAgentsColTurns: '轮次', analyticsAgentsColTools: '工具', analyticsAgentsColSpan: '活跃', analyticsAgentsTotal: '合计', analyticsAgentsExpand: '展开 {count} 条 ▸', analyticsAgentsCollapse: '收起 ▾', handoffTitle: '创建接续会话', handoffNewSessionIn: '在', handoffWithProvider: '使用', handoffLatestSnapshot: '最新快照', handoffSourceLocator: '来源定位', handoffPreview: '预览', handoffCopy: '复制', handoffLaunch: '启动', handoffSaveTodo: '存为 Todo', handoffPromptPreview: '提示词预览', handoffTaskPlaceholder: '希望新会话做什么？', handoffWorkspacePlaceholder: '搜索或粘贴工作区路径', handoffUsePastedPath: '使用粘贴路径', handoffNoWorkspace: '没有匹配的工作区', handoffSelected: '已选', handoffCopied: '已复制接续提示词', handoffClipboardFallback: '无法直接写剪贴板，已选中提示词', handoffLaunching: '正在启动接续会话...', handoffLaunched: '已请求启动接续会话', handoffNoSession: '未选择来源会话', handoffOpenFailed: '接续面板打开失败', handoffSelectWorkspace: '选择工作区', handoffAgentsLabel: 'Copilot 编辑器', handoffCodeChatLabel: 'Copilot CLI 编辑器', handoffClaudeLabel: 'Claude Code 编辑器', handoffAgentsDescription: '在 VS Code 编辑器标签页中打开 Copilot 并填入接续提示词', handoffCodeChatDescription: '打开 Copilot CLI 编辑器标签页并填入接续提示词', handoffClaudeDescription: '在 VS Code 编辑器标签页中打开 Claude Code', bridgeTitle: 'VS Code Bridge', suggestionMenuRegen: '换一条建议', suggestionMenuAuto: '自动作答此会话的选项', suggestionGenerating: '正在生成建议…', suggestionAutoOn: '已开启此会话的自动作答', suggestionAutoOff: '已关闭此会话的自动作答', suggestionPreviewOnly: '浏览器预览不支持 AI 建议', suggestionCopy: '复制', suggestionSend: '发送', suggestionRegen: '换一个', suggestionCopied: '建议已复制', suggestionSent: '已发送到会话', suggestionSending: '正在发送...', suggestionQuestionLabel: '选一个选项', bridgePreviewOnly: '仅预览', bridgeChecking: '正在检查...', bridgeInstalled: 'Bridge 已安装', bridgeNeedsUpdate: 'Bridge 有可用更新', bridgeNotInstalled: 'Bridge 未安装', bridgeInstall: '安装', bridgeUpdate: '更新', bridgeRetry: '重试', bridgeInstalling: '正在安装...', bridgeInstallFailed: 'Bridge 安装失败', todoWindowTitle: 'AI 任务输入法', todoWindowSubtitle: '工作区 Todo 队列', todoOpen: '打开 Todo', todoReadyNudge: '可推进 Todo：', todoRefresh: '刷新', todoUsePath: '使用路径', todoCancel: '取消', todoAdd: '添加', todoSave: '保存', todoActive: '进行中', todoShowDone: '完成项', todoTitlePlaceholder: '任务标题', todoDescriptionPlaceholder: '任务说明', todoAcceptancePlaceholder: '完成标准', todoPathPlaceholder: '粘贴工作区路径', todoNoWorkspace: '选择工作区', todoEmpty: '这个工作区没有待办任务', todoNoDone: '还没有完成项', todoPendingReview: '待确认完成', todoPromptPreview: '提示词', todoDispatch: '启动', todoComplete: '完成', todoRetry: '返工', todoBlock: '阻塞', todoUnblock: '解除阻塞', todoDelete: '删除', todoEdit: '编辑', todoSaved: 'Todo 已保存', todoLaunched: '已请求启动 Todo', todoCopied: '提示词已复制', todoBlocked: '已阻塞', todoDone: '已完成', todoReady: '就绪', todoRunning: '运行中', todoReview: '待确认', todoUnbound: '已派发，未绑定', todoBound: '已绑定会话', todoCountsText: '待办 {active} / 完成 {done}', todoCreateFromHandoff: '已将接续保存为 Todo',
         handoffPromptIdLabel: 'AgentWatcher 接续 ID',
         handoffSourceAccessTitle: '【来源访问】',
         handoffTargetAgentLabel: '目标代理',
@@ -11678,10 +11621,6 @@
           includeZcode: savedSettings.includeZcode !== false,
           includeWorkbuddy: savedSettings.includeWorkbuddy !== false,
           hideArchived: savedSettings.hideArchived !== false,
-          suggestion: {
-            ...defaultSettings.suggestion,
-            ...(savedSettings.suggestion && typeof savedSettings.suggestion === 'object' ? savedSettings.suggestion : {})
-          },
           workspacePathBlacklist: Array.isArray(savedSettings.workspacePathBlacklist)
             ? savedSettings.workspacePathBlacklist.map(value => String(value).trim()).filter(Boolean)
             : [...defaultSettings.workspacePathBlacklist],
@@ -12103,18 +12042,6 @@
       includeZcode.checked = settings.includeZcode;
       includeWorkbuddy.checked = settings.includeWorkbuddy;
       hideArchived.checked = settings.hideArchived;
-      if (suggestionEnabledInput) {
-        const sg = settings.suggestion || {};
-        suggestionEnabledInput.checked = !!sg.enabled;
-        suggestionApiBaseInput.value = sg.apiBase || '';
-        suggestionApiKeyInput.value = sg.apiKey || '';
-        suggestionModelInput.value = sg.model || '';
-        suggestionHotkeyInput.value = sg.hotkey || 'Ctrl+Alt+K';
-        suggestionHotkeySendInput.checked = !!sg.hotkeyActionSend;
-        suggestionAutoEnabledInput.checked = !!sg.autoEnabled;
-        suggestionAutoLimitInput.value = String(sg.autoHourlyLimit ?? 6);
-        suggestionAutoWaitInput.value = String(sg.autoWaitSecs ?? 20);
-      }
       workspacePathBlacklist.value = settings.workspacePathBlacklist.join('\n');
       activeWindowDays.value = String(settings.activeWindowDays);
       maxSessions.value = String(settings.maxSessions);
@@ -12213,9 +12140,6 @@
       }
       if (key === 'alwaysOnTop') {
         applyAlwaysOnTopSetting();
-      }
-      if (key === 'suggestion') {
-        pushSuggestionSettings(true);
       }
       if (key === 'performanceDebug') {
         updatePerformanceDebugMode();
@@ -13634,6 +13558,7 @@
         event.stopPropagation();
         void openHandoffPanel();
       };
+      updateSuggestionMenuItems(card);
       if (handoffMenuRevealFrame) window.cancelAnimationFrame(handoffMenuRevealFrame);
       window.clearTimeout(handoffMenuRevealTimer);
       handoffContextMenu.dataset.anchorX = String(x);
@@ -17645,7 +17570,6 @@ function analyticsRememberSession(normalized) {
         suggestionBySession.set(String(suggestion.sessionId), suggestion);
         decorateVisibleCardWithSuggestion(suggestion);
       }).catch(() => {});
-      tauriListen?.('agentwatcher-suggestion-action', event => handleSuggestionActionEvent(event && event.payload)).catch(() => {});
       tauriEmitTo?.('main', 'agentwatcher-todo-ready', {}).catch(() => {});
       requestAnimationFrame(() => todoTitleInput.focus());
     }
@@ -18019,42 +17943,48 @@ function analyticsRememberSession(normalized) {
     const suggestionBySession = new Map();
     let suggestionSettingsPushed = false;
 
-    function suggestionSettingsFromInputs() {
-      return {
-        enabled: !!(suggestionEnabledInput && suggestionEnabledInput.checked),
-        apiBase: (suggestionApiBaseInput ? suggestionApiBaseInput.value : '').trim(),
-        apiKey: (suggestionApiKeyInput ? suggestionApiKeyInput.value : '').trim(),
-        model: (suggestionModelInput ? suggestionModelInput.value : '').trim(),
-        hotkey: (suggestionHotkeyInput ? suggestionHotkeyInput.value : '').trim() || 'Ctrl+Alt+K',
-        hotkeyActionSend: !!(suggestionHotkeySendInput && suggestionHotkeySendInput.checked),
-        autoEnabled: !!(suggestionAutoEnabledInput && suggestionAutoEnabledInput.checked),
-        autoHourlyLimit: clampNumber(suggestionAutoLimitInput ? suggestionAutoLimitInput.value : 6, 1, 60, 6),
-        autoWaitSecs: clampNumber(suggestionAutoWaitInput ? suggestionAutoWaitInput.value : 20, 5, 600, 20)
-      };
-    }
+    const zcodeAutoAnswerSessions = new Set();
 
-    function suggestionSettingsPayload() {
-      const sg = settings.suggestion || {};
-      return {
-        enabled: !!sg.enabled,
-        apiBase: String(sg.apiBase || ''),
-        apiKey: String(sg.apiKey || ''),
-        model: String(sg.model || ''),
-        hotkey: String(sg.hotkey || 'Ctrl+Alt+K'),
-        hotkeyAction: sg.hotkeyActionSend ? 'send' : 'copy',
-        autoEnabled: !!sg.autoEnabled,
-        autoHourlyLimit: Number(sg.autoHourlyLimit) || 6,
-        autoWaitSecs: Number(sg.autoWaitSecs) || 20
-      };
-    }
-
-    function pushSuggestionSettings(force) {
-      if (!tauriInvoke) return;
-      if (suggestionSettingsPushed && !force) return;
-      suggestionSettingsPushed = true;
-      tauriInvoke('set_suggestion_settings', { settings: suggestionSettingsPayload() }).catch(error => {
+    async function requestSuggestionNow(sessionId) {
+      if (!tauriInvoke) {
+        showToast(t('suggestionPreviewOnly'));
+        return;
+      }
+      showToast(t('suggestionGenerating'));
+      try {
+        await tauriInvoke('regenerate_suggestion', { id: sessionId });
+      } catch (error) {
         showToast(String(error));
-      });
+      }
+    }
+
+    function updateSuggestionMenuItems(card) {
+      const regenItem = document.getElementById('handoffSuggestRegen');
+      const autoItem = document.getElementById('handoffSuggestAuto');
+      const sep = document.getElementById('handoffSuggestSep');
+      if (!regenItem || !autoItem || !sep) return;
+      const sessionId = String(card.dataset.sessionId || '');
+      const show = card.dataset.provider === 'zcode' && card.classList.contains('waiting') && !!tauriInvoke;
+      regenItem.hidden = !show;
+      autoItem.hidden = !show;
+      sep.hidden = !show;
+      if (!show) return;
+      regenItem.onclick = () => {
+        closeHandoffMenu();
+        requestSuggestionNow(sessionId);
+      };
+      autoItem.onclick = async () => {
+        closeHandoffMenu();
+        const enabling = !zcodeAutoAnswerSessions.has(sessionId);
+        try {
+          await tauriInvoke('set_zcode_auto_answer', { id: sessionId, enabled: enabling });
+          if (enabling) zcodeAutoAnswerSessions.add(sessionId);
+          else zcodeAutoAnswerSessions.delete(sessionId);
+          showToast(enabling ? t('suggestionAutoOn') : t('suggestionAutoOff'));
+        } catch (error) {
+          showToast(String(error));
+        }
+      };
     }
 
     function cssEscapeId(value) {
@@ -18186,17 +18116,6 @@ function analyticsRememberSession(normalized) {
       }
     }
 
-    function handleSuggestionActionEvent(payload) {
-      if (!payload || typeof payload !== 'object') return;
-      if (payload.action === 'copied') showToast(t('suggestionCopied'));
-      else if (payload.action === 'sent') {
-        showToast(t('suggestionSent'));
-        refreshSessions(true);
-      } else if (payload.action === 'error' && payload.message) {
-        showToast(String(payload.message));
-      }
-    }
-
     function createSessionCard(session) {
       const normalizedSession = normalizeSession(session || {});
       const status = normalizedSession.status;
@@ -18287,7 +18206,6 @@ function analyticsRememberSession(normalized) {
 
     async function refreshSessions(silent) {
       if (!tauriInvoke) return;
-      pushSuggestionSettings(false);
       if (watcherNativeWindowInteractionInProgress) {
         refreshQueued = true;
         return;
@@ -18842,10 +18760,6 @@ function analyticsRememberSession(normalized) {
       includeZcode.addEventListener('change', () => updateSetting('includeZcode', includeZcode.checked, { announce: true }));
       includeWorkbuddy.addEventListener('change', () => updateSetting('includeWorkbuddy', includeWorkbuddy.checked, { announce: true }));
       hideArchived.addEventListener('change', () => updateSetting('hideArchived', hideArchived.checked, { announce: true }));
-      const suggestionInputsBound = [suggestionEnabledInput, suggestionApiBaseInput, suggestionApiKeyInput, suggestionModelInput, suggestionHotkeyInput, suggestionHotkeySendInput, suggestionAutoEnabledInput, suggestionAutoLimitInput, suggestionAutoWaitInput].filter(Boolean);
-      suggestionInputsBound.forEach(input => {
-        input.addEventListener('change', () => updateSetting('suggestion', suggestionSettingsFromInputs(), { announce: true, refresh: false }));
-      });
       workspacePathBlacklist.addEventListener('change', () => updateSetting(
         'workspacePathBlacklist',
         workspacePathBlacklist.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean),
