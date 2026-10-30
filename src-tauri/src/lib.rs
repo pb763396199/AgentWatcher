@@ -15303,6 +15303,9 @@ fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSessio
             .retain(|session_id, _| seen.contains(session_id.as_str()));
         runtime.waiting_since.retain(|session_id, _| seen.contains(session_id.as_str()));
     }
+    if !spawns.is_empty() {
+        eprintln!("suggestion pipeline: {} spawn", spawns.len());
+    }
     for (session_id, avoid) in spawns {
         spawn_suggestion_generation(app.clone(), session_id, avoid);
     }
@@ -15514,7 +15517,16 @@ fn generate_suggestion_via_zcode(prompt: &str) -> Option<String> {
         ZCODE_GENERATE_TIMEOUT_SECS,
         "ZCode 建议生成超时（180 秒），已中止",
     ) {
-        Ok(stdout) => parse_headless_response(&stdout),
+        Ok(stdout) => {
+            let parsed = parse_headless_response(&stdout);
+            if parsed.is_none() {
+                eprintln!(
+                    "suggestion generator: 信封解析失败，stdout 头 200 字：{}",
+                    stdout.trim().chars().take(200).collect::<String>()
+                );
+            }
+            parsed
+        }
         Err(error) => {
             eprintln!("suggestion generator: {error}");
             None
@@ -15703,7 +15715,9 @@ fn regenerate_suggestion(app: tauri::AppHandle, id: String) -> Result<(), String
 
 // ---- 发送通道：zcode.cjs headless 续话 ----
 
-const ZCODE_SEND_TIMEOUT_SECS: u64 = 120;
+/// 大上下文会话一轮回复可能跑两三分钟（实测 76k 上下文超了 120 秒被杀），
+/// 发送等足五分钟，按钮停留在「正在发送」期间由用户自行放弃或等待。
+const ZCODE_SEND_TIMEOUT_SECS: u64 = 300;
 
 /// 读注册表 zcode:// 协议的 open 命令串。
 fn resolve_zcode_command_string() -> Option<String> {
@@ -15850,7 +15864,7 @@ fn send_zcode_message_blocking(session_key: &str, workspace_path: &str, text: &s
     run_child_with_timeout(
         &mut command,
         ZCODE_SEND_TIMEOUT_SECS,
-        "ZCode 发送超时（120 秒），已中止",
+        "ZCode 发送超时（5 分钟），已中止",
     )
     .map(|_| ())
 }
