@@ -6315,6 +6315,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scan_sessions,
             send_zcode_message,
+            set_suggestion_settings,
+            regenerate_suggestion,
             get_session_usage_detail,
             get_session_lifecycle,
             get_performance_snapshot,
@@ -15296,7 +15298,7 @@ fn suggestion_runtime() -> &'static Mutex<SuggestionRuntime> {
 /// 生成在独立线程里做，不阻塞扫描返回。
 fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSession]) {
     let now_ms = current_time_ms();
-    let mut spawns: Vec<(AgentSession, Option<String>)> = Vec::new();
+    let mut spawns: Vec<(String, Option<String>)> = Vec::new();
     {
         let Ok(mut runtime) = suggestion_runtime().lock() else {
             return;
@@ -15325,7 +15327,7 @@ fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSessio
                     {
                         runtime.in_flight.insert(session.id.clone());
                         let avoid = runtime.last_avoid.get(&session.id).cloned();
-                        spawns.push((session.clone(), avoid));
+                        spawns.push((session.id.clone(), avoid));
                     }
                 }
                 _ => {
@@ -15339,25 +15341,29 @@ fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSessio
             .retain(|session_id, _| seen.contains(session_id.as_str()));
         runtime.waiting_since.retain(|session_id, _| seen.contains(session_id.as_str()));
     }
-    for (session, avoid) in spawns {
-        let app = app.clone();
-        std::thread::spawn(move || {
-            let suggestion = generate_zcode_suggestion(&session, avoid.as_deref());
-            let mut runtime = suggestion_runtime().lock().ok();
-            if let Some(runtime) = runtime.as_deref_mut() {
-                runtime.in_flight.remove(&session.id);
-            }
-            let Some(suggestion) = suggestion else {
-                return;
-            };
-            if let Some(runtime) = runtime.as_deref_mut() {
-                runtime.latest = Some(suggestion.clone());
-                runtime.current.insert(session.id.clone(), suggestion.clone());
-            }
-            let _ = app.emit(SUGGESTIONS_EVENT, &suggestion);
-            maybe_auto_answer(&app, &session, &suggestion);
-        });
+    for (session_id, avoid) in spawns {
+        spawn_suggestion_generation(app.clone(), session_id, avoid);
     }
+}
+
+/// 生成一个会话的建议并广播。扫描触发与「换一个」共用这一条路。
+fn spawn_suggestion_generation(app: tauri::AppHandle, session_id: String, avoid: Option<String>) {
+    std::thread::spawn(move || {
+        let suggestion = generate_zcode_suggestion(&session_id, avoid.as_deref());
+        let mut runtime = suggestion_runtime().lock().ok();
+        if let Some(runtime) = runtime.as_deref_mut() {
+            runtime.in_flight.remove(&session_id);
+        }
+        let Some(suggestion) = suggestion else {
+            return;
+        };
+        if let Some(runtime) = runtime.as_deref_mut() {
+            runtime.latest = Some(suggestion.clone());
+            runtime.current.insert(session_id.clone(), suggestion.clone());
+        }
+        let _ = app.emit(SUGGESTIONS_EVENT, &suggestion);
+        maybe_auto_answer(&app, &session_id, &suggestion);
+    });
 }
 
 /// 从 ZCode 会话库提取建议上下文：最近几轮对话、待选问题与选项、指纹。
@@ -15520,8 +15526,8 @@ fn call_suggestion_model(settings: &SuggestionSettings, prompt: &str) -> Option<
 }
 
 /// 单个会话的完整生成流程：取上下文、组装提示词、调模型、解析、防陈旧自检。
-fn generate_zcode_suggestion(session: &AgentSession, avoid: Option<&str>) -> Option<SessionSuggestion> {
-    let context = zcode_suggestion_context(&session.id)?;
+fn generate_zcode_suggestion(session_id: &str, avoid: Option<&str>) -> Option<SessionSuggestion> {
+    let context = zcode_suggestion_context(session_id)?;
     let prompt = build_suggestion_prompt(&context, avoid);
     let settings = suggestion_runtime()
         .lock()
@@ -15536,8 +15542,8 @@ fn generate_zcode_suggestion(session: &AgentSession, avoid: Option<&str>) -> Opt
         }
     }
     Some(SessionSuggestion {
-        session_id: session.id.clone(),
-        provider: session.provider.clone(),
+        session_id: session_id.to_string(),
+        provider: "zcode".to_string(),
         text,
         question: context
             .question
@@ -15555,7 +15561,7 @@ fn generate_zcode_suggestion(session: &AgentSession, avoid: Option<&str>) -> Opt
 
 /// 全自动作答的挂接点：护栏全过才替用户把选项发出去。
 /// 只对带结构化待选项的建议生效，自由文本永远不自动发。
-fn maybe_auto_answer(app: &tauri::AppHandle, session: &AgentSession, suggestion: &SessionSuggestion) {
+fn maybe_auto_answer(app: &tauri::AppHandle, session_id: &str, suggestion: &SessionSuggestion) {
     let Some(options) = suggestion.options.clone() else {
         return;
     };
@@ -15566,15 +15572,15 @@ fn maybe_auto_answer(app: &tauri::AppHandle, session: &AgentSession, suggestion:
         };
         let waiting_ms = runtime
             .waiting_since
-            .get(&session.id)
+            .get(session_id)
             .map(|since| now_ms.saturating_sub(*since))
             .unwrap_or(0);
         (
             runtime.settings.clone(),
             waiting_ms,
-            runtime.auto_last_two.get(&session.id).cloned().unwrap_or_default(),
-            runtime.manual_sent_since_fuse.get(&session.id).copied().unwrap_or(false),
-            runtime.auto_answer_times.get(&session.id).cloned().unwrap_or_default(),
+            runtime.auto_last_two.get(session_id).cloned().unwrap_or_default(),
+            runtime.manual_sent_since_fuse.get(session_id).copied().unwrap_or(false),
+            runtime.auto_answer_times.get(session_id).cloned().unwrap_or_default(),
         )
     };
     let decision = auto_answer_decision(
@@ -15591,11 +15597,11 @@ fn maybe_auto_answer(app: &tauri::AppHandle, session: &AgentSession, suggestion:
         return;
     }
 
-    let session_key = session.id.strip_prefix("zcode:").unwrap_or(session.id.as_str());
-    let workspace = zcode_suggestion_context(&session.id)
+    let session_key = session_id.strip_prefix("zcode:").unwrap_or(session_id);
+    let workspace = zcode_suggestion_context(session_id)
         .map(|context| context.workspace_path)
         .filter(|directory| !directory.trim().is_empty())
-        .unwrap_or_else(|| session.workspace_path.clone().unwrap_or_default());
+        .unwrap_or_default();
     let outcome = match send_zcode_message_blocking(session_key, &workspace, &suggestion.text) {
         Ok(()) => "sent",
         Err(error) => {
@@ -15607,7 +15613,7 @@ fn maybe_auto_answer(app: &tauri::AppHandle, session: &AgentSession, suggestion:
     let question_text = suggestion.question.clone().unwrap_or_default();
     let audit = auto_answer_audit_line(
         now_ms,
-        &session.id,
+        session_id,
         &question_text,
         &options,
         &suggestion.text,
@@ -15616,20 +15622,20 @@ fn maybe_auto_answer(app: &tauri::AppHandle, session: &AgentSession, suggestion:
     append_auto_answer_audit_line(&audit);
 
     if let Ok(mut runtime) = suggestion_runtime().lock() {
-        let times = runtime.auto_answer_times.entry(session.id.clone()).or_default();
+        let times = runtime.auto_answer_times.entry(session_id.to_string()).or_default();
         times.push(now_ms);
         times.retain(|at| now_ms.saturating_sub(*at) < 3_600_000);
-        let answers = runtime.auto_last_two.entry(session.id.clone()).or_default();
+        let answers = runtime.auto_last_two.entry(session_id.to_string()).or_default();
         answers.push(suggestion.text.clone());
         let surplus = answers.len().saturating_sub(2);
         for _ in 0..surplus {
             answers.remove(0);
         }
         // 自动作答本身不算用户手动动作，熔断解除标记复位。
-        runtime.manual_sent_since_fuse.insert(session.id.clone(), false);
+        runtime.manual_sent_since_fuse.insert(session_id.to_string(), false);
         if outcome == "sent" {
-            runtime.current.remove(&session.id);
-            runtime.waiting_since.remove(&session.id);
+            runtime.current.remove(session_id);
+            runtime.waiting_since.remove(session_id);
         }
     }
     if outcome == "sent" {
@@ -15652,6 +15658,178 @@ fn append_audit_line_in_dir(dir: &std::path::Path, line: &str) {
         use std::io::Write;
         let _ = writeln!(file, "{line}");
     }
+}
+
+// ---- 设置、热键与「换一个」 ----
+
+const SUGGESTION_ACTION_EVENT: &str = "agentwatcher-suggestion-action";
+
+/// 文本写系统剪贴板（CF_UNICODETEXT），全局热键的复制动作用。
+#[cfg(target_os = "windows")]
+fn copy_text_to_clipboard(text: &str) -> bool {
+    use windows_sys::Win32::Foundation::{GlobalFree, HWND};
+    use windows_sys::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    };
+    use windows_sys::Win32::System::Memory::{
+        GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
+    };
+
+    const CF_UNICODETEXT: u32 = 13;
+    const CLIPBOARD_OPEN_ATTEMPTS: usize = 8;
+
+    let wide: Vec<u16> = text.encode_utf16().chain([0]).collect();
+    let total_bytes = wide.len() * 2;
+    unsafe {
+        let handle = GlobalAlloc(GMEM_MOVEABLE, total_bytes);
+        if handle.is_null() {
+            return false;
+        }
+        let base = GlobalLock(handle) as *mut u8;
+        if base.is_null() {
+            let _ = GlobalFree(handle);
+            return false;
+        }
+        std::ptr::copy_nonoverlapping(wide.as_ptr(), base as *mut u16, wide.len());
+        let _ = GlobalUnlock(handle);
+        let mut opened = false;
+        for _ in 0..CLIPBOARD_OPEN_ATTEMPTS {
+            if OpenClipboard(HWND::default()) != 0 {
+                opened = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        if !opened {
+            let _ = GlobalFree(handle);
+            return false;
+        }
+        let data_handle = if EmptyClipboard() != 0 {
+            SetClipboardData(CF_UNICODETEXT, handle as windows_sys::Win32::Foundation::HANDLE)
+        } else {
+            std::ptr::null_mut()
+        };
+        let succeeded = !data_handle.is_null();
+        if !succeeded {
+            let _ = GlobalFree(handle);
+        }
+        let _ = CloseClipboard();
+        succeeded
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn copy_text_to_clipboard(_text: &str) -> bool {
+    false
+}
+
+/// 注册（或换绑）建议热键。空热键表示只清不注。
+fn register_suggestion_hotkey(app: &tauri::AppHandle, hotkey: &str) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+    let manager = app.global_shortcut();
+    let _ = manager.unregister_all();
+    if hotkey.trim().is_empty() {
+        return Ok(());
+    }
+    manager
+        .on_shortcut(hotkey, move |app, _shortcut, event| {
+            if event.state() != ShortcutState::Pressed {
+                return;
+            }
+            run_hotkey_action(app);
+        })
+        .map_err(|error| format!("热键注册失败（{hotkey}）：{error}"))
+}
+
+/// 热键按下后的动作：复制最近一条建议到剪贴板，或直接发送。
+fn run_hotkey_action(app: &tauri::AppHandle) {
+    let (action, suggestion) = {
+        let Ok(runtime) = suggestion_runtime().lock() else {
+            return;
+        };
+        (runtime.settings.hotkey_action.clone(), runtime.latest.clone())
+    };
+    let Some(suggestion) = suggestion else {
+        let _ = app.emit(SUGGESTION_ACTION_EVENT, serde_json::json!({ "action": "none" }));
+        return;
+    };
+    match action.as_str() {
+        "send" => {
+            let id = suggestion.session_id.clone();
+            let text = suggestion.text.clone();
+            match send_zcode_message(app.clone(), id.clone(), text) {
+                Ok(()) => {
+                    let _ = app.emit(
+                        SUGGESTION_ACTION_EVENT,
+                        serde_json::json!({ "action": "sent", "sessionId": id }),
+                    );
+                }
+                Err(error) => {
+                    let _ = app.emit(
+                        SUGGESTION_ACTION_EVENT,
+                        serde_json::json!({ "action": "error", "message": error }),
+                    );
+                }
+            }
+        }
+        _ => {
+            if copy_text_to_clipboard(&suggestion.text) {
+                let _ = app.emit(
+                    SUGGESTION_ACTION_EVENT,
+                    serde_json::json!({
+                        "action": "copied",
+                        "text": suggestion.text,
+                        "sessionId": suggestion.session_id,
+                    }),
+                );
+            } else {
+                let _ = app.emit(
+                    SUGGESTION_ACTION_EVENT,
+                    serde_json::json!({ "action": "error", "message": "剪贴板写入失败" }),
+                );
+            }
+        }
+    }
+}
+
+#[tauri::command]
+fn set_suggestion_settings(
+    app: tauri::AppHandle,
+    settings: SuggestionSettings,
+) -> Result<(), String> {
+    let hotkey = settings.hotkey.clone();
+    {
+        let Ok(mut runtime) = suggestion_runtime().lock() else {
+            return Err("建议状态不可用".to_string());
+        };
+        runtime.settings = settings;
+    }
+    if hotkey.trim().is_empty() {
+        return Ok(());
+    }
+    register_suggestion_hotkey(&app, &hotkey)
+}
+
+#[tauri::command]
+fn regenerate_suggestion(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    let avoid = {
+        let Ok(mut runtime) = suggestion_runtime().lock() else {
+            return Err("建议状态不可用".to_string());
+        };
+        if runtime.in_flight.contains(&id) {
+            return Err("正在生成建议，请稍候".to_string());
+        }
+        let count = runtime.regen_counts.get(&id).copied().unwrap_or(0);
+        if count >= SUGGESTION_MAX_REGENERATIONS {
+            return Err("同一条建议最多换两次".to_string());
+        }
+        runtime.regen_counts.insert(id.clone(), count + 1);
+        let avoid = runtime.current.get(&id).map(|suggestion| suggestion.text.clone());
+        runtime.in_flight.insert(id.clone());
+        avoid
+    };
+    spawn_suggestion_generation(app, id, avoid);
+    Ok(())
 }
 
 // ---- 发送通道：zcode.cjs headless 续话 ----
