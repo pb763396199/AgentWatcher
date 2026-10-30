@@ -1333,10 +1333,15 @@ fn set_window_always_on_top(
 }
 
 #[tauri::command]
-async fn scan_sessions(options: Option<ScanOptions>) -> Result<Vec<AgentSession>, String> {
-    tauri::async_runtime::spawn_blocking(move || scan_sessions_blocking(options))
+async fn scan_sessions(
+    app: tauri::AppHandle,
+    options: Option<ScanOptions>,
+) -> Result<Vec<AgentSession>, String> {
+    let sessions = tauri::async_runtime::spawn_blocking(move || scan_sessions_blocking(options))
         .await
-        .map_err(|error| format!("session scan worker failed: {error}"))
+        .map_err(|error| format!("session scan worker failed: {error}"))?;
+    maybe_run_suggestion_pipeline(&app, &sessions);
+    Ok(sessions)
 }
 
 pub fn scan_sessions_blocking(options: Option<ScanOptions>) -> Vec<AgentSession> {
@@ -15244,6 +15249,294 @@ fn auto_answer_audit_line(
         "outcome": outcome,
     })
     .to_string()
+}
+
+// ---- 扫描挂接与运行时状态 ----
+
+const SUGGESTIONS_EVENT: &str = "agentwatcher-suggestions-updated";
+const SUGGESTION_MAX_TURNS: usize = 8;
+const SUGGESTION_TURN_CHAR_BUDGET: usize = 600;
+/// 同一条建议最多允许「换一个」两次。
+const SUGGESTION_MAX_REGENERATIONS: u32 = 2;
+const SUGGESTION_MODEL_TIMEOUT_SECS: u64 = 60;
+
+#[derive(Default)]
+struct SuggestionRuntime {
+    settings: SuggestionSettings,
+    /// 上一次扫描时各会话的状态。
+    last_statuses: HashMap<String, String>,
+    /// 正在生成建议的会话，防止重复触发。
+    in_flight: HashSet<String>,
+    /// 最近一条建议，全局热键作用在它上面。
+    latest: Option<SessionSuggestion>,
+    /// 每个会话已经「换一个」的次数与要避开的上一条建议。
+    regen_counts: HashMap<String, u32>,
+    last_avoid: HashMap<String, String>,
+    /// 会话首见 waiting 的时间戳（毫秒），全自动作答的等待时长从这里算。
+    waiting_since: HashMap<String, u64>,
+    /// 每个会话的自动作答时间戳与最近两次自动答案（熔断判定用）。
+    auto_answer_times: HashMap<String, Vec<u64>>,
+    auto_last_two: HashMap<String, Vec<String>>,
+    /// 熔断后用户是否手动发过一条。
+    manual_sent_since_fuse: HashMap<String, bool>,
+}
+
+static SUGGESTION_RUNTIME: OnceLock<Mutex<SuggestionRuntime>> = OnceLock::new();
+
+fn suggestion_runtime() -> &'static Mutex<SuggestionRuntime> {
+    SUGGESTION_RUNTIME.get_or_init(|| Mutex::new(SuggestionRuntime::default()))
+}
+
+/// 扫描完成后跑一次：更新状态快照，对新进入 waiting 的 ZCode 会话生成建议。
+/// 生成在独立线程里做，不阻塞扫描返回。
+fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSession]) {
+    let now_ms = current_time_ms();
+    let mut spawns: Vec<(AgentSession, Option<String>)> = Vec::new();
+    {
+        let Ok(mut runtime) = suggestion_runtime().lock() else {
+            return;
+        };
+        let settings = runtime.settings.clone();
+        let mut seen: HashSet<&str> = HashSet::new();
+        for session in sessions {
+            if session.provider != "zcode" {
+                continue;
+            }
+            seen.insert(session.id.as_str());
+            let prev = runtime.last_statuses.get(&session.id).cloned();
+            runtime.last_statuses.insert(session.id.clone(), session.status.clone());
+            match session.status.as_str() {
+                "waiting" => {
+                    if prev != Some("waiting".to_string()) {
+                        runtime.waiting_since.entry(session.id.clone()).or_insert(now_ms);
+                    }
+                    let model_ready = !settings.api_base.is_empty()
+                        && !settings.api_key.is_empty()
+                        && !settings.model.is_empty();
+                    if settings.enabled
+                        && model_ready
+                        && suggestion_should_trigger(prev.as_deref(), "waiting")
+                        && !runtime.in_flight.contains(&session.id)
+                    {
+                        runtime.in_flight.insert(session.id.clone());
+                        let avoid = runtime.last_avoid.get(&session.id).cloned();
+                        spawns.push((session.clone(), avoid));
+                    }
+                }
+                _ => {
+                    runtime.waiting_since.remove(&session.id);
+                }
+            }
+        }
+        // 本轮没出现的会话从快照里清掉，避免长期积累。
+        runtime
+            .last_statuses
+            .retain(|session_id, _| seen.contains(session_id.as_str()));
+        runtime.waiting_since.retain(|session_id, _| seen.contains(session_id.as_str()));
+    }
+    for (session, avoid) in spawns {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            let suggestion = generate_zcode_suggestion(&session, avoid.as_deref());
+            let mut runtime = suggestion_runtime().lock().ok();
+            if let Some(runtime) = runtime.as_deref_mut() {
+                runtime.in_flight.remove(&session.id);
+            }
+            let Some(suggestion) = suggestion else {
+                return;
+            };
+            if let Some(runtime) = runtime.as_deref_mut() {
+                runtime.latest = Some(suggestion.clone());
+            }
+            let _ = app.emit(SUGGESTIONS_EVENT, &suggestion);
+            maybe_auto_answer(&app, &session, &suggestion);
+        });
+    }
+}
+
+/// 从 ZCode 会话库提取建议上下文：最近几轮对话、待选问题与选项、指纹。
+fn zcode_suggestion_context(session: &AgentSession) -> Option<SuggestionContext> {
+    let db_path = zcode_db_path()?;
+    if !db_path.exists() {
+        return None;
+    }
+    let connection = open_readonly_sqlite(&db_path, ZCODE_SQLITE_BUSY_TIMEOUT_MS)?;
+    let session_key = session.id.strip_prefix("zcode:")?;
+
+    // 指纹 = 最后一条消息的 id。
+    let fingerprint: String = connection
+        .query_row(
+            "select id from message where session_id = ?1 order by time_updated desc limit 1",
+            rusqlite::params![session_key],
+            |row| row.get(0),
+        )
+        .ok()?;
+
+    // 最近 N 条消息（倒序取再翻正），每条消息的正文从其 text 部件拼接。
+    let mut turns: Vec<(String, String)> = Vec::new();
+    if let Ok(mut statement) = connection.prepare(
+        "select id, data from message where session_id = ?1 order by time_updated desc limit ?2",
+    ) {
+        if let Ok(rows) = statement.query_map(
+            rusqlite::params![session_key, SUGGESTION_MAX_TURNS as i64],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        ) {
+            let mut collected: Vec<(String, String)> = Vec::new();
+            for (message_id, message_data) in rows.filter_map(Result::ok) {
+                let Ok(message_json) = serde_json::from_str::<Value>(&message_data) else {
+                    continue;
+                };
+                let role = string_at(&message_json, &["/role"]).unwrap_or("user").to_string();
+                let mut text = String::new();
+                if let Ok(mut part_statement) = connection.prepare(
+                    "select data from part where message_id = ?1 and json_extract(data, '$.type') = 'text' order by time_updated asc",
+                ) {
+                    if let Ok(part_rows) = part_statement.query_map(
+                        rusqlite::params![message_id],
+                        |row| row.get::<_, String>(0),
+                    ) {
+                        for part_data in part_rows.filter_map(Result::ok) {
+                            if let Ok(part_json) = serde_json::from_str::<Value>(&part_data) {
+                                if let Some(chunk) = string_at(&part_json, &["/text"]) {
+                                    text.push_str(chunk);
+                                }
+                            }
+                        }
+                    }
+                }
+                let text: String = text.chars().take(SUGGESTION_TURN_CHAR_BUDGET).collect();
+                if !text.trim().is_empty() {
+                    collected.push((role, text.trim().to_string()));
+                }
+            }
+            collected.reverse();
+            turns = collected;
+        }
+    }
+
+    // 最近一个 AskUserQuestion 工具部件：pending 才算等待中的问题。
+    let mut question = None;
+    if let Ok(mut statement) = connection.prepare(
+        "select data from part \
+         where session_id = ?1 and json_extract(data, '$.tool') = 'AskUserQuestion' \
+         order by time_updated desc limit 1",
+    ) {
+        if let Ok(rows) = statement.query_map(rusqlite::params![session_key], |row| {
+            row.get::<_, String>(0)
+        }) {
+            for part_data in rows.filter_map(Result::ok) {
+                let Ok(part_json) = serde_json::from_str::<Value>(&part_data) else {
+                    continue;
+                };
+                let pending = part_json
+                    .pointer("/state/status")
+                    .and_then(Value::as_str)
+                    == Some("pending");
+                if !pending {
+                    continue;
+                }
+                let payload = part_json
+                    .pointer("/state/input")
+                    .or_else(|| part_json.pointer("/input"))
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
+                let question_text = payload
+                    .get("question")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let options = suggestion_option_texts(payload.get("options"));
+                question = Some(PendingQuestion {
+                    question: question_text,
+                    options,
+                });
+            }
+        }
+    }
+
+    Some(SuggestionContext {
+        workspace_path: session.workspace_path.clone().unwrap_or_default(),
+        turns,
+        question,
+        fingerprint,
+    })
+}
+
+/// 选项列表兼容两种形态：字符串数组，或带 label/text/name 字段的对象数组。
+fn suggestion_option_texts(options: Option<&Value>) -> Vec<String> {
+    let Some(options) = options.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    options
+        .iter()
+        .filter_map(|option| match option {
+            Value::String(text) => Some(text.clone()),
+            Value::Object(_) => string_at(option, &["/label"])
+                .or_else(|| string_at(option, &["/text"]))
+                .or_else(|| string_at(option, &["/name"]))
+                .map(str::to_string),
+            _ => None,
+        })
+        .collect()
+}
+
+/// 调用可配置的模型接口生成建议，返回建议文本。网络与配置问题都返回 None。
+fn call_suggestion_model(settings: &SuggestionSettings, prompt: &str) -> Option<String> {
+    if settings.api_base.is_empty() || settings.api_key.is_empty() || settings.model.is_empty() {
+        return None;
+    }
+    let base = settings.api_base.trim_end_matches('/');
+    let url = format!("{base}/chat/completions");
+    let body = serde_json::json!({
+        "model": settings.model,
+        "messages": [{ "role": "user", "content": prompt }],
+        "temperature": 0.4,
+        "max_tokens": 300,
+    });
+    let response = ureq::post(&url)
+        .timeout(std::time::Duration::from_secs(SUGGESTION_MODEL_TIMEOUT_SECS))
+        .set("Authorization", &format!("Bearer {}", settings.api_key))
+        .send_json(body)
+        .ok()?;
+    let payload: Value = response.into_json().ok()?;
+    let content = payload
+        .pointer("/choices/0/message/content")
+        .and_then(Value::as_str)?;
+    Some(content.to_string())
+}
+
+/// 单个会话的完整生成流程：取上下文、组装提示词、调模型、解析、防陈旧自检。
+fn generate_zcode_suggestion(session: &AgentSession, avoid: Option<&str>) -> Option<SessionSuggestion> {
+    let context = zcode_suggestion_context(session)?;
+    let prompt = build_suggestion_prompt(&context, avoid);
+    let settings = suggestion_runtime()
+        .lock()
+        .ok()
+        .map(|runtime| runtime.settings.clone())?;
+    let raw = call_suggestion_model(&settings, &prompt)?;
+    let text = parse_suggestion_response(&raw, SUGGESTION_MAX_CHARS)?;
+    // 待选项场景必须命中选项集，命中不了就放弃。
+    if let Some(question) = &context.question {
+        if !question.options.is_empty() && !question.options.iter().any(|option| option == &text) {
+            return None;
+        }
+    }
+    Some(SessionSuggestion {
+        session_id: session.id.clone(),
+        provider: session.provider.clone(),
+        text,
+        options: context
+            .question
+            .filter(|question| !question.options.is_empty())
+            .map(|question| question.options),
+        fingerprint: context.fingerprint,
+        created_at_ms: current_time_ms(),
+    })
+}
+
+/// 全自动作答的挂接点：护栏全过才替用户把选项发出去。S6 填实现。
+fn maybe_auto_answer(app: &tauri::AppHandle, session: &AgentSession, suggestion: &SessionSuggestion) {
+    let _ = (app, session, suggestion);
 }
 
 #[cfg(test)]
