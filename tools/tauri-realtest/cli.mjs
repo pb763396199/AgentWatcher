@@ -1099,12 +1099,110 @@ async function runZcodeSessionFlow() {
   }
   const screenshot = await saveScreenshot(page, 'zcode-card-after-click.png');
 
+  const suggestionResult = await runZcodeSuggestionSteps(page);
+
   return {
     点击目标: '.lane .session-card[data-provider="zcode"]',
     卡片: cardInfo,
     Toast: toastText,
     截图: screenshot,
+    AI建议: suggestionResult,
   };
+}
+
+async function runZcodeSuggestionSteps(page) {
+  // 步骤一：设置面板出现「AI 建议」分组。
+  const settingsToggle = page.locator('#settingsToggle');
+  await settingsToggle.click();
+  const groupTitle = page.locator('[data-i18n="suggestionGroupTitle"]');
+  if (!(await groupTitle.count())) {
+    throw new Error('设置面板里没有「AI 建议」分组');
+  }
+
+  // 起一个只回固定建议的本地模型假服务。
+  const http = await import('node:http');
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      choices: [{ message: { content: '{"suggestion":"建议冒烟：继续跑测试"}' } }],
+    }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const mockPort = server.address().port;
+
+  // 记录旧值，测试完恢复。
+  const snapshot = await page.evaluate(() => ({
+    enabled: document.querySelector('#suggestionEnabled')?.checked ?? false,
+    apiBase: document.querySelector('#suggestionApiBase')?.value ?? '',
+    apiKey: document.querySelector('#suggestionApiKey')?.value ?? '',
+    model: document.querySelector('#suggestionModel')?.value ?? '',
+  }));
+
+  const restore = async () => {
+    await page.evaluate(values => {
+      const set = (id, value) => {
+        const input = document.querySelector(id);
+        if (!input) return;
+        if (typeof value === 'boolean') input.checked = value;
+        else input.value = value;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      set('#suggestionEnabled', values.enabled);
+      set('#suggestionApiBase', values.apiBase);
+      set('#suggestionApiKey', values.apiKey);
+      set('#suggestionModel', values.model);
+    }, snapshot);
+    await settingsToggle.click().catch(() => {});
+    server.close();
+  };
+
+  try {
+    await page.evaluate(port => {
+      const set = (id, value) => {
+        const input = document.querySelector(id);
+        if (!input) return;
+        if (typeof value === 'boolean') input.checked = value;
+        else input.value = value;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      set('#suggestionEnabled', true);
+      set('#suggestionApiBase', 'http://127.0.0.1:' + port + '/v1');
+      set('#suggestionApiKey', 'test-key');
+      set('#suggestionModel', 'test-model');
+    }, mockPort);
+
+    // 步骤二：有 waiting 的 ZCode 卡片时，40 秒内应出现建议行。
+    const hasWaiting = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.lane .session-card'))
+        .some(card => card.dataset.provider === 'zcode' && card.classList.contains('waiting')));
+    if (!hasWaiting) {
+      return { 结果: '跳过', 原因: '当前没有等待中的 ZCode 会话，建议行断言未执行' };
+    }
+    const suggestionFound = await page
+      .waitForFunction(() => {
+        const card = Array.from(document.querySelectorAll('.lane .session-card'))
+          .find(c => c.dataset.provider === 'zcode' && c.classList.contains('waiting'));
+        return !!(card && card.querySelector('.card-suggestion'));
+      }, null, { timeout: 40000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!suggestionFound) {
+      throw new Error('40 秒内等待中的 ZCode 卡片没有出现建议行');
+    }
+    const suggestionText = await page.evaluate(() => {
+      const card = Array.from(document.querySelectorAll('.lane .session-card'))
+        .find(c => c.dataset.provider === 'zcode' && c.querySelector('.card-suggestion'));
+      return card ? (card.querySelector('.card-suggestion')?.innerText || '') : '';
+    });
+    const suggestionScreenshot = await saveScreenshot(page, 'zcode-suggestion-row.png');
+    return {
+      结果: '通过',
+      建议内容: suggestionText.slice(0, 120),
+      截图: suggestionScreenshot,
+    };
+  } finally {
+    await restore();
+  }
 }
 
 async function runWorkBuddySessionFlow() {

@@ -15803,6 +15803,10 @@ fn set_suggestion_settings(
             return Err("建议状态不可用".to_string());
         };
         runtime.settings = settings;
+        // 设置刚推送时清掉状态快照：已经等着的会话在下一轮扫描就能出建议，
+        // 不用等到状态再次变化。
+        runtime.last_statuses.clear();
+        runtime.waiting_since.clear();
     }
     if hotkey.trim().is_empty() {
         return Ok(());
