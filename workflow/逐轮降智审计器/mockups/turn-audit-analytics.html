@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>逐轮审计 × 会话分析合并原型（analytics-panel 单会话视图）</title>
+<style>
+  :root {
+    --surface: #1f1f1f; --surface-2: #252526; --surface-3: #2d2d30;
+    --border: #3c3c3c; --text: #d4d4d4; --muted: #9a9a9a; --soft: #6f6f6f;
+    --accent: #0078d4; --waiting: #f14c4c; --running: #3794ff; --idle: #6a9955; --warn: #d18616;
+    --font: "Segoe UI", system-ui, sans-serif;
+  }
+  html[data-theme="light"] {
+    --surface: #ffffff; --surface-2: #f6f6f6; --surface-3: #ececec;
+    --border: #d6d6d6; --text: #242424; --muted: #5f5f5f; --soft: #8a8a8a;
+    --accent: #005fb8; --waiting: #c42b1c; --running: #0f6cbd; --idle: #3a7d2c; --warn: #9a5b00;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: #101010; font-family: var(--font); color: var(--text); }
+  html[data-theme="light"] body { background: #e6e6e6; }
+  .panel { width: 620px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .note { width: 620px; margin: 10px auto 0; color: var(--soft); font-size: 11px; line-height: 1.7; }
+  .toolbar { width: 620px; margin: 0 auto 10px; display: flex; gap: 8px; }
+  .toolbar button { background: var(--surface-3); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 12px; font-size: 12px; cursor: pointer; }
+
+  .head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  .head .title { font-size: 14px; font-weight: 700; }
+  .head .sub { color: var(--muted); font-size: 11px; }
+  .metrics { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 12px; }
+  .m-label { color: var(--muted); font-size: 9px; font-weight: 700; text-transform: uppercase; }
+  .m-value { color: var(--text); font-size: 14px; font-weight: 600; }
+  .m-value.alert { color: var(--waiting); }
+
+  .sec { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 12px; }
+  .sec-title { font-size: 12px; font-weight: 700; margin-bottom: 8px; }
+  .sec-title small { color: var(--muted); font-weight: 400; }
+
+  .legend { display: flex; gap: 14px; font-size: 11px; color: var(--muted); margin-bottom: 4px; flex-wrap: wrap; }
+  .legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+
+  .chart { position: relative; }
+  .chart svg { display: block; width: 100%; height: auto; }
+  .chart .axis { stroke: var(--border); stroke-width: 1; }
+  .chart .tick { fill: var(--soft); font-size: 9px; font-variant-numeric: tabular-nums; }
+  .chart .mark-label { font-size: 9.5px; font-weight: 700; }
+
+  .breakdown { display: flex; height: 14px; border-radius: 4px; overflow: hidden; margin: 4px 0 6px; }
+  .breakdown div { height: 100%; }
+  .bk-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin: 2px 0; }
+  .bk-row b { color: var(--text); font-weight: 600; }
+
+  .audit-head { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; font-size: 12px; font-weight: 700; }
+  .audit-head .chev { color: var(--muted); font-size: 10px; transition: transform .15s; }
+  .audit.open .chev { transform: rotate(90deg); }
+  .audit .audit-body { display: none; }
+  .audit.open .audit-body { display: block; }
+  table { border-collapse: collapse; width: 100%; font-size: 11px; margin-top: 8px; }
+  th { text-align: left; color: var(--muted); font-weight: 700; font-size: 10px; text-transform: uppercase; padding: 3px 6px; border-bottom: 1px solid var(--border); }
+  td { padding: 4px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td.dim { color: var(--soft); } td.num { font-variant-numeric: tabular-nums; }
+  tr.marked td { background: color-mix(in srgb, var(--waiting) 10%, transparent); }
+  tr.flash td { background: color-mix(in srgb, var(--warn) 18%, transparent); }
+  .model-swap { color: var(--waiting); font-weight: 600; }
+  .badge { display: inline-block; border-radius: 8px; padding: 0 6px; margin-right: 3px; font-size: 10px; font-weight: 600; line-height: 16px; }
+  .badge.model { background: color-mix(in srgb, var(--waiting) 22%, transparent); color: var(--waiting); }
+  .badge.usage { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
+  .badge.retry { background: color-mix(in srgb, var(--idle) 25%, transparent); color: var(--idle); }
+  .preview-line { width: 620px; margin: 12px auto 0; background: var(--surface-2); border: 1px dashed var(--soft); border-radius: 8px; padding: 8px 12px; font-size: 12px; color: var(--muted); }
+  .preview-line b { color: var(--text); }
+  .preview-line .dot { color: var(--waiting); font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <button onclick="toggleTheme()">dark / light</button>
+  <button onclick="toggleLang()">中文 / EN</button>
+</div>
+
+<div class="panel">
+  <div class="head"><span class="title">agentwatcher-cli 契约测试补测</span><span class="sub">Codex · dev · 14 轮 · 22 分钟</span></div>
+  <div class="metrics">
+    <div><div class="m-label" data-i="m1">累计输入</div><div class="m-value">412k</div></div>
+    <div><div class="m-label" data-i="m2">输出</div><div class="m-value">31k</div></div>
+    <div><div class="m-label" data-i="m3">模型调用</div><div class="m-value">37</div></div>
+    <div><div class="m-label" data-i="m4">工具调用</div><div class="m-value">63</div></div>
+    <div><div class="m-label" data-i="m5">活跃时长</div><div class="m-value">22m</div></div>
+    <div><div class="m-label" data-i="m6">信号</div><div class="m-value alert">3</div></div>
+  </div>
+
+  <!-- 用量时间轴（按模型分色）+ 信号标记：本图全部为新增标记的示意 -->
+  <div class="sec">
+    <div class="sec-title"><span data-i="t1">用量时间轴 · 按模型</span> <small data-i="t1s">▍竖虚线 = 模型切换 · 点 = 信号，点击定位到下方审计行</small></div>
+    <div class="legend">
+      <span><span class="swatch" style="background:var(--running)"></span>gpt-6.1-sol</span>
+      <span><span class="swatch" style="background:var(--warn)"></span>gpt-6-luna</span>
+      <span><span class="swatch" style="background:var(--waiting)"></span><span data-i="lg1">信号标记</span></span>
+    </div>
+    <div class="chart">
+      <svg viewBox="0 0 592 150">
+        <!-- 网格与轴 -->
+        <line class="axis" x1="30" y1="120" x2="582" y2="120"/>
+        <line class="axis" x1="30" y1="10"  x2="30"  y2="120"/>
+        <text class="tick" x="2" y="123">0</text><text class="tick" x="2" y="65">2k</text><text class="tick" x="0" y="15">4k</text>
+        <text class="tick" x="30" y="136">#1</text><text class="tick" x="190" y="136">#5</text><text class="tick" x="350" y="136">#9</text><text class="tick" x="470" y="136">#12</text><text class="tick" x="545" y="136">#14</text>
+        <!-- gpt-6.1-sol 段（1-11 轮，蓝） -->
+        <rect x="30" y="52" width="40" height="68" fill="var(--running)" opacity=".75"/>
+        <rect x="70" y="34" width="40" height="86" fill="var(--running)" opacity=".75"/>
+        <rect x="110" y="80" width="40" height="40" fill="var(--running)" opacity=".75"/>
+        <rect x="150" y="60" width="40" height="60" fill="var(--running)" opacity=".75"/>
+        <rect x="190" y="28" width="40" height="92" fill="var(--running)" opacity=".75"/>
+        <rect x="230" y="56" width="40" height="64" fill="var(--running)" opacity=".75"/>
+        <rect x="270" y="44" width="40" height="76" fill="var(--running)" opacity=".75"/>
+        <rect x="310" y="68" width="40" height="52" fill="var(--running)" opacity=".75"/>
+        <rect x="350" y="30" width="40" height="90" fill="var(--running)" opacity=".75"/>
+        <rect x="390" y="56" width="40" height="64" fill="var(--running)" opacity=".75"/>
+        <rect x="430" y="42" width="40" height="78" fill="var(--running)" opacity=".75"/>
+        <!-- gpt-6-luna 段（12-14 轮，橙） -->
+        <rect x="470" y="76" width="40" height="44" fill="var(--warn)" opacity=".8"/>
+        <rect x="510" y="115" width="25" height="5" fill="var(--warn)" opacity=".8"/>
+        <rect x="535" y="80" width="37" height="40" fill="var(--warn)" opacity=".8"/>
+        <!-- 模型切换参考线（turn 12） -->
+        <line x1="470" y1="6" x2="470" y2="120" stroke="var(--waiting)" stroke-width="1.4" stroke-dasharray="4 3"/>
+        <text class="mark-label" x="474" y="12" fill="var(--waiting)" data-i="mk1">模型切换</text>
+        <!-- 信号点：#13 低输出、#14 重试 -->
+        <circle cx="522" cy="110" r="4.5" fill="var(--waiting)"/>
+        <text class="mark-label" x="502" y="103" fill="var(--waiting)" data-i="mk2">低输出</text>
+        <circle cx="553" cy="72" r="4.5" fill="var(--waiting)"/>
+        <text class="mark-label" x="540" y="64" fill="var(--waiting)" data-i="mk3">重试</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- 按模型×档位分解（有 variant 的源） -->
+  <div class="sec">
+    <div class="sec-title" data-i="t2">分解 · 按模型 × 档位</div>
+    <div class="breakdown">
+      <div style="width:79%;background:var(--running)"></div>
+      <div style="width:21%;background:var(--warn)"></div>
+    </div>
+    <div class="bk-row"><span><b>gpt-6.1-sol</b> · high · 11 轮</span><span>388k / 31k</span></div>
+    <div class="bk-row"><span><b>gpt-6-luna</b> · high · 3 轮 <span class="badge model" data-i="b1">模型变化</span></span><span>24k / 1.7k</span></div>
+  </div>
+
+  <!-- 逐轮审计表（可折叠，完整表住在这里） -->
+  <div class="sec audit open" id="audit">
+    <div class="audit-head" onclick="document.getElementById('audit').classList.toggle('open')">
+      <span class="chev">▶</span><span data-i="t3">逐轮审计</span>
+      <small style="color:var(--muted);font-weight:400" data-i="t3s">14 轮 · 3 个信号</small>
+    </div>
+    <div class="audit-body">
+      <table>
+        <thead><tr>
+          <th data-i="h1">轮</th><th data-i="h2">模型</th><th data-i="h3">档位</th>
+          <th data-i="h4">输出</th><th data-i="h5">首token</th><th data-i="h6">信号</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="preview-line" id="pl"><span data-i="p1">悬浮预览里只加这一行：</span> <b>gpt-6.1-sol → gpt-6-luna</b> · <span class="dot">3</span> <span data-i="p2">个信号 · 点击打开会话分析</span></div>
+
+<div class="note" data-i="note">原型稿（第二版设计）：逐轮审计并入会话分析面板——同一张按模型分色的时间轴上加模型切换参考线与信号点（点击定位到审计行），下方是完整的可折叠逐轮审计表与「模型 × 档位」分解；悬浮预览只留一行摘要。数据为示意。</div>
+
+<script>
+const T = {
+  zh: { m1:'累计输入',m2:'输出',m3:'模型调用',m4:'工具调用',m5:'活跃时长',m6:'信号',
+    t1:'用量时间轴 · 按模型',t1s:'▍竖虚线 = 模型切换 · 点 = 信号，点击定位到下方审计行',lg1:'信号标记',
+    t2:'分解 · 按模型 × 档位',b1:'模型变化',t3:'逐轮审计',t3s:'14 轮 · 3 个信号',
+    h1:'轮',h2:'模型',h3:'档位',h4:'输出',h5:'首token',h6:'信号',
+    mk1:'模型切换',mk2:'低输出',mk3:'重试',
+    p1:'悬浮预览里只加这一行：',p2:'个信号 · 点击打开会话分析',
+    note:'原型稿（第二版设计）：逐轮审计并入会话分析面板——同一张按模型分色的时间轴上加模型切换参考线与信号点（点击定位到审计行），下方是完整的可折叠逐轮审计表与「模型 × 档位」分解；悬浮预览只留一行摘要。数据为示意。',
+    sig:{model:'模型变化',usage:'低输出',retry:'重试'} },
+  en: { m1:'Total in',m2:'Output',m3:'Model calls',m4:'Tool calls',m5:'Active',m6:'Signals',
+    t1:'Usage timeline · by model',t1s:'▍dashed line = model swap · dots = signals, click to jump to audit row',lg1:'signal marks',
+    t2:'Breakdown · model × effort',b1:'model swap',t3:'Turn audit',t3s:'14 turns · 3 signals',
+    h1:'Turn',h2:'Model',h3:'Effort',h4:'Output',h5:'TTFT',h6:'Signals',
+    mk1:'model swap',mk2:'low out',mk3:'retry',
+    p1:'Hover preview only gets this line:',p2:'signals · click opens session analytics',
+    note:'Mock (design v2): turn audit merges into the session analytics panel — model-swap reference lines and signal dots on the existing per-model timeline (click jumps to the audit row), full collapsible audit table and model×effort breakdown below; hover preview keeps a one-line summary. Data is illustrative.',
+    sig:{model:'model swap',usage:'low out',retry:'retry'} }
+};
+const ROWS = [
+  ['#1','gpt-6.1-sol','high','1,842','1.2s',''],
+  ['#2','gpt-6.1-sol','high','2,106','0.9s',''],
+  ['#3','gpt-6.1-sol','high','960','1.4s',''],
+  ['#4','gpt-6.1-sol','high','1,517','1.1s',''],
+  ['#5','gpt-6.1-sol','high','2,230','0.8s',''],
+  ['#6','gpt-6.1-sol','high','1,288','1.0s',''],
+  ['#7','gpt-6.1-sol','high','1,745','1.3s',''],
+  ['#8','gpt-6.1-sol','high','1,102','0.9s',''],
+  ['#9','gpt-6.1-sol','high','1,966','1.1s',''],
+  ['#10','gpt-6.1-sol','high','1,374','1.0s',''],
+  ['#11','gpt-6.1-sol','high','1,640','1.2s',''],
+  ['#12','gpt-6.1-sol → gpt-6-luna','high','812','0.6s','model'],
+  ['#13','gpt-6-luna','high','173','0.4s','usage'],
+  ['#14','gpt-6-luna','high','748','0.5s','retry'],
+];
+let lang = 'zh';
+function render(){
+  const t = T[lang];
+  document.querySelectorAll('[data-i]').forEach(el=>{ const k=el.dataset.i; if(t[k]) el.textContent=t[k]; });
+  document.getElementById('rows').innerHTML = ROWS.map(r=>{
+    const sig = r[5] ? `<span class="badge ${r[5]}">${t.sig[r[5]]}</span>` : '<span style="color:var(--soft)">—</span>';
+    const swap = r[1].includes('→') ? 'model-swap' : '';
+    const cls = r[5]==='usage' ? 'flash' : (r[5] ? 'marked' : '');
+    return `<tr class="${cls}"><td class="dim num">${r[0]}</td><td class="${swap}">${r[1]}</td><td class="dim">${r[2]}</td><td class="num">${r[3]}</td><td class="dim num">${r[4]}</td><td>${sig}</td></tr>`;
+  }).join('');
+}
+function toggleTheme(){ const h=document.documentElement; h.dataset.theme = h.dataset.theme==='light' ? '' : 'light'; }
+function toggleLang(){ lang = lang==='zh'?'en':'zh'; render(); }
+render();
+</script>
+</body>
+</html>

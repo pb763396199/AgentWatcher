@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>逐轮审计面板原型（悬浮预览 · 用量段之后新增）</title>
+<style>
+  :root {
+    --surface: #202020; --surface-2: #252526; --surface-3: #2d2d30;
+    --border: #3c3c3c; --text: #d4d4d4; --muted: #9a9a9a; --soft: #6f6f6f;
+    --accent: #0078d4; --waiting: #f14c4c; --running: #3794ff; --idle: #6a9955;
+    --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  html[data-theme="light"] {
+    --surface: #ffffff; --surface-2: #f3f3f3; --surface-3: #e8e8e8;
+    --border: #d0d0d0; --text: #242424; --muted: #5f5f5f; --soft: #8a8a8a;
+    --accent: #005fb8; --waiting: #c42b1c; --running: #0f6cbd; --idle: #3a7d2c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 18px; background: #101010; font-family: var(--font); color: var(--text); }
+  html[data-theme="light"] body { background: #eaeaea; }
+  .panel {
+    width: 400px; margin: 0 auto; background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 10px; padding: 12px;
+  }
+  .panel-note { width: 400px; margin: 10px auto 0; color: var(--soft); font-size: 11px; line-height: 1.6; }
+  .toolbar { width: 400px; margin: 0 auto 10px; display: flex; gap: 8px; }
+  .toolbar button {
+    background: var(--surface-3); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 3px 12px; font-size: 12px; cursor: pointer;
+  }
+  .session-title { font-size: 13px; font-weight: 600; margin: 2px 0 10px; }
+  .session-title small { color: var(--muted); font-weight: 400; }
+
+  /* —— 既有用量段（样式照抄 ui/index.html，作位置参照）—— */
+  .usage-hero { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+  .usage-hero-label { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+  .usage-hero-value { color: var(--text); font-size: 18px; font-weight: 700; }
+  .usage-hero-sub { color: var(--soft); font-size: 11px; }
+  .usage-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 12px; }
+  .usage-item-label { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+  .usage-item-value { color: var(--text); font-size: 13px; font-weight: 600; }
+  .usage-item-sub { color: var(--soft); font-size: 10px; }
+  .old-section { position: relative; }
+  .old-section::after { content: ""; position: absolute; inset: -6px; border: 1px dashed var(--soft); border-radius: 8px; pointer-events: none; }
+
+  /* —— 新增：逐轮审计段 —— */
+  .audit { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+  .audit-head {
+    display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
+    color: var(--text); font-size: 12px; font-weight: 700;
+  }
+  .audit-head .chev { color: var(--muted); transition: transform .15s; font-size: 10px; }
+  .audit.open .chev { transform: rotate(90deg); }
+  .audit-summary { color: var(--muted); font-size: 11px; font-weight: 400; margin-left: auto; }
+  .audit-body { display: none; margin-top: 8px; }
+  .audit.open .audit-body { display: block; }
+  table.audit-table { border-collapse: collapse; width: 100%; font-size: 11px; }
+  .audit-table th {
+    text-align: left; color: var(--muted); font-weight: 700; font-size: 10px;
+    text-transform: uppercase; padding: 3px 6px; border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; background: var(--surface-2);
+  }
+  .audit-table td { padding: 4px 6px; border-bottom: 1px solid var(--border); color: var(--text); white-space: nowrap; }
+  .audit-table td.dim { color: var(--soft); }
+  .audit-table td.num { font-variant-numeric: tabular-nums; }
+  .audit-table tr.marked td { background: color-mix(in srgb, var(--waiting) 10%, transparent); }
+  .model-swap { color: var(--waiting); font-weight: 600; }
+  .badge {
+    display: inline-block; border-radius: 8px; padding: 0 6px; margin: 0 2px 2px 0;
+    font-size: 10px; font-weight: 600; line-height: 16px;
+  }
+  .badge.model    { background: color-mix(in srgb, var(--waiting) 22%, transparent); color: var(--waiting); }
+  .badge.effort   { background: color-mix(in srgb, var(--running) 22%, transparent); color: var(--running); }
+  .badge.usage    { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
+  .badge.retry    { background: color-mix(in srgb, var(--idle) 25%, transparent); color: var(--idle); }
+  .audit-empty { color: var(--soft); font-size: 11px; padding: 8px 2px; }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <button onclick="toggleTheme()">dark / light</button>
+  <button onclick="toggleLang()">中文 / EN</button>
+</div>
+
+<div class="panel">
+  <div class="session-title"><span id="t-session">agentwatcher-cli 契约测试补测</span> <small id="t-provider">Codex · dev</small></div>
+
+  <!-- 既有用量段（虚线框=位置参照，非新增） -->
+  <div class="old-section">
+    <div class="usage-hero">
+      <span class="usage-hero-label" id="t-total">累计输入</span>
+      <span class="usage-hero-value">412k</span>
+      <span class="usage-hero-sub" id="t-cached">缓存 86%</span>
+    </div>
+    <div class="usage-grid">
+      <div><div class="usage-item-label" id="t-out">输出</div><div class="usage-item-value">31k</div></div>
+      <div><div class="usage-item-label" id="t-ctx">上下文</div><div class="usage-item-value">96k <span class="usage-item-sub">/ 260k</span></div></div>
+      <div><div class="usage-item-label" id="t-turns">轮次</div><div class="usage-item-value">14</div></div>
+      <div><div class="usage-item-label" id="t-tools">工具调用</div><div class="usage-item-value">63</div></div>
+    </div>
+  </div>
+
+  <!-- 新增：逐轮审计（可折叠） -->
+  <div class="audit open" id="audit">
+    <div class="audit-head" onclick="document.getElementById('audit').classList.toggle('open')">
+      <span class="chev">▶</span>
+      <span id="t-audit-title">逐轮审计</span>
+      <span class="audit-summary" id="t-audit-summary">14 轮 · 3 个信号</span>
+    </div>
+    <div class="audit-body">
+      <table class="audit-table">
+        <thead>
+          <tr>
+            <th id="th-turn">轮</th><th id="th-model">模型</th><th id="th-effort">档位</th>
+            <th id="th-output">输出</th><th id="th-ttft">首token</th><th id="th-signals">信号</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="panel" style="margin-top:12px">
+  <div class="audit">
+    <div class="audit-head"><span class="chev">▶</span><span id="t-audit-title2">逐轮审计</span></div>
+    <div class="audit-body" style="display:block">
+      <div class="audit-empty" id="t-empty">该数据源不支持逐轮审计：Copilot CLI 的会话库没有记录模型与用量字段。</div>
+    </div>
+  </div>
+</div>
+
+<div class="panel-note" id="t-note">原型稿：上半是悬浮预览面板用量段之后新增的可折叠「逐轮审计」表；下半是 Copilot CLI 的不支持提示。数据为示意（turn 12 换模型、13 输出骤降、14 重试）。</div>
+
+<script>
+const I18N = {
+  zh: ['agentwatcher-cli 契约测试补测','Codex · dev','累计输入','缓存 86%','输出','上下文','轮次','工具调用','逐轮审计','14 轮 · 3 个信号','轮','模型','档位','输出','首token','信号','该数据源不支持逐轮审计：Copilot CLI 的会话库没有记录模型与用量字段。','原型稿：上半是悬浮预览面板用量段之后新增的可折叠「逐轮审计」表；下半是 Copilot CLI 的不支持提示。数据为示意（turn 12 换模型、13 输出骤降、14 重试）。'],
+  en: ['agentwatcher-cli contract test backfill','Codex · dev','Total input','cached 86%','Output','Context','Turns','Tool calls','Turn audit','14 turns · 3 signals','Turn','Model','Effort','Output','TTFT','Signals','This source does not support turn audit: the Copilot CLI session store has no model or usage fields.','Mock: top shows the collapsible turn-audit table added below the hover-preview usage section; bottom shows the Copilot CLI not-supported state. Data is illustrative (model swap at turn 12, low output at 13, retry at 14).']
+};
+const ROWS = [
+  ['#1','gpt-6.1-sol','high','1,842','1.2s',''],
+  ['#2','gpt-6.1-sol','high','2,106','0.9s',''],
+  ['#3','gpt-6.1-sol','high','960','1.4s',''],
+  ['#4','gpt-6.1-sol','high','1,517','1.1s',''],
+  ['#5','gpt-6.1-sol','high','2,230','0.8s',''],
+  ['#6','gpt-6.1-sol','high','1,288','1.0s',''],
+  ['#7','gpt-6.1-sol','high','1,745','1.3s',''],
+  ['#8','gpt-6.1-sol','high','1,102','0.9s',''],
+  ['#9','gpt-6.1-sol','high','1,966','1.1s',''],
+  ['#10','gpt-6.1-sol','high','1,374','1.0s',''],
+  ['#11','gpt-6.1-sol','high','1,640','1.2s',''],
+  ['#12','gpt-6.1-sol → gpt-6-luna','high','812','0.6s','model'],
+  ['#13','gpt-6-luna','high','173','0.4s','usage'],
+  ['#14','gpt-6-luna','high','748','0.5s','retry'],
+];
+const BADGE = { model:['模型变化','badge model'], effort:['档位变化','badge effort'], usage:['用量异常','badge usage'], retry:['重试','badge retry'] };
+const BADGE_EN = { model:['model swap','badge model'], effort:['effort','badge effort'], usage:['low output','badge usage'], retry:['retry','badge retry'] };
+let lang = 'zh';
+function render() {
+  const t = I18N[lang];
+  ['t-session','t-provider','t-total','t-cached','t-out','t-ctx','t-turns','t-tools','t-audit-title','t-audit-summary','th-turn','th-model','th-effort','th-output','th-ttft','th-signals'].forEach((id,i)=>document.getElementById(id).textContent=t[i]);
+  document.getElementById('t-audit-title2').textContent = t[8];
+  document.getElementById('t-empty').textContent = t[16];
+  document.getElementById('t-note').textContent = t[17];
+  document.getElementById('rows').innerHTML = ROWS.map(r=>{
+    const sig = r[5] ? `<span class="${BADGE[r[5]][1]}">${(lang==='zh'?BADGE:BADGE_EN)[r[5]][0]}</span>` : '<span style="color:var(--soft)">—</span>';
+    const swap = r[1].includes('→') ? 'model-swap' : '';
+    const marked = r[5] ? ' class="marked"' : '';
+    return `<tr${marked}><td class="dim num">${r[0]}</td><td class="${swap}">${r[1]}</td><td class="dim">${r[2]}</td><td class="num">${r[3]}</td><td class="dim num">${r[4]}</td><td>${sig}</td></tr>`;
+  }).join('');
+}
+function toggleTheme(){ const h=document.documentElement; h.dataset.theme = h.dataset.theme==='light' ? '' : 'light'; }
+function toggleLang(){ lang = lang==='zh' ? 'en' : 'zh'; render(); }
+render();
+</script>
+</body>
+</html>
