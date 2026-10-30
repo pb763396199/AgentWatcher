@@ -15090,6 +15090,8 @@ pub struct SessionSuggestion {
     pub session_id: String,
     pub provider: String,
     pub text: String,
+    /// 结构化待选问题的问题文本（有选项时才有）。
+    pub question: Option<String>,
     pub options: Option<Vec<String>>,
     /// 生成建议时会话最后一条消息的 id，用于防陈旧校验。
     pub fingerprint: String,
@@ -15537,6 +15539,11 @@ fn generate_zcode_suggestion(session: &AgentSession, avoid: Option<&str>) -> Opt
         session_id: session.id.clone(),
         provider: session.provider.clone(),
         text,
+        question: context
+            .question
+            .as_ref()
+            .map(|question| question.question.clone())
+            .filter(|text| !text.trim().is_empty()),
         options: context
             .question
             .filter(|question| !question.options.is_empty())
@@ -15546,9 +15553,105 @@ fn generate_zcode_suggestion(session: &AgentSession, avoid: Option<&str>) -> Opt
     })
 }
 
-/// 全自动作答的挂接点：护栏全过才替用户把选项发出去。S6 填实现。
+/// 全自动作答的挂接点：护栏全过才替用户把选项发出去。
+/// 只对带结构化待选项的建议生效，自由文本永远不自动发。
 fn maybe_auto_answer(app: &tauri::AppHandle, session: &AgentSession, suggestion: &SessionSuggestion) {
-    let _ = (app, session, suggestion);
+    let Some(options) = suggestion.options.clone() else {
+        return;
+    };
+    let now_ms = current_time_ms();
+    let (settings, waiting_ms, last_two, manual_sent, auto_times) = {
+        let Ok(runtime) = suggestion_runtime().lock() else {
+            return;
+        };
+        let waiting_ms = runtime
+            .waiting_since
+            .get(&session.id)
+            .map(|since| now_ms.saturating_sub(*since))
+            .unwrap_or(0);
+        (
+            runtime.settings.clone(),
+            waiting_ms,
+            runtime.auto_last_two.get(&session.id).cloned().unwrap_or_default(),
+            runtime.manual_sent_since_fuse.get(&session.id).copied().unwrap_or(false),
+            runtime.auto_answer_times.get(&session.id).cloned().unwrap_or_default(),
+        )
+    };
+    let decision = auto_answer_decision(
+        &settings,
+        waiting_ms,
+        &suggestion.text,
+        &options,
+        &last_two,
+        manual_sent,
+        &auto_times,
+        now_ms,
+    );
+    if !decision.allowed {
+        return;
+    }
+
+    let session_key = session.id.strip_prefix("zcode:").unwrap_or(session.id.as_str());
+    let workspace = zcode_suggestion_context(&session.id)
+        .map(|context| context.workspace_path)
+        .filter(|directory| !directory.trim().is_empty())
+        .unwrap_or_else(|| session.workspace_path.clone().unwrap_or_default());
+    let outcome = match send_zcode_message_blocking(session_key, &workspace, &suggestion.text) {
+        Ok(()) => "sent",
+        Err(error) => {
+            eprintln!("auto answer send failed: {error}");
+            "failed"
+        }
+    };
+
+    let question_text = suggestion.question.clone().unwrap_or_default();
+    let audit = auto_answer_audit_line(
+        now_ms,
+        &session.id,
+        &question_text,
+        &options,
+        &suggestion.text,
+        outcome,
+    );
+    append_auto_answer_audit_line(&audit);
+
+    if let Ok(mut runtime) = suggestion_runtime().lock() {
+        let times = runtime.auto_answer_times.entry(session.id.clone()).or_default();
+        times.push(now_ms);
+        times.retain(|at| now_ms.saturating_sub(*at) < 3_600_000);
+        let answers = runtime.auto_last_two.entry(session.id.clone()).or_default();
+        answers.push(suggestion.text.clone());
+        let surplus = answers.len().saturating_sub(2);
+        for _ in 0..surplus {
+            answers.remove(0);
+        }
+        // 自动作答本身不算用户手动动作，熔断解除标记复位。
+        runtime.manual_sent_since_fuse.insert(session.id.clone(), false);
+        if outcome == "sent" {
+            runtime.current.remove(&session.id);
+            runtime.waiting_since.remove(&session.id);
+        }
+    }
+    if outcome == "sent" {
+        let _ = app.emit(SESSIONS_CHANGED_EVENT, current_time_ms());
+    }
+}
+
+/// 审计行追加进 %TEMP% 的 AgentWatcheruto-answersudit.jsonl。
+fn append_auto_answer_audit_line(line: &str) {
+    let dir = std::env::temp_dir().join("AgentWatcher").join("auto-answers");
+    append_audit_line_in_dir(&dir, line);
+}
+
+fn append_audit_line_in_dir(dir: &std::path::Path, line: &str) {
+    if std::fs::create_dir_all(dir).is_err() {
+        return;
+    }
+    let path = dir.join("audit.jsonl");
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        use std::io::Write;
+        let _ = writeln!(file, "{line}");
+    }
 }
 
 // ---- 发送通道：zcode.cjs headless 续话 ----
@@ -20661,6 +20764,7 @@ mod tests {
             session_id: "zcode:sess-1".to_string(),
             provider: "zcode".to_string(),
             text: "继续修".to_string(),
+            question: None,
             options: None,
             fingerprint: "msg-9".to_string(),
             created_at_ms: 1,
@@ -20803,5 +20907,22 @@ mod tests {
         slow_command.args(["/c", "ping -n 5 127.0.0.1 > nul"]);
         let timeout_error = run_child_with_timeout(&mut slow_command, 1, "子进程超时").unwrap_err();
         assert_eq!(timeout_error, "子进程超时");
+    }
+
+    #[test]
+    fn zcode_auto_answer_audit_appends_to_disk() {
+        let dir = std::env::temp_dir().join(format!("agentwatcher-audit-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let first = auto_answer_audit_line(1, "zcode:s1", "选哪个？", &["A".to_string(), "B".to_string()], "A", "sent");
+        let second = auto_answer_audit_line(2, "zcode:s1", "选哪个？", &["A".to_string(), "B".to_string()], "B", "failed");
+        append_audit_line_in_dir(&dir, &first);
+        append_audit_line_in_dir(&dir, &second);
+        let content = std::fs::read_to_string(dir.join("audit.jsonl")).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 2);
+        let parsed: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(parsed["chosen"], "B");
+        assert_eq!(parsed["outcome"], "failed");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
