@@ -15579,15 +15579,13 @@ fn maybe_auto_answer(app: &tauri::AppHandle, session_id: &str, suggestion: &Sess
     if !auto_on {
         return;
     }
-    // 生成完成时可能还没等满护栏要求的秒数：等到点再判，不等就放弃。
+    // 生成完成时可能还没等满护栏要求的秒数：睡到点再判，判定时直接按已满时长传入。
     if waiting_ms < AUTO_ANSWER_WAIT_SECS * 1_000 {
         let remaining = AUTO_ANSWER_WAIT_SECS * 1_000 - waiting_ms;
         std::thread::sleep(std::time::Duration::from_millis(remaining));
     }
-    let now_ms = current_time_ms();
-    let waiting_ms = waiting_ms + (now_ms - waiting_ms.saturating_sub(waiting_ms));
     let decision = auto_answer_decision(
-        waiting_ms.max(AUTO_ANSWER_WAIT_SECS * 1_000),
+        AUTO_ANSWER_WAIT_SECS * 1_000,
         &suggestion.text,
         &options,
         &last_two,
