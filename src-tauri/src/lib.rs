@@ -15361,6 +15361,9 @@ fn spawn_suggestion_generation(app: tauri::AppHandle, session_id: String, avoid:
             runtime.latest = Some(suggestion.clone());
             runtime.current.insert(session_id.clone(), suggestion.clone());
         }
+        // 先放锁再进全自动判定：maybe_auto_answer 内部还要拿同一把锁，
+        // std Mutex 不可重入，持有守卫调它会把生成线程和后续扫描一起锁死。
+        drop(runtime);
         let _ = app.emit(SUGGESTIONS_EVENT, &suggestion);
         maybe_auto_answer(&app, &session_id, &suggestion);
     });
