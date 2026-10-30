@@ -15042,6 +15042,132 @@ fn open_workbuddy_session(session: &OpenSessionRequest) -> Result<(), String> {
     })
 }
 
+// ===================== ZCode 会话 AI 建议 =====================
+
+/// AI 建议功能的设置。前端启动与保存时经 set_suggestion_settings 推给后端。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SuggestionSettings {
+    pub enabled: bool,
+    pub api_base: String,
+    pub api_key: String,
+    pub model: String,
+    pub hotkey: String,
+    /// "copy" 或 "send"
+    pub hotkey_action: String,
+    pub auto_enabled: bool,
+    pub auto_hourly_limit: u32,
+    pub auto_wait_secs: u64,
+}
+
+impl Default for SuggestionSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_base: String::new(),
+            api_key: String::new(),
+            model: String::new(),
+            hotkey: "Ctrl+Alt+K".to_string(),
+            hotkey_action: "copy".to_string(),
+            auto_enabled: false,
+            auto_hourly_limit: 6,
+            auto_wait_secs: 20,
+        }
+    }
+}
+
+/// 一条挂在会话卡片上的建议。text 为给用户看的下一句；options 存在时
+/// 表示该会话有结构化待选问题，text 必须是其中一个选项的原文。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSuggestion {
+    pub session_id: String,
+    pub provider: String,
+    pub text: String,
+    pub options: Option<Vec<String>>,
+    /// 生成建议时会话最后一条消息的 id，用于防陈旧校验。
+    pub fingerprint: String,
+    pub created_at_ms: u64,
+}
+
+/// 送进提示词的会话上下文。
+#[derive(Debug, Clone, Default)]
+pub struct SuggestionContext {
+    pub workspace_path: String,
+    /// (角色, 文本)，角色为 "user" 或 "assistant"，按时间序。
+    pub turns: Vec<(String, String)>,
+    pub question: Option<PendingQuestion>,
+    /// 会话最后一条消息的 id，即建议的指纹。
+    pub fingerprint: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PendingQuestion {
+    pub question: String,
+    pub options: Vec<String>,
+}
+
+/// 只有"新进入 waiting"才触发建议；running 转 idle 默认不出建议。
+fn suggestion_should_trigger(prev_status: Option<&str>, cur_status: &str) -> bool {
+    todo!()
+}
+
+const SUGGESTION_MAX_CHARS: usize = 120;
+
+/// 组装提示词。avoid 用于「换一个」：带着上一条建议要求避开。
+fn build_suggestion_prompt(context: &SuggestionContext, avoid: Option<&str>) -> String {
+    todo!()
+}
+
+/// 解析模型输出的最终文本，抽取 {"suggestion": string|null}。
+/// null、解析失败、空串、超过 max_chars 一律返回 None（不出建议）。
+fn parse_suggestion_response(body: &str, max_chars: usize) -> Option<String> {
+    todo!()
+}
+
+/// 建议是否仍然新鲜：指纹与会话当前最后一条消息 id 一致才算数。
+fn suggestion_fingerprint_valid(suggestion: &SessionSuggestion, current_fingerprint: &str) -> bool {
+    todo!()
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AutoAnswerDecision {
+    pub allowed: bool,
+    pub reason: String,
+}
+
+/// 全自动作答的纯判定：设置、待选项、等待时长、每小时预算、连续同答案熔断、
+/// 建议必须命中选项集，全部满足才放行。
+///
+/// last_two_answers 是该会话最近两次自动答案（旧在前），连续两次相同即熔断，
+/// manual_sent_since_fuse 为真表示熔断后用户手动发过一条，解除熔断；
+/// auto_answers_last_hour 是该会话最近一小时的自动作答时间戳（毫秒）。
+#[allow(clippy::too_many_arguments)]
+fn auto_answer_decision(
+    settings: &SuggestionSettings,
+    waiting_ms: u64,
+    suggestion_text: &str,
+    options: &[String],
+    last_two_answers: &[String],
+    manual_sent_since_fuse: bool,
+    auto_answers_last_hour: &[u64],
+    now_ms: u64,
+) -> AutoAnswerDecision {
+    todo!()
+}
+
+/// 审计日志一行：JSON，字段齐全，追加写入 auto-answers/audit.jsonl。
+fn auto_answer_audit_line(
+    now_ms: u64,
+    session_id: &str,
+    question: &str,
+    options: &[String],
+    chosen: &str,
+    outcome: &str,
+) -> String {
+    todo!()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -19886,5 +20012,157 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("Missing WorkBuddy session id"));
+    }
+
+    #[test]
+    fn zcode_suggestion_pipeline_contract() {
+        // 状态转换：新进入 waiting 才触发。
+        assert!(suggestion_should_trigger(Some("idle"), "waiting"));
+        assert!(suggestion_should_trigger(Some("running"), "waiting"));
+        assert!(suggestion_should_trigger(None, "waiting"));
+        assert!(!suggestion_should_trigger(Some("running"), "idle"));
+        assert!(!suggestion_should_trigger(Some("waiting"), "waiting"));
+
+        // 提示词契约：v5 改造的关键句都在，待选项与避开上条各就位。
+        let context = SuggestionContext {
+            workspace_path: "F:\\proj".to_string(),
+            turns: vec![
+                ("user".to_string(), "帮我把测试跑通".to_string()),
+                ("assistant".to_string(), "已跑通 3 个用例，还差 1 个".to_string()),
+            ],
+            question: Some(PendingQuestion {
+                question: "剩下那个用例怎么处理？".to_string(),
+                options: vec!["跳过它".to_string(), "继续修".to_string()],
+            }),
+            fingerprint: "msg-9".to_string(),
+        };
+        let prompt = build_suggestion_prompt(&context, None);
+        assert!(prompt.contains("120 个字"));
+        assert!(prompt.contains("具体动作和具体对象"));
+        assert!(prompt.contains("不会自动发送"));
+        assert!(prompt.contains("原样使用其中一个选项"));
+        assert!(prompt.contains("跳过它") && prompt.contains("继续修"));
+        assert!(prompt.contains("剩下那个用例怎么处理？"));
+        assert!(!prompt.contains("避开"));
+
+        let avoid_prompt = build_suggestion_prompt(&context, Some("跳过它"));
+        assert!(avoid_prompt.contains("避开"));
+        assert!(avoid_prompt.contains("跳过它"));
+
+        let bare = build_suggestion_prompt(
+            &SuggestionContext {
+                turns: vec![("user".to_string(), "继续".to_string())],
+                ..Default::default()
+            },
+            None,
+        );
+        assert!(!bare.contains("原样使用其中一个选项"));
+
+        // 响应契约：正常、null、坏 JSON、超长。
+        assert_eq!(
+            parse_suggestion_response(r#"{"suggestion":"继续修剩下的用例"}"#, 120),
+            Some("继续修剩下的用例".to_string())
+        );
+        assert_eq!(parse_suggestion_response(r#"{"suggestion":null}"#, 120), None);
+        assert_eq!(parse_suggestion_response("不是 JSON", 120), None);
+        let too_long = "长".repeat(121);
+        assert_eq!(
+            parse_suggestion_response(&format!(r#"{{"suggestion":"{too_long}"}}"#), 120),
+            None
+        );
+        let exact = "长".repeat(120);
+        assert_eq!(
+            parse_suggestion_response(&format!(r#"{{"suggestion":"{exact}"}}"#), 120),
+            Some(exact)
+        );
+        assert_eq!(parse_suggestion_response(r#"{"suggestion":"   "}"#, 120), None);
+
+        // 指纹防陈旧。
+        let suggestion = SessionSuggestion {
+            session_id: "zcode:sess-1".to_string(),
+            provider: "zcode".to_string(),
+            text: "继续修".to_string(),
+            options: None,
+            fingerprint: "msg-9".to_string(),
+            created_at_ms: 1,
+        };
+        assert!(suggestion_fingerprint_valid(&suggestion, "msg-9"));
+        assert!(!suggestion_fingerprint_valid(&suggestion, "msg-10"));
+    }
+
+    #[test]
+    fn zcode_auto_answer_guardrails() {
+        let settings = SuggestionSettings {
+            enabled: true,
+            auto_enabled: true,
+            auto_hourly_limit: 6,
+            auto_wait_secs: 20,
+            ..Default::default()
+        };
+        let options = vec!["跳过它".to_string(), "继续修".to_string()];
+        let now = 1_000_000_u64;
+
+        // 总开关关掉：不放行。
+        let mut off = settings.clone();
+        off.auto_enabled = false;
+        assert!(!auto_answer_decision(&off, 60_000, "继续修", &options, &[], true, &[], now).allowed);
+
+        // 没有待选项：不放行。
+        assert!(!auto_answer_decision(&settings, 60_000, "继续修", &[], &[], true, &[], now).allowed);
+
+        // 等待未满 20 秒：不放行。
+        assert!(!auto_answer_decision(&settings, 19_000, "继续修", &options, &[], true, &[], now).allowed);
+
+        // 每小时第 7 次：预算拦下。
+        let spent: Vec<u64> = (0..6).map(|i| now - i * 60_000).collect();
+        let budget = auto_answer_decision(&settings, 60_000, "继续修", &options, &[], true, &spent, now);
+        assert!(!budget.allowed);
+        assert!(budget.reason.contains("预算"));
+
+        // 连续两次同答案且用户没手动发过：熔断。
+        let fused = auto_answer_decision(
+            &settings,
+            60_000,
+            "继续修",
+            &options,
+            &["继续修".to_string(), "继续修".to_string()],
+            false,
+            &[],
+            now,
+        );
+        assert!(!fused.allowed);
+        assert!(fused.reason.contains("熔断"));
+
+        // 熔断后用户手动发过一条：解除。
+        let unfused = auto_answer_decision(
+            &settings,
+            60_000,
+            "继续修",
+            &options,
+            &["继续修".to_string(), "继续修".to_string()],
+            true,
+            &[],
+            now,
+        );
+        assert!(unfused.allowed);
+
+        // 建议不在选项集里：不放行。
+        let stray = auto_answer_decision(&settings, 60_000, "都重跑", &options, &[], true, &[], now);
+        assert!(!stray.allowed);
+        assert!(stray.reason.contains("选项"));
+
+        // 全部满足：放行。
+        let ok = auto_answer_decision(&settings, 60_000, "继续修", &options, &[], true, &[], now);
+        assert!(ok.allowed);
+
+        // 审计行：JSON 字段齐全。
+        let line = auto_answer_audit_line(now, "zcode:sess-1", "剩下那个用例怎么处理？", &options, "继续修", "sent");
+        let audit: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(audit["sessionId"], "zcode:sess-1");
+        assert_eq!(audit["question"], "剩下那个用例怎么处理？");
+        assert_eq!(audit["options"][1], "继续修");
+        assert_eq!(audit["chosen"], "继续修");
+        assert_eq!(audit["outcome"], "sent");
+        assert!(audit["atMs"].as_u64() == Some(now));
     }
 }
