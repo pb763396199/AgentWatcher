@@ -15109,25 +15109,64 @@ pub struct PendingQuestion {
 
 /// 只有"新进入 waiting"才触发建议；running 转 idle 默认不出建议。
 fn suggestion_should_trigger(prev_status: Option<&str>, cur_status: &str) -> bool {
-    todo!()
+    cur_status == "waiting" && prev_status != Some("waiting")
 }
 
 const SUGGESTION_MAX_CHARS: usize = 120;
 
 /// 组装提示词。avoid 用于「换一个」：带着上一条建议要求避开。
 fn build_suggestion_prompt(context: &SuggestionContext, avoid: Option<&str>) -> String {
-    todo!()
+    let mut prompt = String::new();
+    prompt.push_str("这是一条由 AgentWatcher 应用发起的请求，用于生成给用户看的下一句建议。这不是用户本人写的消息。\n");
+    prompt.push_str("建议会显示在会话卡片上，用户可以采用、修改或忽略；不会自动发送。\n");
+    prompt.push_str("根据下面的对话上下文，预测这位用户接下来最可能发送的一条消息。用整个上下文理解用户当前的意图和最近一轮交流；选择最能延续这个意图的具体动作和具体对象，不要给泛泛的通用跟进；用用户自己的口吻自然表达，保留必要的约束要求；即使多个续法都说得通，也选依据最扎实的那一个；对措辞或细节不确定不是返回 null 的理由，只有上下文完全没有可依据的下一步时才返回 null。\n");
+    if context.question.is_some() {
+        prompt.push_str("本次上下文带「待选问题与选项」，suggestion 必须原样使用其中一个选项的文本。\n");
+    }
+    if let Some(avoid) = avoid {
+        prompt.push_str(&format!("避开这条已经给过的建议：{avoid}，给出不同的下一步。\n"));
+    }
+    prompt.push_str("suggestion 恰好是一条自然的用户消息，一行，不超过 120 个字，或为 null。不要给备选，不要解释。\n");
+    prompt.push_str("只输出符合这个格式的 JSON：{\"suggestion\": string|null}\n\n");
+    if !context.workspace_path.is_empty() {
+        prompt.push_str(&format!("工作区：{}\n", context.workspace_path));
+    }
+    if let Some(question) = &context.question {
+        prompt.push_str("\n待选问题与选项：\n");
+        prompt.push_str(&format!("问题：{}\n", question.question));
+        for option in &question.options {
+            prompt.push_str(&format!("- {option}\n"));
+        }
+    }
+    prompt.push_str("\n对话上下文（最近若干轮）：\n");
+    for (role, text) in &context.turns {
+        prompt.push_str(&format!("{role}: {text}\n"));
+    }
+    prompt
 }
 
 /// 解析模型输出的最终文本，抽取 {"suggestion": string|null}。
 /// null、解析失败、空串、超过 max_chars 一律返回 None（不出建议）。
 fn parse_suggestion_response(body: &str, max_chars: usize) -> Option<String> {
-    todo!()
+    let mut trimmed = body.trim();
+    // 宽容一层 markdown 代码围栏，真实模型输出常带。
+    if let Some(stripped) = trimmed.strip_prefix("```") {
+        trimmed = stripped.trim_start_matches("json").trim_start();
+        if let Some(without_suffix) = trimmed.strip_suffix("```") {
+            trimmed = without_suffix.trim();
+        }
+    }
+    let value: serde_json::Value = serde_json::from_str(trimmed).ok()?;
+    let text = value.get("suggestion")?.as_str()?.trim();
+    if text.is_empty() || text.chars().count() > max_chars {
+        return None;
+    }
+    Some(text.to_string())
 }
 
 /// 建议是否仍然新鲜：指纹与会话当前最后一条消息 id 一致才算数。
 fn suggestion_fingerprint_valid(suggestion: &SessionSuggestion, current_fingerprint: &str) -> bool {
-    todo!()
+    !suggestion.fingerprint.is_empty() && suggestion.fingerprint == current_fingerprint
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -15153,7 +15192,38 @@ fn auto_answer_decision(
     auto_answers_last_hour: &[u64],
     now_ms: u64,
 ) -> AutoAnswerDecision {
-    todo!()
+    let denied = |reason: &str| AutoAnswerDecision {
+        allowed: false,
+        reason: reason.to_string(),
+    };
+    if !settings.auto_enabled {
+        return denied("全自动作答未开启");
+    }
+    if options.is_empty() {
+        return denied("没有结构化待选项");
+    }
+    if waiting_ms < settings.auto_wait_secs * 1_000 {
+        return denied("等待时长未到");
+    }
+    let in_hour = auto_answers_last_hour
+        .iter()
+        .filter(|&&at| now_ms.saturating_sub(at) < 3_600_000)
+        .count();
+    if in_hour as u32 >= settings.auto_hourly_limit {
+        return denied("超过每小时预算");
+    }
+    let fused = last_two_answers.len() >= 2
+        && last_two_answers[last_two_answers.len() - 1] == last_two_answers[last_two_answers.len() - 2];
+    if fused && !manual_sent_since_fuse {
+        return denied("连续两次同答案，已熔断");
+    }
+    if !options.iter().any(|option| option == suggestion_text) {
+        return denied("建议不在选项集里");
+    }
+    AutoAnswerDecision {
+        allowed: true,
+        reason: "通过".to_string(),
+    }
 }
 
 /// 审计日志一行：JSON，字段齐全，追加写入 auto-answers/audit.jsonl。
@@ -15165,7 +15235,15 @@ fn auto_answer_audit_line(
     chosen: &str,
     outcome: &str,
 ) -> String {
-    todo!()
+    serde_json::json!({
+        "atMs": now_ms,
+        "sessionId": session_id,
+        "question": question,
+        "options": options,
+        "chosen": chosen,
+        "outcome": outcome,
+    })
+    .to_string()
 }
 
 #[cfg(test)]
