@@ -17090,18 +17090,32 @@ function analyticsRememberSession(normalized) {
         const sendReplyBtn = document.createElement('button');
         sendReplyBtn.type = 'button'; sendReplyBtn.className = 'suggestion-btn suggestion-send';
         sendReplyBtn.textContent = t('replyBoxSend');
-        sendReplyBtn.addEventListener('click', e => {
+        sendReplyBtn.addEventListener('click', async e => {
           e.stopPropagation();
           const text = replyInput.value.trim();
           if (!text) return;
-          sendSuggestionText(String(data.sessionId || ''), text, sendReplyBtn);
+          // 预览窗是独立 WebView，tauriInvoke/sendSuggestionText 不在此上下文中。
+          // 直接用 __TAURI_INTERNALS__.invoke（预览窗里可用）。
+          const invoke = window.__TAURI_INTERNALS__?.invoke;
+          if (!invoke) return;
+          const prev = sendReplyBtn.textContent;
+          sendReplyBtn.disabled = true;
+          sendReplyBtn.textContent = t('suggestionSending');
+          try {
+            await invoke('send_zcode_message', { id: String(data.sessionId || ''), text });
+            showToast(t('suggestionSent'));
+          } catch (err) {
+            showToast(String(err));
+          } finally {
+            sendReplyBtn.disabled = false;
+            sendReplyBtn.textContent = prev;
+          }
         });
         replyActions.append(aiBtn, sendReplyBtn);
         replyInput.addEventListener('keydown', e => {
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            const text = replyInput.value.trim();
-            if (text) sendSuggestionText(String(data.sessionId || ''), text, sendReplyBtn);
+            sendReplyBtn.click();
           }
         });
         replyBox.append(replyInput, replyActions);
