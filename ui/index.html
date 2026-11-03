@@ -18062,7 +18062,7 @@ function analyticsRememberSession(normalized) {
     function updateSuggestionMenuItems(card) {
             const autoItem = document.getElementById('handoffSuggestAuto');
       const sep = document.getElementById('handoffSuggestSep');
-      if (!regenItem || !autoItem || !sep) return;
+      if (!autoItem || !sep) return;
       const sessionId = String(card.dataset.sessionId || '');
       const show = card.dataset.provider === 'zcode' && !!tauriInvoke;
       
