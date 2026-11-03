@@ -15863,7 +15863,19 @@ fn send_zcode_message_blocking(session_key: &str, workspace_path: &str, text: &s
 }
 
 #[tauri::command]
-fn send_zcode_message(
+async fn send_zcode_message(
+    app: tauri::AppHandle,
+    id: String,
+    text: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        send_zcode_message_impl(app, id, text)
+    })
+    .await
+    .map_err(|error| format!("send worker failed: {error}"))?
+}
+
+fn send_zcode_message_impl(
     app: tauri::AppHandle,
     id: String,
     text: String,
