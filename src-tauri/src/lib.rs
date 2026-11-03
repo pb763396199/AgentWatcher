@@ -15845,6 +15845,20 @@ fn run_child_with_timeout(
 }
 
 /// 阻塞发送：以纯 node 方式运行 zcode.cjs，把 text 写成该会话的下一条用户消息。
+/// 检查用户消息是否已落库（text 匹配且时间在 send_started 之后）。
+fn zcode_message_landed(session_key: &str, text: &str, since_ms: u64) -> bool {
+    let Some(db_path) = zcode_db_path() else { return false };
+    let Some(connection) = open_readonly_sqlite(&db_path, ZCODE_SQLITE_BUSY_TIMEOUT_MS) else { return false };
+    connection
+        .query_row(
+            "select count(*) from message m join part p on p.message_id = m.id              where m.session_id = ?1 and json_extract(m.data, '$.role') = 'user'                and json_extract(p.data, '$.type') = 'text'                and json_extract(p.data, '$.text') like ?2                and m.time_created >= ?3",
+            rusqlite::params![session_key, format!("%{}%", &text.chars().take(20).collect::<String>()), since_ms as i64],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|count| count > 0)
+        .unwrap_or(false)
+}
+
 fn send_zcode_message_blocking(session_key: &str, workspace_path: &str, text: &str) -> Result<(), String> {
     let exe = resolve_zcode_exe()?;
     let cjs = zcode_cjs_path(&exe);
@@ -15880,6 +15894,15 @@ fn send_zcode_message_impl(
     id: String,
     text: String,
 ) -> Result<(), String> {
+    send_zcode_message_fast(app, id, text)
+}
+
+/// 快速发送：消息落库即返回（约 3-8 秒），模型回复后台继续。
+fn send_zcode_message_fast(
+    app: tauri::AppHandle,
+    id: String,
+    text: String,
+) -> Result<(), String> {
     if text.trim().is_empty() {
         return Err("发送内容为空".to_string());
     }
@@ -15907,7 +15930,27 @@ fn send_zcode_message_impl(
     }
 
     let workspace = suggestion_workspace_path(&id).unwrap_or_default();
-    send_zcode_message_blocking(session_key, &workspace, &text)?;
+
+    // 后台跑 CLI（模型回复慢慢来），前台只等消息落库（3-8 秒）。
+    let bg_session_key = session_key.to_string();
+    let bg_workspace = workspace.clone();
+    let bg_text = text.clone();
+    std::thread::spawn(move || {
+        let _ = send_zcode_message_blocking(&bg_session_key, &bg_workspace, &bg_text);
+    });
+
+    // 轮询 DB 等用户消息出现（最长 30 秒）。
+    let send_started = current_time_ms();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        if zcode_message_landed(session_key, &text, send_started) {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("消息未在 30 秒内落库，CLI 可能在后台重试中".to_string());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
 
     // 发送成功：用户手动动作解除熔断，并立刻让前端重扫让卡片状态流转。
     if let Ok(mut runtime) = suggestion_runtime().lock() {
