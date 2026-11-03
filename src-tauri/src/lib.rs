@@ -15228,8 +15228,8 @@ fn auto_answer_audit_line(
 // ---- 扫描挂接与运行时状态 ----
 
 const SUGGESTIONS_EVENT: &str = "agentwatcher-suggestions-updated";
-const SUGGESTION_MAX_TURNS: usize = 8;
-const SUGGESTION_TURN_CHAR_BUDGET: usize = 600;
+const SUGGESTION_MAX_TURNS: usize = 4;
+const SUGGESTION_TURN_CHAR_BUDGET: usize = 300;
 const SUGGESTION_MODEL_TIMEOUT_SECS: u64 = 60;
 
 #[derive(Default)]

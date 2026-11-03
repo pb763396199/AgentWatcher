@@ -11949,7 +11949,7 @@
     function publishSessionPreviewData(data) {
       const payload = { ...data, version: 1, updatedAt: Date.now() };
       latestSessionPreviewData = payload;
-      tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', payload).catch(() => {});
+      { const sug = suggestionBySession?.get?.(String(payload?.sessionId || '')); const enriched = sug?.text ? { ...payload, aiSuggestion: sug.text } : payload; tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', enriched).catch(() => {}); }
       enrichPreviewAuditSummary(data);
       return payload;
     }
@@ -11964,7 +11964,7 @@
         if (!latestSessionPreviewData || latestSessionPreviewData.auditSummary === cached) return;
         const payload = { ...latestSessionPreviewData, auditSummary: cached };
         latestSessionPreviewData = payload;
-        tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', payload).catch(() => {});
+        { const sug = suggestionBySession?.get?.(String(payload?.sessionId || '')); const enriched = sug?.text ? { ...payload, aiSuggestion: sug.text } : payload; tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', enriched).catch(() => {}); }
         return;
       }
       // 预览数据用的是 sessionId 字段（analyticsTargetFromSession 读 session.id，
@@ -11990,7 +11990,7 @@
         if (!latestSessionPreviewData || String(latestSessionPreviewData.sessionId) !== key) return;
         const payload = { ...latestSessionPreviewData, auditSummary: summary };
         latestSessionPreviewData = payload;
-        tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', payload).catch(() => {});
+        { const sug = suggestionBySession?.get?.(String(payload?.sessionId || '')); const enriched = sug?.text ? { ...payload, aiSuggestion: sug.text } : payload; tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', enriched).catch(() => {}); }
         renderSessionPreview(latestSessionPreviewData);
       }).catch(() => {});
     }
@@ -17071,7 +17071,7 @@ function analyticsRememberSession(normalized) {
         const replyInput = document.createElement('textarea');
         replyInput.className = 'session-preview-reply-input';
         replyInput.rows = 2;
-        replyInput.placeholder = t('replyBoxPlaceholder');
+        replyInput.placeholder = generatingSuggestion ? (t('suggestionGenerating') + '…') : t('replyBoxPlaceholder');
         replyInput.setAttribute('data-i18n-placeholder', 'replyBoxPlaceholder');
         // AI 建议自动填入：优先从预览数据（跨窗口传递），再从本窗口 Map
         const suggestionText = data.aiSuggestion || (suggestionBySession.get(String(data.sessionId || ''))?.text);
@@ -17645,6 +17645,7 @@ function analyticsRememberSession(normalized) {
         const suggestion = event && event.payload;
         if (!suggestion || !suggestion.sessionId) return;
         suggestionBySession.set(String(suggestion.sessionId), suggestion);
+        generatingSuggestion = false;
         // 预览窗是独立 WebView，必须重发预览数据让它拿到建议
         const previewSession = latestSessionPreviewData?.sessionId;
         if (previewSession && String(previewSession) === String(suggestion.sessionId) && latestSessionPreviewData) {
@@ -18026,6 +18027,7 @@ function analyticsRememberSession(normalized) {
     }
 
     const suggestionBySession = new Map();
+    let generatingSuggestion = false;
     let suggestionSettingsPushed = false;
 
     const zcodeAutoAnswerSessions = new Set();
@@ -18035,7 +18037,8 @@ function analyticsRememberSession(normalized) {
         showToast(t('suggestionPreviewOnly'));
         return;
       }
-      showToast(t('suggestionGenerating') + '…（约半分钟）');
+      generatingSuggestion = true;
+        showToast(t('suggestionGenerating') + '…');
       try {
         await tauriInvoke('regenerate_suggestion', { id: sessionId });
       } catch (error) {
