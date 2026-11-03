@@ -13828,7 +13828,9 @@
       await placeNativeSessionPreview(windowRef).catch(() => {});
       emitRuntimeSettings('session-preview');
       if (latestSessionPreviewData) {
-        await tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', latestSessionPreviewData).catch(() => {});
+        const sug = suggestionBySession.get(String(latestSessionPreviewData.sessionId || ''));
+        const enriched = sug?.text ? { ...latestSessionPreviewData, aiSuggestion: sug.text, aiSuggestionSessionId: sug.sessionId } : latestSessionPreviewData;
+        await tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', enriched).catch(() => {});
       }
       if (!sessionPreviewDesiredVisible || requestId !== sessionPreviewRequestId) {
         await windowRef.hide().catch(() => {});
@@ -17071,10 +17073,10 @@ function analyticsRememberSession(normalized) {
         replyInput.rows = 2;
         replyInput.placeholder = t('replyBoxPlaceholder');
         replyInput.setAttribute('data-i18n-placeholder', 'replyBoxPlaceholder');
-        // AI 建议自动填入（不覆盖用户已输入的内容）
-        const suggestion = suggestionBySession.get(String(data.sessionId || ''));
-        if (suggestion && suggestion.text && !replyInput.value.trim()) {
-          replyInput.value = suggestion.text;
+        // AI 建议自动填入：优先从预览数据（跨窗口传递），再从本窗口 Map
+        const suggestionText = data.aiSuggestion || (suggestionBySession.get(String(data.sessionId || ''))?.text);
+        if (suggestionText && !replyInput.value.trim()) {
+          replyInput.value = suggestionText;
         }
         const replyActions = document.createElement('div');
         replyActions.className = 'session-preview-reply-actions';
@@ -17643,9 +17645,11 @@ function analyticsRememberSession(normalized) {
         const suggestion = event && event.payload;
         if (!suggestion || !suggestion.sessionId) return;
         suggestionBySession.set(String(suggestion.sessionId), suggestion);
-        // 预览窗正在显示该会话时，刷新预览让建议填入输入框
+        // 预览窗是独立 WebView，必须重发预览数据让它拿到建议
         const previewSession = latestSessionPreviewData?.sessionId;
         if (previewSession && String(previewSession) === String(suggestion.sessionId) && latestSessionPreviewData) {
+          const enriched = { ...latestSessionPreviewData, aiSuggestion: suggestion.text, aiSuggestionSessionId: suggestion.sessionId };
+          tauriEmitTo?.('session-preview', 'agentwatcher-preview-data', enriched).catch(() => {});
           renderSessionPreview(latestSessionPreviewData);
         } else {
           showToast(t('suggestionReady'));
