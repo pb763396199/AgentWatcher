@@ -15230,8 +15230,6 @@ fn auto_answer_audit_line(
 const SUGGESTIONS_EVENT: &str = "agentwatcher-suggestions-updated";
 const SUGGESTION_MAX_TURNS: usize = 8;
 const SUGGESTION_TURN_CHAR_BUDGET: usize = 600;
-/// 同一条建议最多允许「换一个」两次。
-const SUGGESTION_MAX_REGENERATIONS: u32 = 2;
 const SUGGESTION_MODEL_TIMEOUT_SECS: u64 = 60;
 
 #[derive(Default)]
@@ -15700,11 +15698,6 @@ fn regenerate_suggestion(app: tauri::AppHandle, id: String) -> Result<(), String
         if runtime.in_flight.contains(&id) {
             return Err("正在生成建议，请稍候".to_string());
         }
-        let count = runtime.regen_counts.get(&id).copied().unwrap_or(0);
-        if count >= SUGGESTION_MAX_REGENERATIONS {
-            return Err("同一条建议最多换两次".to_string());
-        }
-        runtime.regen_counts.insert(id.clone(), count + 1);
         let avoid = runtime.current.get(&id).map(|suggestion| suggestion.text.clone());
         runtime.in_flight.insert(id.clone());
         avoid
