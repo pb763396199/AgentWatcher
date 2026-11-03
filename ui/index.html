@@ -17064,7 +17064,7 @@ function analyticsRememberSession(normalized) {
       body.className = 'session-preview-body';
 
       // ZCode 会话：顶部常驻回复框，随时打字发送；AI 建议生成后自动填入
-      if (String(data.sessionId || '').startsWith('zcode:') && tauriInvoke) {
+      if (String(data.sessionId || '').startsWith('zcode:') && (tauriInvoke || window.__TAURI_INTERNALS__)) {
         const replyBox = document.createElement('div');
         replyBox.className = 'session-preview-reply-box';
         const replyInput = document.createElement('textarea');
@@ -17084,7 +17084,8 @@ function analyticsRememberSession(normalized) {
         aiBtn.textContent = t('suggestionMenuRegen');
         aiBtn.addEventListener('click', e => {
           e.stopPropagation();
-          requestSuggestionNow(String(data.sessionId || ''));
+          const awInvoke2 = tauriInvoke || (window.__TAURI_INTERNALS__ ? window.__TAURI_INTERNALS__.invoke : null);
+          if (awInvoke2) requestSuggestionWith(awInvoke2, String(data.sessionId || ''));
           replyInput.placeholder = t('suggestionGenerating') + '…';
         });
         const sendReplyBtn = document.createElement('button');
@@ -18171,6 +18172,32 @@ function analyticsRememberSession(normalized) {
         );
       } else {
         showToast(text);
+      }
+    }
+
+    async function sendSuggestionTextWith(invoke, sessionId, text, button) {
+      if (!invoke) return;
+      const previous = button ? button.textContent : '';
+      if (button) { button.disabled = true; button.textContent = t('suggestionSending'); }
+      try {
+        await invoke('send_zcode_message', { id: sessionId, text });
+        showToast(t('suggestionSent'));
+        refreshSessions(true);
+      } catch (error) {
+        showToast(String(error));
+      } finally {
+        if (button) { button.disabled = false; button.textContent = previous || t('suggestionSend'); }
+      }
+    }
+
+    async function requestSuggestionWith(invoke, sessionId) {
+      if (!invoke) return;
+      generatingSuggestion = true;
+      showToast(t('suggestionGenerating') + '…');
+      try {
+        await invoke('regenerate_suggestion', { id: sessionId });
+      } catch (error) {
+        showToast(String(error));
       }
     }
 
