@@ -15931,26 +15931,7 @@ fn send_zcode_message_fast(
 
     let workspace = suggestion_workspace_path(&id).unwrap_or_default();
 
-    // 后台跑 CLI（模型回复慢慢来），前台只等消息落库（3-8 秒）。
-    let bg_session_key = session_key.to_string();
-    let bg_workspace = workspace.clone();
-    let bg_text = text.clone();
-    std::thread::spawn(move || {
-        let _ = send_zcode_message_blocking(&bg_session_key, &bg_workspace, &bg_text);
-    });
-
-    // 轮询 DB 等用户消息出现（最长 30 秒）。
-    let send_started = current_time_ms();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    loop {
-        if zcode_message_landed(session_key, &text, send_started) {
-            break;
-        }
-        if std::time::Instant::now() >= deadline {
-            return Err("消息未在 30 秒内落库，CLI 可能在后台重试中".to_string());
-        }
-        std::thread::sleep(std::time::Duration::from_millis(500));
-    }
+    send_zcode_message_blocking(session_key, &workspace, &text)?;
 
     // 发送成功：用户手动动作解除熔断，并立刻让前端重扫让卡片状态流转。
     if let Ok(mut runtime) = suggestion_runtime().lock() {
