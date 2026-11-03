@@ -6103,7 +6103,6 @@
         <button class="handoff-menu-item" id="handoffQuickCopy" type="button" data-i18n="handoffCopyPrompt">Copy handoff prompt</button>
         <button class="handoff-menu-item" id="handoffPackageSession" type="button" data-i18n="handoffPackageSession">Package session for cross-PC handoff</button>
         <div class="handoff-menu-sep" id="handoffSuggestSep" hidden></div>
-        <button class="handoff-menu-item" id="handoffSuggestRegen" type="button" data-i18n="suggestionMenuRegen" data-suggestion-menu="regen" hidden>换一条建议</button>
         <button class="handoff-menu-item" id="handoffSuggestAuto" type="button" data-i18n="suggestionMenuAuto" data-suggestion-menu="auto" hidden>自动作答此会话的选项</button>
         <div class="handoff-menu-sep"></div>
         <button class="handoff-menu-item" id="handoffOpenSource" type="button" data-i18n="handoffOpenSource">Open source session</button>
@@ -18047,20 +18046,16 @@ function analyticsRememberSession(normalized) {
     }
 
     function updateSuggestionMenuItems(card) {
-      const regenItem = document.getElementById('handoffSuggestRegen');
-      const autoItem = document.getElementById('handoffSuggestAuto');
+            const autoItem = document.getElementById('handoffSuggestAuto');
       const sep = document.getElementById('handoffSuggestSep');
       if (!regenItem || !autoItem || !sep) return;
       const sessionId = String(card.dataset.sessionId || '');
       const show = card.dataset.provider === 'zcode' && !!tauriInvoke;
-      regenItem.hidden = !show;
+      
       autoItem.hidden = !show;
       sep.hidden = !show;
       if (!show) return;
-      regenItem.onclick = () => {
-        closeHandoffMenu();
-        requestSuggestionNow(sessionId);
-      };
+      
       autoItem.onclick = async () => {
         closeHandoffMenu();
         const enabling = !zcodeAutoAnswerSessions.has(sessionId);
