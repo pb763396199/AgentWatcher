@@ -6314,6 +6314,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scan_sessions,
             send_zcode_message,
+            send_codex_message,
             set_zcode_auto_answer,
             regenerate_suggestion,
             get_session_usage_detail,
@@ -15271,7 +15272,7 @@ fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSessio
         };
         let mut seen: HashSet<&str> = HashSet::new();
         for session in sessions {
-            if session.provider != "zcode" {
+            if session.provider != "zcode" && session.provider != "codex" {
                 continue;
             }
             seen.insert(session.id.as_str());
@@ -15312,7 +15313,11 @@ fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSessio
 /// 生成一个会话的建议并广播。扫描触发与「换一个」共用这一条路。
 fn spawn_suggestion_generation(app: tauri::AppHandle, session_id: String, avoid: Option<String>) {
     std::thread::spawn(move || {
-        let suggestion = generate_zcode_suggestion(&session_id, avoid.as_deref());
+        let suggestion = if session_id.starts_with("codex:") {
+            generate_codex_suggestion(&session_id, avoid.as_deref())
+        } else {
+            generate_zcode_suggestion(&session_id, avoid.as_deref())
+        };
         let mut runtime = suggestion_runtime().lock().ok();
         if let Some(runtime) = runtime.as_deref_mut() {
             runtime.in_flight.remove(&session_id);
@@ -15668,6 +15673,171 @@ fn append_audit_line_in_dir(dir: &std::path::Path, line: &str) {
         use std::io::Write;
         let _ = writeln!(file, "{line}");
     }
+}
+
+// ---- Codex 发送与建议 ----
+
+/// Codex 建议：从 JSONL 提取上下文 → v5 提示词 → headless codex 生成。
+fn generate_codex_suggestion(session_id: &str, avoid: Option<&str>) -> Option<SessionSuggestion> {
+    let context = codex_suggestion_context(session_id)?;
+    let prompt = build_suggestion_prompt(&context, avoid);
+    // Codex CLI 生成建议（走 codex exec 单轮模式）
+    let cli = codex_cli_path()?;
+    let node = which_node()?;
+    let args = vec![
+        cli.to_string_lossy().to_string(),
+        "exec".to_string(),
+        prompt,
+        "--json".to_string(),
+    ];
+    let mut command = std::process::Command::new(&node);
+    command.args(&args).current_dir(std::env::temp_dir());
+    let stdout = run_child_with_timeout(&mut command, 180, "Codex 建议生成超时").ok()?;
+    parse_headless_response(&stdout)
+        .and_then(|raw| parse_suggestion_response(&raw, SUGGESTION_MAX_CHARS))
+        .map(|text| SessionSuggestion {
+            session_id: session_id.to_string(),
+            provider: "codex".to_string(),
+            text,
+            question: None,
+            options: None,
+            fingerprint: context.fingerprint,
+            created_at_ms: current_time_ms(),
+        })
+}
+
+/// Codex CLI 路径（npm 全局安装的 @openai/codex）。
+fn codex_cli_path() -> Option<PathBuf> {
+    let npm_root = std::env::var("APPDATA")
+        .ok()
+        .map(|appdata| PathBuf::from(appdata).join("npm").join("node_modules").join("@openai").join("codex").join("bin").join("codex.js"))?;
+    if npm_root.exists() {
+        return Some(npm_root);
+    }
+    None
+}
+
+/// Codex 会话的 JSONL 文件路径（从 AgentSession 的 session_path 获取）。
+fn codex_session_file(session_id: &str) -> Option<PathBuf> {
+    // AgentSession 的 session_path 就是 JSONL 路径
+    // 但这里是独立的：直接从 id 搜索最近的 rollout 文件
+    let session_key = session_id.strip_prefix("codex:")?;
+    // codex session 的自然键就是文件名的一部分
+    let sessions_dir = std::env::var("USERPROFILE")
+        .ok()
+        .map(|home| PathBuf::from(home).join(".codex").join("sessions"))?;
+    // 遍历日期目录找匹配的文件
+    for entry in walkdir_jsonl_files(&sessions_dir) {
+        let filename = entry.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+        if filename.contains(session_key) {
+            return Some(entry);
+        }
+    }
+    None
+}
+
+fn walkdir_jsonl_files(dir: &Path) -> Vec<PathBuf> {
+    let mut result = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            if path.is_dir() {
+                result.extend(walkdir_jsonl_files(&path));
+            } else if path.extension().is_some_and(|ext| ext == "jsonl") {
+                result.push(path);
+            }
+        }
+    }
+    result
+}
+
+/// Codex 会话上下文：从 JSONL 尾部提取最近几轮对话。
+fn codex_suggestion_context(session_id: &str) -> Option<SuggestionContext> {
+    let jsonl_path = codex_session_file(session_id)?;
+    let content = std::fs::read_to_string(&jsonl_path).ok()?;
+    let mut turns: Vec<(String, String)> = Vec::new();
+    let mut fingerprint = String::new();
+    // 逐行解析，取最后 N 条 role/content 对
+    for line in content.lines().rev() {
+        if turns.len() >= SUGGESTION_MAX_TURNS { break; }
+        let Ok(value) = serde_json::from_str::<Value>(line) else { continue };
+        let item_type = value.get("type").and_then(Value::as_str).unwrap_or("");
+        if item_type != "response_item" { continue; }
+        let payload = value.get("payload").unwrap_or(&value);
+        let role = payload.get("role").and_then(Value::as_str).unwrap_or("");
+        if role != "user" && role != "assistant" { continue; }
+        let text = payload
+            .get("content")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|c| c.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .unwrap_or_default();
+        if text.trim().is_empty() { continue; }
+        let text: String = text.chars().take(SUGGESTION_TURN_CHAR_BUDGET).collect();
+        if fingerprint.is_empty() {
+            fingerprint = value.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+        }
+        turns.push((role.to_string(), text.trim().to_string()));
+    }
+    turns.reverse();
+    if turns.is_empty() { return None; }
+    Some(SuggestionContext {
+        workspace_path: String::new(),
+        turns,
+        question: None, // Codex 的 AskUserQuestion 在 JSONL 中格式不同，暂时跳过
+        fingerprint,
+    })
+}
+
+/// 经 codex exec resume 发送一条消息。
+fn send_codex_message_blocking(session_key: &str, text: &str) -> Result<(), String> {
+    let cli = codex_cli_path().ok_or("未找到 Codex CLI（npm 全局安装的 @openai/codex）")?;
+    let node = which_node().ok_or("未找到 node")?;
+    let args = vec![
+        cli.to_string_lossy().to_string(),
+        "exec".to_string(),
+        "resume".to_string(),
+        session_key.to_string(),
+        text.to_string(),
+        "--json".to_string(),
+    ];
+    let mut command = std::process::Command::new(&node);
+    command.args(&args).env("CODEX_QUIET", "1");
+    run_child_with_timeout(&mut command, 300, "Codex 发送超时（5 分钟），已中止")
+        .map(|_| ())
+}
+
+fn which_node() -> Option<PathBuf> {
+    let path = std::env::var("PATH").ok()?;
+    for dir in path.split(';') {
+        let node = PathBuf::from(dir).join("node.exe");
+        if node.exists() {
+            return Some(node);
+        }
+    }
+    None
+}
+
+#[tauri::command]
+async fn send_codex_message(
+    app: tauri::AppHandle,
+    id: String,
+    text: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(session_key) = id.strip_prefix("codex:") else {
+            return Err("只支持 Codex 会话的发送".to_string());
+        };
+        send_codex_message_blocking(session_key, &text)?;
+        let _ = app;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("send worker failed: {e}"))?
 }
 
 // ---- 按会话的自动作答开关与「换一个」 ----

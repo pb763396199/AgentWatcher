@@ -17064,7 +17064,7 @@ function analyticsRememberSession(normalized) {
       body.className = 'session-preview-body';
 
       // ZCode 会话：顶部常驻回复框，随时打字发送；AI 建议生成后自动填入
-      if (String(data.sessionId || '').startsWith('zcode:') && (tauriInvoke || window.__TAURI_INTERNALS__)) {
+      if ((String(data.sessionId || '').startsWith('zcode:') || String(data.sessionId || '').startsWith('codex:')) && (tauriInvoke || window.__TAURI_INTERNALS__)) {
         const replyBox = document.createElement('div');
         replyBox.className = 'session-preview-reply-box';
         const replyInput = document.createElement('textarea');
@@ -17103,7 +17103,8 @@ function analyticsRememberSession(normalized) {
           sendReplyBtn.disabled = true;
           sendReplyBtn.textContent = t('suggestionSending');
           try {
-            await invoke('send_zcode_message', { id: String(data.sessionId || ''), text });
+            const cmd = String(data.sessionId || '').startsWith('codex:') ? 'send_codex_message' : 'send_zcode_message';
+            await invoke(cmd, { id: String(data.sessionId || ''), text });
             showToast(t('suggestionSent'));
           } catch (err) {
             showToast(String(err));
