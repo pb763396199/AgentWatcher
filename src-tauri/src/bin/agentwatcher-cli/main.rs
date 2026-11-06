@@ -1,6 +1,7 @@
 mod cli;
 mod commands;
 mod output;
+mod scan_cache;
 mod skill;
 
 use clap::Parser;
@@ -23,6 +24,7 @@ fn main() {
                 limit,
                 active_days,
                 include_archived,
+                no_cache,
             } => commands::session_list(
                 &provider,
                 status.as_deref(),
@@ -30,6 +32,7 @@ fn main() {
                 limit,
                 active_days,
                 include_archived,
+                no_cache,
             ),
             SessionAction::Show { id, content } => commands::session_show(&id, content),
             SessionAction::Usage { id } => commands::session_usage(&id),

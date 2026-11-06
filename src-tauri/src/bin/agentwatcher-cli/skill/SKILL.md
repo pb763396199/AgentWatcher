@@ -61,6 +61,6 @@ description: 查询本机 AI 助手（VS Code Copilot、Copilot CLI、Claude Cod
 
 ## 守则
 
-- 查询命令只读；写盘动作只有两处：`handoff export` 写系统临时目录的 `AgentWatcher\handoff-sources\`（每次导出生成新文件），以及对 `.jsonl.zst` 归档取正文时在同目录写解压副本。
-- 要最新状态就重新执行 `session list`，命令不缓存结果。
+- 查询命令只读；写盘动作只有三处：`handoff export` 写系统临时目录的 `AgentWatcher\handoff-sources\`（每次导出生成新文件），对 `.jsonl.zst` 归档取正文时在同目录写解压副本，以及全历史 `session list`（`--active-days 0` 或 `--include-archived`）写 `AgentWatcher\cli-scan-cache\` 下的跨进程扫描缓存（120 秒有效，把同参数并发/紧随调用合并为一次真实扫描）。
+- 要最新状态就重新执行 `session list`。全历史模式的同参数查询 120 秒内可能读到缓存快照，需要确保重新扫描时加 `--no-cache`；默认 7 天窗口的查询不缓存。
 - 命令不启动任何后台服务，也不依赖 AgentWatcher 桌面程序在运行。

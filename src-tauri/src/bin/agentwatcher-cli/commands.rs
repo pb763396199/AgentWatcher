@@ -75,15 +75,6 @@ fn project_list_item(session: &AgentSession) -> serde_json::Value {
     serde_json::Value::Object(out)
 }
 
-fn workspace_matches(session: &AgentSession, workspace: &str) -> bool {
-    let wanted = workspace.trim();
-    session
-        .workspace_path
-        .as_deref()
-        .map(|path| path.trim().eq_ignore_ascii_case(wanted))
-        .unwrap_or_else(|| session.workspace.trim().eq_ignore_ascii_case(wanted))
-}
-
 fn truncate_chars(text: &str, width: usize) -> String {
     if text.chars().count() <= width {
         text.to_string()
@@ -101,26 +92,89 @@ pub fn session_list(
     limit: Option<usize>,
     active_days: Option<u64>,
     include_archived: bool,
+    no_cache: bool,
 ) {
-    let sessions =
-        scan_sessions_blocking(Some(scan_options(provider, limit, active_days, include_archived)));
-    let filtered: Vec<&AgentSession> = sessions
+    // 全历史模式是分钟级重扫描，走跨进程缓存把同参数并发/紧随调用合并为一次；
+    // 默认活跃窗口扫描轻量，不碰缓存。
+    let full_history = active_days == Some(0) || include_archived;
+    // 投影项带一个内部键 `workspaceFallback`（session.workspace 原值），供
+    // workspace 过滤在缓存命中后仍按原语义（workspacePath 优先、缺省回退）执行；
+    // 输出前剥掉，保证命中缓存与真实扫描的输出逐字段等价。
+    let project_with_fallback = |session: &AgentSession| {
+        let mut item = project_list_item(session);
+        if let serde_json::Value::Object(map) = &mut item {
+            map.insert(
+                "workspaceFallback".to_string(),
+                serde_json::Value::String(session.workspace.clone()),
+            );
+        }
+        item
+    };
+    let items: Vec<serde_json::Value> = if full_history && !no_cache {
+        let key = crate::scan_cache::ScanCacheKey {
+            provider: provider.to_vec(),
+            limit,
+            active_days,
+            include_archived,
+        };
+        let scanned = crate::scan_cache::cached_full_history_scan(&key, || {
+            let sessions = scan_sessions_blocking(Some(scan_options(
+                provider, limit, active_days, include_archived,
+            )));
+            serde_json::Value::Array(sessions.iter().map(project_with_fallback).collect::<Vec<_>>())
+        });
+        // 缓存里存的是未过滤的全量投影；status/workspace 过滤在内存里做，不进缓存键。
+        scanned
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    } else {
+        let sessions = scan_sessions_blocking(Some(scan_options(
+            provider, limit, active_days, include_archived,
+        )));
+        sessions.iter().map(project_with_fallback).collect::<Vec<_>>()
+    };
+    let filtered = items
         .iter()
-        .filter(|session| {
+        .filter(|item| {
             status
-                .map(|wanted| session.status.eq_ignore_ascii_case(wanted.trim()))
+                .map(|wanted| {
+                    item.get("status")
+                        .and_then(|value| value.as_str())
+                        .map(|value| value.eq_ignore_ascii_case(wanted.trim()))
+                        .unwrap_or(false)
+                })
                 .unwrap_or(true)
         })
-        .filter(|session| {
+        .filter(|item| {
             workspace
-                .map(|wanted| workspace_matches(session, wanted))
+                .map(|wanted| {
+                    let wanted = wanted.trim();
+                    item.get("workspacePath")
+                        .and_then(|value| value.as_str())
+                        .map(|value| value.trim().eq_ignore_ascii_case(wanted))
+                        .or_else(|| {
+                            item.get("workspaceFallback")
+                                .and_then(|value| value.as_str())
+                                .map(|value| value.trim().eq_ignore_ascii_case(wanted))
+                        })
+                        .unwrap_or(false)
+                })
                 .unwrap_or(true)
         })
-        .collect();
+        .collect::<Vec<&serde_json::Value>>();
 
-    let items: Vec<serde_json::Value> = filtered.iter().map(|session| project_list_item(session)).collect();
     let data = serde_json::json!({
-        "sessions": items,
+        "sessions": filtered
+            .iter()
+            .map(|item| {
+                let mut clean = (*item).clone();
+                if let serde_json::Value::Object(map) = &mut clean {
+                    map.remove("workspaceFallback");
+                }
+                clean
+            })
+            .collect::<Vec<_>>(),
         "total": filtered.len(),
     });
 
@@ -129,27 +183,27 @@ pub fn session_list(
         "{:<9}{:<13}{:<18}{:<40}{}\n",
         "STATUS", "PROVIDER", "TIME", "TITLE", "WORKSPACE"
     ));
-    for session in &filtered {
-        let title = truncate_chars(&session.title, 38);
+    for item in &filtered {
+        let field = |name: &str| item.get(name).and_then(|value| value.as_str()).unwrap_or("");
+        let title = truncate_chars(field("title"), 38);
         let workspace = truncate_chars(
-            session.workspace_path.as_deref().unwrap_or(&session.workspace),
+            item.get("workspacePath")
+                .and_then(|value| value.as_str())
+                .or_else(|| item.get("workspaceFallback").and_then(|value| value.as_str()))
+                .unwrap_or(""),
             38,
         );
         human.push_str(&format!(
             "{:<9}{:<13}{:<18}{:<40}{}\n",
-            session.status, session.provider, session_time_label(session), title, workspace
+            field("status"),
+            field("provider"),
+            field("timeLabel"),
+            title,
+            workspace
         ));
     }
 
     output::finish_success("session list", data, Some(human));
-}
-
-fn session_time_label(session: &AgentSession) -> String {
-    serialize_session(session)
-        .get("timeLabel")
-        .and_then(|value| value.as_str())
-        .unwrap_or("")
-        .to_string()
 }
 
 fn find_session(id: &str) -> Option<AgentSession> {

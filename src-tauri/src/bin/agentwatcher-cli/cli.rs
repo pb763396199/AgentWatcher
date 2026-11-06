@@ -65,6 +65,9 @@ pub enum SessionAction {
         /// 连归档会话一起列出：Codex archived_sessions 目录、OpenCode/ZCode time_archived、JSONL 归档标记
         #[arg(long = "include-archived", default_value_t = false)]
         include_archived: bool,
+        /// 绕过全历史扫描缓存：不读不写缓存，直接真实扫描
+        #[arg(long = "no-cache", default_value_t = false)]
+        no_cache: bool,
     },
     /// 查看单个会话的详情，默认只到悬浮预览级，--content 才带正文内容
     Show {

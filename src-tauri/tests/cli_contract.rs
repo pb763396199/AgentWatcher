@@ -186,3 +186,33 @@ fn skill_list_without_dir_reports_host_candidates() {
         );
     }
 }
+
+#[test]
+fn default_window_session_list_leaves_no_scan_cache() {
+    // 默认活跃窗口是轻量扫描，不允许落全历史缓存文件（AC-004 前半）。
+    let cache_dir = std::env::temp_dir()
+        .join("AgentWatcher")
+        .join("cli-scan-cache");
+    let before: Vec<String> = std::fs::read_dir(&cache_dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    let (_envelope, _stderr, code) = run_cli(&["--format", "json", "session", "list"]);
+    assert_eq!(code, Some(0), "default list must exit 0");
+    let after: Vec<String> = std::fs::read_dir(&cache_dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        after.len() <= before.len(),
+        "默认窗口扫描不得新增缓存文件：before={before:?} after={after:?}"
+    );
+}

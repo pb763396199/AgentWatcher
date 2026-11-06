@@ -38,6 +38,7 @@ fn session_list_parses_filters() {
             limit,
             active_days,
             include_archived,
+            no_cache,
         },
     } = parsed.command
     else {
@@ -49,6 +50,7 @@ fn session_list_parses_filters() {
     assert_eq!(limit, Some(5));
     assert_eq!(active_days, Some(3));
     assert!(!include_archived);
+    assert!(!no_cache, "不带 --no-cache 时默认走缓存");
 }
 
 #[test]
@@ -77,6 +79,24 @@ fn session_list_parses_full_history_flags() {
     assert_eq!(active_days, Some(0));
     assert!(include_archived);
     assert_eq!(limit, Some(20000));
+}
+
+#[test]
+fn session_list_parses_no_cache_flag() {
+    let parsed = parse(&["session", "list", "--include-archived", "--no-cache"])
+        .expect("no-cache flag should parse");
+    let Commands::Session {
+        action: SessionAction::List {
+            no_cache,
+            include_archived,
+            ..
+        },
+    } = parsed.command
+    else {
+        panic!("expected session list");
+    };
+    assert!(include_archived);
+    assert!(no_cache, "--no-cache 必须解析为绕过缓存");
 }
 
 #[test]
