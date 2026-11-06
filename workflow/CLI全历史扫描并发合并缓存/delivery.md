@@ -26,7 +26,7 @@ dependencies:
     content_digest: "sha256:6bb97c863678ec86cdf1a28b17d454e30753058f603b7c4caf759ea694f41396"
     branch_or_pr: "feature/CLI全历史扫描并发合并缓存"
     workflow_excluded: true
-outcome: "ready_to_land"
+outcome: "delivered"
 ---
 # 交付
 
