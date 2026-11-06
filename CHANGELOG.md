@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.1.11 - 2026-11-06
+
+- 新增 ZCode 会话 AI 建议与自动作答：ZCode 会话新进入等待时，后端用 ZCode 自身无头会话（`zcode.cjs -p`，零配置，模型与账号沿用现有配置）生成一条不超过 120 字的建议回复；建议显示在悬浮预览窗顶部常驻回复框（可手打字、可 AI 填充、可一键发送），检测到结构化 AskUserQuestion 时升级为选项芯片。发送走 `send_zcode_message`（注册表反解 ZCode.exe，`ELECTRON_RUN_AS_NODE=1` 运行 `zcode.cjs --resume`，实测桌面版 3.16.3 可用）。全自动作答按会话开关（卡片右键），仅限选项域，护栏内置：每小时 6 次、同答案熔断、审计写 `%TEMP%\AgentWatcheruto-answersudit.jsonl`。设置面板新增 AI 建议区与全局热键；建议正文只走事件不进 localStorage。
+- 新增 Codex 会话 AI 建议回复：与 ZCode 同构的建议管线覆盖 Codex 会话（真实交互流程 `test:tauri:flow` 断言随任务合入）。
+- CLI `session list` 全历史扫描跨进程合并缓存：带全历史参数（`--active-days 0` 或 `--include-archived`）时走 `%TEMP%\AgentWatcher\cli-scan-cache\` 的独占文件锁 + 120 秒 TTL 缓存，同参数并发/紧随调用只真实扫描一次（本机 17297 会话实测：冷扫描 59.5s、命中 0.76s、四进程并发总耗时 66s 且结果一致），修复多 agent 并发全历史查询把磁盘 I/O 成倍叠加卡死机器的问题；`--no-cache` 绕过，默认 7 天窗口不缓存，缓存损坏静默降级直扫。
+- 依赖钉回 v0.1.10 基线：Cargo.lock 中 tauri 系 crate 曾被顺带升到 2.12.x，与 npm `@tauri-apps/api` 2.11 不匹配导致打包失败；本次发布把 tauri 系锁回 2.11.2（tauri-build 2.6.2、runtime 2.11.2、utils 2.9.2）。
+
+发布包：`AgentWatcher-v0.1.11-windows-x64.zip`
+
+SHA256：`E089EC9A2DCA795DC863D630A00C8415091F9492C3CF3101481240F0DFABF602`
+
+验证：`cargo test --manifest-path src-tauri/Cargo.toml`（lib 146 + CLI 单元 4 + 契约 9 + 分类学 10 全通过）、`npm run test:tauri:flow -- zcode-session`（真实 Tauri 壳：切中文、点真实 ZCode 卡片通过）、`npm run build:ui`、Bridge 语法与 handoff 路由测试、`git diff --check`、`npm run package:exe`；最终 VSIX 重复安装两次仅稳定 ID `agentwatcher.agentwatcher-vscode-session-bridge@0.1.12`（无任何 safe*）；发布目录 EXE 独立启动实证；CLI 并发合并/缓存命中/故障回退以单元测试与真实二进制计时锁定。已知限制：ZCode 建议生成的模型档位取决于用户现有 ZCode 配置；缓存命中与真实扫描的输出在 f64 字段（如 costUsd）末位存在 1 ulp 十进制表示差，语义等价。
+
 ## v0.1.10 - 2026-10-30
 
 - 新增 WorkBuddy 桌面端会话来源（第 7 个 provider，徽标 WB）：只读扫描本机 `~/.workbuddy/workbuddy.db`（SQLite，跳过已删除、playground、无工作区的行）与 `projects\<工作区>\<会话 id>.jsonl` 正文，按待回复/运行中/闲置出卡片；悬浮预览带最后用户输入与 AI 正文（过滤身份注入块）；用量带 token 求和、上下文占用、credits（数据源没有的项为 null）。
