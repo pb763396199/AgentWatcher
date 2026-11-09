@@ -139,7 +139,7 @@ npm run dev:ui
 | `agentwatcher-cli session show <id> [--content]` | 查看单个会话详情（同悬浮预览级）；`--content` 才带正文内容 |
 | `agentwatcher-cli session usage <id>` | 查看用量明细：token、上下文、轮次、工具调用、模型、成本、topTools |
 | `agentwatcher-cli handoff export <id>` | 导出源会话上下文 Markdown，落盘位置与 GUI 接续面板一致 |
-| `agentwatcher-cli skill install [--dir <目录>]` | 把 AgentWatcher 用法技能装进本机 AI 宿主（ZCode / Claude Code / Codex / 通用 agents 目录 / OpenCode，只装已安装的宿主），AI 装完即会使用本 CLI；重复执行覆盖升级 |
+| `agentwatcher-cli skill install [--dir <目录>]` | 把 AgentWatcher 用法技能装进本机 AI 宿主（ZCode / Claude Code / Codex / 通用 agents 目录 / OpenCode / WorkBuddy，只装已安装的宿主），AI 装完即会使用本 CLI；重复执行覆盖升级 |
 | `agentwatcher-cli skill list [--dir <目录>]` | 查看各宿主技能目录的安装状态 |
 | `agentwatcher-cli skill remove [--dir <目录>]` | 移除已装的用法技能 |
 
@@ -173,7 +173,7 @@ CLI 进程不启动任何常驻后台服务：Codex 会话走本地会话文件�
 
 ### 给 AI 宿主装用法技能
 
-技能文档内嵌在 `agentwatcher-cli.exe` 里，`skill install` 会把它写到本机已安装宿主的技能目录（`~/.zcode/skills`、`~/.claude/skills`、`~/.agents/skills`、`~/.codex/skills`、`~/.config/opencode/skill`，目录存在才装）。装完后 ZCode、Claude Code 等宿主里的 AI 助手会自动知道怎么用这套 CLI。升级 AgentWatcher 后重跑一次 `skill install` 即可更新技能内容；`--dir <目录>` 可装到任意位置。
+技能文档内嵌在 `agentwatcher-cli.exe` 里，`skill install` 会把它写到本机已安装宿主的技能目录（`~/.zcode/skills`、`~/.claude/skills`、`~/.agents/skills`、`~/.codex/skills`、`~/.config/opencode/skill`、`~/.workbuddy/skills`，目录存在才装）。装完后 ZCode、Claude Code、WorkBuddy 等宿主里的 AI 助手会自动知道怎么用这套 CLI。升级 AgentWatcher 后重跑一次 `skill install` 即可更新技能内容；`--dir <目录>` 可装到任意位置。
 
 ## VS Code 连接组件
 

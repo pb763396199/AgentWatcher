@@ -62,7 +62,7 @@ pub enum SessionAction {
         /// 活跃窗口天数，非 0 值夹在 1 到 30，默认 7；0 表示不限时间（全历史）
         #[arg(long = "active-days")]
         active_days: Option<u64>,
-        /// 连归档会话一起列出：Codex archived_sessions 目录、OpenCode/ZCode time_archived、JSONL 归档标记
+        /// 连归档会话一起列出：Codex archived_sessions 目录、OpenCode/ZCode time_archived、JSONL 归档标记、WorkBuddy deleted_at 软删
         #[arg(long = "include-archived", default_value_t = false)]
         include_archived: bool,
         /// 排除 WorkBuddy playground 会话（默认纳入）

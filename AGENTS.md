@@ -71,7 +71,7 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 - 输出契约：全局 `--format json|human`（默认 json）。json 模式一条命令只往 stdout 写一个信封 `{ command, ok, data, error, messages }`（camelCase），失败也走信封；退出码 0 成功 / 1 命令失败（含 ID 不存在）/ 2 用法错误。空结果、未安装 provider 都不是失败。
 - 内容分级（隐私边界，任务 agent-cli 拍板）：list 只给卡片级元数据，不含对话文本；show 默认到悬浮预览级；`--content` 才给正文——OpenCode/ZCode 给 transcript 导出路径，其余给最后输入输出节选加原始文件路径。改这条分级必须同步改契约测试里「列表不得含 lastUserMessage/lastAiMessage」的断言。
 - 无副作用：CLI 进程启动时调 `set_codex_app_server_disabled(true)`，Codex 会话走本地文件扫描（`~/.codex/sessions`），不拉起常驻 app-server；并清掉自身 stdio 句柄的继承标志（Windows `SetHandleInformation`），防止任何子进程攥住 stdout 管道导致调用方读不到 EOF——这是扫描拉起 codex app-server 时踩过的真实坑（cmd.exe→node→codex 链继承管道写端）。写盘的大类是 `skill install / remove`（只写声明过的技能目录），以及 `show --content` / `handoff export` 碰到 Codex `.jsonl.zst` 归档时往 `<临时目录>\AgentWatcher\handoff-sources\codex\` 写解压副本。
-- skill 分发：用法文档 `skill/SKILL.md` 以 `include_str!` 内嵌进二进制（`skill.rs`），宿主候选目录表也在这两处；改文档或候选表要同步改契约测试的状态断言。自动化测试只经 `--dir` 打临时目录，装真实宿主目录走人工清单。
+- skill 分发：用法文档 `skill/SKILL.md` 以 `include_str!` 内嵌进二进制（`skill.rs`），宿主候选目录表（`~/.zcode/skills`、`~/.claude/skills`、`~/.agents/skills`、`~/.codex/skills`、`~/.config/opencode/skill`、`~/.workbuddy/skills`）也在这两处；改文档或候选表要同步改契约测试的状态断言。自动化测试只经 `--dir` 打临时目录，装真实宿主目录走人工清单。
 - 测试：`src-tauri/tests/cli_taxonomy.rs` 锁命令解析（动词、必填参数、全局参数、帮助文本），`src-tauri/tests/cli_contract.rs` 起真实二进制锁信封契约（五键、错误码、退出码、human 不吐信封、列表无正文键）。改 CLI 必跑这两个。
 
 ## 不能随便改的标识符

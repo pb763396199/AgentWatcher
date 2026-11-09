@@ -27,6 +27,7 @@ fn candidate_roots() -> Vec<(&'static str, PathBuf)> {
         ("agents", home.join(".agents").join("skills")),
         ("codex", home.join(".codex").join("skills")),
         ("opencode", home.join(".config").join("opencode").join("skill")),
+        ("workbuddy", home.join(".workbuddy").join("skills")),
     ]
 }
 

@@ -180,6 +180,14 @@ fn skill_list_without_dir_reports_host_candidates() {
         .as_array()
         .expect("data.hosts is an array");
     let valid_states = ["installed", "outdated", "not-installed", "host-absent"];
+    let names: Vec<&str> = hosts
+        .iter()
+        .filter_map(|host| host["host"].as_str())
+        .collect();
+    assert!(
+        names.contains(&"workbuddy"),
+        "workbuddy is a skill host candidate, got {names:?}"
+    );
     for host in hosts {
         assert!(host.get("host").is_some(), "entry has host");
         assert!(host.get("path").is_some(), "entry has path");
