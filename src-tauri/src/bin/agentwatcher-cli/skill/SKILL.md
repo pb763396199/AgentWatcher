@@ -18,7 +18,7 @@ description: 查询本机 AI 助手（VS Code Copilot、Copilot CLI、Claude Cod
 
 | 命令 | 做什么 |
 | --- | --- |
-| `agentwatcher-cli session list [--provider <名>...] [--status waiting\|running\|idle] [--workspace <路径>] [--limit <n>] [--active-days <n>] [--include-archived]` | 会话元数据列表，不含对话文本 |
+| `agentwatcher-cli session list [--provider <名>...] [--status waiting\|running\|idle] [--workspace <路径>] [--limit <n>] [--active-days <n>] [--include-archived] [--exclude-playground]` | 会话元数据列表，不含对话文本 |
 | `agentwatcher-cli session show <id> [--content]` | 单会话详情（预览级）；`--content` 取正文视图 |
 | `agentwatcher-cli session usage <id>` | 用量明细：token、轮次、工具调用、成本、topTools |
 | `agentwatcher-cli handoff export <id>` | 导出接续上下文 Markdown |
@@ -34,6 +34,7 @@ description: 查询本机 AI 助手（VS Code Copilot、Copilot CLI、Claude Cod
 - `--active-days 0` 不限时间（非 0 值夹在 1 到 30）。全历史模式下 `--limit` 上限 20000，默认仍是 80。
 - `--include-archived` 连归档会话一起列：Codex 的 `archived_sessions` 目录（含 `.jsonl.zst` 压缩档）、OpenCode/ZCode 的 `time_archived`、Claude/Copilot 的归档标记。
 - 找归档或窗口外的会话推荐组合：`session list --active-days 0 --include-archived --limit 20000`。万级会话库（如 OpenCode）这一条命令数秒返回。
+- WorkBuddy 的 playground 会话（`is_playground=1`）默认纳入列表；只要普通会话时加 `--exclude-playground`。没有工作区的 playground 行仍照默认规则排除。
 - `session show` / `session usage` / `handoff export` 对归档、窗口外的会话 ID 同样可用（内部会做定向兜底查找），不用先改 list 参数。
 - 子代理会话（Codex subagent 线程、ZCode `subagent_child`）和临时目录工作区的会话照默认规则排除。
 

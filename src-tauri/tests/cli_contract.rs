@@ -142,6 +142,10 @@ fn skill_lifecycle_in_explicit_dir_is_idempotent() {
     let content = std::fs::read_to_string(&skill_file).expect("skill file written");
     assert!(content.contains("name: agentwatcher"), "skill doc has frontmatter");
     assert!(content.contains("session list"), "skill doc teaches the CLI");
+    assert!(
+        content.contains("--exclude-playground"),
+        "skill doc teaches the playground switch"
+    );
 
     // 状态：installed
     let (envelope, _stderr, _code) = run_cli(&["--format", "json", "skill", "list", "--dir", &dir_arg]);

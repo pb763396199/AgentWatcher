@@ -1,5 +1,13 @@
 # Changelog
 
+## 未发布
+
+- WorkBuddy playground 会话默认纳入卡片：`workbuddy_candidate_rows` 里 `is_playground` 从写死排除改为受第 4 个绑定参数控制（默认 true）；GUI 设置新增「WorkBuddy playground sessions」复选框（默认勾选），CLI `session list` 新增 `--exclude-playground` 回到旧视图，全历史扫描缓存键带上该开关。无工作区、软删、活跃窗口、路径黑名单、每源配额五层过滤不变；本机 11 条 playground 会话里 6 条有工作区可见，另外 5 条空工作区旧行仍排除。
+- 顺手删掉 `workbuddy_package_entries_use_session_path_as_raw_jsonl` 重复的 `#[test]` 标注——两个实例并发写同一临时文件会让全量测试偶发权限错误。
+- 同步文档口径：`skill/SKILL.md`（内嵌用法技能）、`README.md`、`AGENTS.md`；升级后重跑一次 `agentwatcher-cli skill install` 可刷新宿主里的技能副本。
+
+验证：`cargo test --manifest-path src-tauri/Cargo.toml`（lib 148 + CLI 分类 11 + 契约 10）、`npm run test:tauri:flow -- workbuddy-session`、`npx tauri build --no-bundle` 均通过。发布包名与 SHA256 待发版时补。
+
 ## v0.1.11 - 2026-11-06
 
 - 新增 ZCode 会话 AI 建议与自动作答：ZCode 会话新进入等待时，后端用 ZCode 自身无头会话（`zcode.cjs -p`，零配置，模型与账号沿用现有配置）生成一条不超过 120 字的建议回复；建议显示在悬浮预览窗顶部常驻回复框（可手打字、可 AI 填充、可一键发送），检测到结构化 AskUserQuestion 时升级为选项芯片。发送走 `send_zcode_message`（注册表反解 ZCode.exe，`ELECTRON_RUN_AS_NODE=1` 运行 `zcode.cjs --resume`，实测桌面版 3.16.3 可用）。全自动作答按会话开关（卡片右键），仅限选项域，护栏内置：每小时 6 次、同答案熔断、审计写 `%TEMP%\AgentWatcheruto-answersudit.jsonl`。设置面板新增 AI 建议区与全局热键；建议正文只走事件不进 localStorage。

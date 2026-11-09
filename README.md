@@ -42,7 +42,7 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - 接入 Codex 桌面会话扫描，支持与 Copilot / Claude 一起纳入 Watcher 和任务链路。
 - 接入 OpenCode 和 Copilot CLI 独立会话来源，provider 筛选、状态卡片和数量配额彼此独立。
 - 接入 ZCode 会话来源（本机 `~/.zcode/cli/db/db.sqlite`）：状态卡片、悬浮预览、接续上下文导出可用；点击跳转暂不实现（ZCode 官方无会话级深链，桌面发行版不含 TUI 运行时，点击返回明确提示）。
-- 接入 WorkBuddy 桌面会话来源（本机 `~/.workbuddy`：`workbuddy.db` 元数据 + `projects` 正文 JSONL）：状态卡片、悬浮预览、用量（token/上下文占用/credits）可用；点击经 `workbuddy://chat/<会话id>` 深链跳回 WorkBuddy 对应会话。
+- 接入 WorkBuddy 桌面会话来源（本机 `~/.workbuddy`：`workbuddy.db` 元数据 + `projects` 正文 JSONL）：状态卡片、悬浮预览、用量（token/上下文占用/credits）可用；点击经 `workbuddy://chat/<会话id>` 深链跳回 WorkBuddy 对应会话。playground 会话默认纳入，可在设置里关闭。
 - 扫描上限按 provider 分别计算，避免高数量来源挤掉其他 provider。
 - 支持工作区路径黑名单，默认过滤 `%TEMP%` 下的临时测试会话。
 
@@ -135,7 +135,7 @@ npm run dev:ui
 
 | 命令 | 做什么 |
 | --- | --- |
-| `agentwatcher-cli session list [--provider <名>...] [--status waiting\|running\|idle] [--workspace <路径>] [--limit <n>] [--active-days <n>]` | 列出会话元数据：状态、标题、工作区、provider、时间、用量。筛选参数与 GUI 设置一致 |
+| `agentwatcher-cli session list [--provider <名>...] [--status waiting\|running\|idle] [--workspace <路径>] [--limit <n>] [--active-days <n>] [--include-archived] [--exclude-playground]` | 列出会话元数据：状态、标题、工作区、provider、时间、用量。筛选参数与 GUI 设置一致；`--exclude-playground` 排除 WorkBuddy playground 会话（默认纳入） |
 | `agentwatcher-cli session show <id> [--content]` | 查看单个会话详情（同悬浮预览级）；`--content` 才带正文内容 |
 | `agentwatcher-cli session usage <id>` | 查看用量明细：token、上下文、轮次、工具调用、模型、成本、topTools |
 | `agentwatcher-cli handoff export <id>` | 导出源会话上下文 Markdown，落盘位置与 GUI 接续面板一致 |
