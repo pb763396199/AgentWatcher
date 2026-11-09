@@ -3,7 +3,7 @@
 ## 未发布
 
 - WorkBuddy playground 会话默认纳入卡片：`workbuddy_candidate_rows` 里 `is_playground` 从写死排除改为受第 4 个绑定参数控制（默认 true）；GUI 设置新增「WorkBuddy playground sessions」复选框（默认勾选），CLI `session list` 新增 `--exclude-playground` 回到旧视图，全历史扫描缓存键带上该开关。无工作区、软删、活跃窗口、路径黑名单、每源配额五层过滤不变；本机 11 条 playground 会话里 6 条有工作区可见，另外 5 条空工作区旧行仍排除。
-- 顺手删掉 `workbuddy_package_entries_use_session_path_as_raw_jsonl` 重复的 `#[test]` 标注——两个实例并发写同一临时文件会让全量测试偶发权限错误。
+- 顺手删掉 `workbuddy_package_entries_use_session_path_as_raw_jsonl` 重复的 `#[test]` 标注：两个实例并发写同一临时文件会让全量测试偶发权限错误。
 - 同步文档口径：`skill/SKILL.md`（内嵌用法技能）、`README.md`、`AGENTS.md`；升级后重跑一次 `agentwatcher-cli skill install` 可刷新宿主里的技能副本。
 
 验证：`cargo test --manifest-path src-tauri/Cargo.toml`（lib 148 + CLI 分类 11 + 契约 10）、`npm run test:tauri:flow -- workbuddy-session`、`npx tauri build --no-bundle` 均通过。发布包名与 SHA256 待发版时补。
