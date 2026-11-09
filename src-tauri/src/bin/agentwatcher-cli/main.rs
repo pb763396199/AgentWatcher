@@ -24,6 +24,7 @@ fn main() {
                 limit,
                 active_days,
                 include_archived,
+                exclude_playground,
                 no_cache,
             } => commands::session_list(
                 &provider,
@@ -32,6 +33,7 @@ fn main() {
                 limit,
                 active_days,
                 include_archived,
+                exclude_playground,
                 no_cache,
             ),
             SessionAction::Show { id, content } => commands::session_show(&id, content),

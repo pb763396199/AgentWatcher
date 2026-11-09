@@ -27,11 +27,13 @@ fn scan_options(
     limit: Option<usize>,
     active_days: Option<u64>,
     include_archived: bool,
+    exclude_playground: bool,
 ) -> ScanOptions {
     let mut options = ScanOptions {
         max_sessions: limit,
         active_window_days: active_days,
         hide_archived: Some(!include_archived),
+        include_playground: Some(!exclude_playground),
         include_copilot: None,
         include_copilot_cli: None,
         include_claude: None,
@@ -92,6 +94,7 @@ pub fn session_list(
     limit: Option<usize>,
     active_days: Option<u64>,
     include_archived: bool,
+    exclude_playground: bool,
     no_cache: bool,
 ) {
     // 全历史模式是分钟级重扫描，走跨进程缓存把同参数并发/紧随调用合并为一次；
@@ -116,10 +119,11 @@ pub fn session_list(
             limit,
             active_days,
             include_archived,
+            exclude_playground,
         };
         let scanned = crate::scan_cache::cached_full_history_scan(&key, || {
             let sessions = scan_sessions_blocking(Some(scan_options(
-                provider, limit, active_days, include_archived,
+                provider, limit, active_days, include_archived, exclude_playground,
             )));
             serde_json::Value::Array(sessions.iter().map(project_with_fallback).collect::<Vec<_>>())
         });
@@ -130,7 +134,7 @@ pub fn session_list(
             .unwrap_or_default()
     } else {
         let sessions = scan_sessions_blocking(Some(scan_options(
-            provider, limit, active_days, include_archived,
+            provider, limit, active_days, include_archived, exclude_playground,
         )));
         sessions.iter().map(project_with_fallback).collect::<Vec<_>>()
     };
@@ -221,7 +225,7 @@ fn find_session(id: &str) -> Option<AgentSession> {
                 include_open_code: Some(provider == "opencode"),
                 include_zcode: Some(provider == "zcode"),
                 include_workbuddy: Some(provider == "workbuddy"),
-                ..scan_options(&[], None, None, false)
+                ..scan_options(&[], None, None, false, false)
             }))
             .into_iter()
             .find(|session| session.id == trimmed)

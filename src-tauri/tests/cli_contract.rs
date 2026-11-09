@@ -216,3 +216,14 @@ fn default_window_session_list_leaves_no_scan_cache() {
         "默认窗口扫描不得新增缓存文件：before={before:?} after={after:?}"
     );
 }
+
+#[test]
+fn json_session_list_exclude_playground_keeps_envelope() {
+    let (envelope, _stderr, code) = run_cli(&[
+        "--format", "json", "session", "list", "--exclude-playground",
+    ]);
+    assert_eq!(code, Some(0), "list with exclude-playground must exit 0");
+    assert_eq!(envelope["command"], "session list");
+    assert_eq!(envelope["ok"], true);
+    assert!(envelope["data"]["sessions"].is_array());
+}

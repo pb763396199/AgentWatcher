@@ -65,6 +65,9 @@ pub enum SessionAction {
         /// 连归档会话一起列出：Codex archived_sessions 目录、OpenCode/ZCode time_archived、JSONL 归档标记
         #[arg(long = "include-archived", default_value_t = false)]
         include_archived: bool,
+        /// 排除 WorkBuddy playground 会话（默认纳入）
+        #[arg(long = "exclude-playground", default_value_t = false)]
+        exclude_playground: bool,
         /// 绕过全历史扫描缓存：不读不写缓存，直接真实扫描
         #[arg(long = "no-cache", default_value_t = false)]
         no_cache: bool,

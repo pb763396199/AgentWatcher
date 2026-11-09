@@ -25,6 +25,7 @@ pub struct ScanCacheKey {
     pub limit: Option<usize>,
     pub active_days: Option<u64>,
     pub include_archived: bool,
+    pub exclude_playground: bool,
 }
 
 impl ScanCacheKey {
@@ -55,6 +56,7 @@ impl ScanCacheKey {
         );
         hasher.update(b"\0");
         hasher.update([self.include_archived as u8]);
+        hasher.update([self.exclude_playground as u8]);
         let mut hex = format!("{:x}", hasher.finalize());
         hex.truncate(24);
         hex
@@ -273,6 +275,7 @@ mod tests {
             limit: Some(50),
             active_days: Some(0),
             include_archived: true,
+            exclude_playground: false,
         }
     }
 
@@ -305,6 +308,19 @@ mod tests {
             assert_eq!(result, &results[0], "并发调用必须拿到一致结果");
         }
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_cache_key_separates_exclude_playground() {
+        let mut key = key();
+        key.exclude_playground = false;
+        let included = key.digest();
+        key.exclude_playground = true;
+        let excluded = key.digest();
+        assert_ne!(
+            included, excluded,
+            "带不带 --exclude-playground 的全历史扫描不能串用同一份缓存"
+        );
     }
 
     #[test]

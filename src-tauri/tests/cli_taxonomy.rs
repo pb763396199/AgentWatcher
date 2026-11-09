@@ -38,6 +38,7 @@ fn session_list_parses_filters() {
             limit,
             active_days,
             include_archived,
+            exclude_playground,
             no_cache,
         },
     } = parsed.command
@@ -50,6 +51,7 @@ fn session_list_parses_filters() {
     assert_eq!(limit, Some(5));
     assert_eq!(active_days, Some(3));
     assert!(!include_archived);
+    assert!(!exclude_playground);
     assert!(!no_cache, "不带 --no-cache 时默认走缓存");
 }
 
@@ -206,4 +208,26 @@ fn every_subcommand_has_about_text() {
         }
     }
     walk(&Cli::command());
+}
+
+#[test]
+fn session_list_parses_exclude_playground_flag() {
+    let parsed = parse(&["session", "list", "--exclude-playground"])
+        .expect("exclude-playground flag should parse");
+    let Commands::Session {
+        action: SessionAction::List { exclude_playground, .. },
+    } = parsed.command
+    else {
+        panic!("expected session list");
+    };
+    assert!(exclude_playground);
+
+    let parsed = parse(&["session", "list"]).expect("bare list parses");
+    let Commands::Session {
+        action: SessionAction::List { exclude_playground, .. },
+    } = parsed.command
+    else {
+        panic!("expected session list");
+    };
+    assert!(!exclude_playground);
 }

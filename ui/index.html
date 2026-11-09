@@ -5817,6 +5817,10 @@
             <input class="setting-check" id="includeWorkbuddy" type="checkbox" checked />
           </div>
           <div class="setting-row">
+            <label for="includePlayground" data-i18n="includePlayground">WorkBuddy playground sessions</label>
+            <input class="setting-check" id="includePlayground" type="checkbox" checked />
+          </div>
+          <div class="setting-row">
             <label for="hideArchived" data-i18n="hideArchived">Hide archived</label>
             <input class="setting-check" id="hideArchived" type="checkbox" checked />
           </div>
@@ -6567,6 +6571,7 @@
     const includeOpenCode = document.getElementById('includeOpenCode');
     const includeZcode = document.getElementById('includeZcode');
     const includeWorkbuddy = document.getElementById('includeWorkbuddy');
+    const includePlayground = document.getElementById('includePlayground');
     const hideArchived = document.getElementById('hideArchived');
     const workspacePathBlacklist = document.getElementById('workspacePathBlacklist');
     const activeWindowDays = document.getElementById('activeWindowDays');
@@ -6865,6 +6870,7 @@
       includeOpenCode: true,
       includeZcode: true,
       includeWorkbuddy: true,
+      includePlayground: true,
       hideArchived: true,
       workspacePathBlacklist: ['%TEMP%'],
       activeWindowDays: 7,
@@ -6989,6 +6995,7 @@
         includeOpenCode: 'OpenCode sessions',
         includeZcode: 'ZCode sessions',
         includeWorkbuddy: 'WorkBuddy sessions',
+        includePlayground: 'WorkBuddy playground sessions',
         includeCopilot: 'VS Code Copilot sessions',
         maxSessions: 'Sessions per provider',
         pluginManagement: 'Plugin management', pluginRefresh: 'Refresh', pluginMount: 'Mount', pluginMountPlaceholder: 'Plugin directory, for example F:\\Tools\\MyPlugin', pluginWorkflowParametersAria: 'Plugin workflow parameters', pluginWorkflowParameters: 'Workflow parameters', pluginWorkflowPerTask: 'Configured per task', pluginWorkflowPreviewAria: 'Plugin workflow preview', pluginWorkflowPreview: 'Workflow preview', pluginWorkflowAwaitingPreview: 'Awaiting preview', pluginWorkflowDefaultLabel: 'Plugin workflow', pluginNoneMounted: 'No plugins mounted', pluginZeroMode: 'AgentWatcher is running in zero-plugin mode.', pluginFallbackName: 'Plugin', pluginHealthFailed: 'startup check failed', pluginHealthPassed: 'startup check passed', pluginEnabled: 'Enabled', pluginMountedDisabled: 'Mounted, disabled', pluginNoPublicModules: 'No public modules', pluginDisable: 'Disable', pluginEnable: 'Enable', pluginUnmount: 'Unmount', confirmAgain: 'Confirm again',
@@ -7172,6 +7179,7 @@
         includeOpenCode: 'OpenCode 会话',
         includeZcode: 'ZCode 会话',
         includeWorkbuddy: 'WorkBuddy 会话',
+        includePlayground: 'WorkBuddy playground 会话',
         includeCopilot: 'VS Code Copilot 会话',
         maxSessions: '每个提供方的会话数',
         pluginManagement: '插件管理', pluginRefresh: '刷新', pluginMount: '挂载', pluginMountPlaceholder: '插件目录，例如 F:\\Tools\\MyPlugin', pluginWorkflowParametersAria: '插件工作流参数', pluginWorkflowParameters: '工作流参数', pluginWorkflowPerTask: '每个任务单独填写', pluginWorkflowPreviewAria: '插件工作流预演', pluginWorkflowPreview: '工作流预演', pluginWorkflowAwaitingPreview: '等待预演', pluginWorkflowDefaultLabel: '插件工作流', pluginNoneMounted: '未挂载插件', pluginZeroMode: 'AgentWatcher 当前以零插件模式运行。', pluginFallbackName: '插件', pluginHealthFailed: '启动检查失败', pluginHealthPassed: '已通过启动检查', pluginEnabled: '已启用', pluginMountedDisabled: '已挂载，未启用', pluginNoPublicModules: '无公开模块', pluginDisable: '停用', pluginEnable: '启用', pluginUnmount: '卸载', confirmAgain: '再次确认',
@@ -11625,6 +11633,7 @@
           includeOpenCode: savedSettings.includeOpenCode !== false,
           includeZcode: savedSettings.includeZcode !== false,
           includeWorkbuddy: savedSettings.includeWorkbuddy !== false,
+          includePlayground: savedSettings.includePlayground !== false,
           hideArchived: savedSettings.hideArchived !== false,
           workspacePathBlacklist: Array.isArray(savedSettings.workspacePathBlacklist)
             ? savedSettings.workspacePathBlacklist.map(value => String(value).trim()).filter(Boolean)
@@ -11660,6 +11669,7 @@
         'includeOpenCode',
         'includeZcode',
         'includeWorkbuddy',
+        'includePlayground',
         'hideArchived',
         'workspacePathBlacklist',
         'activeWindowDays',
@@ -12024,6 +12034,7 @@
         includeOpenCode: settings.includeOpenCode,
         includeZcode: settings.includeZcode,
         includeWorkbuddy: settings.includeWorkbuddy,
+      includePlayground: settings.includePlayground,
         hideArchived: settings.hideArchived,
         activeWindowDays: settings.activeWindowDays,
         maxSessions: settings.maxSessions,
@@ -12046,6 +12057,7 @@
       includeOpenCode.checked = settings.includeOpenCode;
       includeZcode.checked = settings.includeZcode;
       includeWorkbuddy.checked = settings.includeWorkbuddy;
+      includePlayground.checked = settings.includePlayground;
       hideArchived.checked = settings.hideArchived;
       workspacePathBlacklist.value = settings.workspacePathBlacklist.join('\n');
       activeWindowDays.value = String(settings.activeWindowDays);
@@ -18884,6 +18896,7 @@ function analyticsRememberSession(normalized) {
       includeOpenCode.addEventListener('change', () => updateSetting('includeOpenCode', includeOpenCode.checked, { announce: true }));
       includeZcode.addEventListener('change', () => updateSetting('includeZcode', includeZcode.checked, { announce: true }));
       includeWorkbuddy.addEventListener('change', () => updateSetting('includeWorkbuddy', includeWorkbuddy.checked, { announce: true }));
+      includePlayground.addEventListener('change', () => updateSetting('includePlayground', includePlayground.checked, { announce: true }));
       hideArchived.addEventListener('change', () => updateSetting('hideArchived', hideArchived.checked, { announce: true }));
       workspacePathBlacklist.addEventListener('change', () => updateSetting(
         'workspacePathBlacklist',
