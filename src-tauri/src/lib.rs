@@ -745,6 +745,7 @@ pub struct ScanOptions {
     pub include_open_code: Option<bool>,
     pub include_zcode: Option<bool>,
     pub include_workbuddy: Option<bool>,
+    pub include_playground: Option<bool>,
     pub workspace_path_blacklist: Option<Vec<String>>,
 }
 
@@ -760,6 +761,7 @@ struct ResolvedScanOptions {
     include_open_code: bool,
     include_zcode: bool,
     include_workbuddy: bool,
+    include_playground: bool,
     workspace_path_blacklist: Vec<String>,
 }
 
@@ -1418,6 +1420,7 @@ pub fn lookup_session_full_history(id: &str) -> Option<AgentSession> {
 
 fn full_history_scan_options() -> ScanOptions {
     ScanOptions {
+        include_playground: None,
         max_sessions: Some(FULL_HISTORY_SESSIONS_LIMIT),
         active_window_days: Some(0),
         hide_archived: Some(false),
@@ -12558,6 +12561,7 @@ fn resolve_scan_options(options: Option<ScanOptions>) -> ResolvedScanOptions {
         include_open_code: None,
         include_zcode: None,
         include_workbuddy: None,
+        include_playground: None,
         workspace_path_blacklist: None,
     });
     // 0 是显式的全历史开关（不限时间）；非 0 值维持 1–30 天夹取。GUI 调用方不会传 0，
@@ -12593,6 +12597,7 @@ fn resolve_scan_options(options: Option<ScanOptions>) -> ResolvedScanOptions {
         include_open_code: options.include_open_code.unwrap_or(true),
         include_zcode: options.include_zcode.unwrap_or(true),
         include_workbuddy: options.include_workbuddy.unwrap_or(true),
+        include_playground: options.include_playground.unwrap_or(true),
         workspace_path_blacklist: options
             .workspace_path_blacklist
             .unwrap_or_else(default_workspace_path_blacklist)
@@ -14515,8 +14520,8 @@ fn workbuddy_session_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<W
     })
 }
 
-/// 候选行 = 未删除、非 playground、有工作区的会话，按活跃时间倒序取窗口内前 N 条。
-/// playground 行的 cwd 为空串（自动化任务产物），没有工作区归属，不进卡片。
+/// 候选行 = 有工作区、未被隐藏归档的会话，按活跃时间倒序取窗口内前 N 条。
+/// playground 会话默认纳入，关掉开关时按旧口径排除；空 cwd 的行始终不进卡片。
 fn workbuddy_candidate_rows(
     connection: &Connection,
     options: &ResolvedScanOptions,
@@ -14527,7 +14532,7 @@ fn workbuddy_candidate_rows(
                 model, context_window \
          from sessions \
          where (?3 = 0 or deleted_at is null) \
-           and coalesce(is_playground, 0) = 0 \
+           and (?4 = 1 or coalesce(is_playground, 0) = 0) \
            and cwd is not null and cwd <> '' \
            and (?2 = 0 or coalesce(last_activity_at, updated_at, created_at) >= ?2) \
          order by coalesce(last_activity_at, updated_at, created_at) desc \
@@ -14547,7 +14552,8 @@ fn workbuddy_candidate_rows(
         rusqlite::params![
             sqlite_session_scan_limit(options, WORKBUDDY_SESSION_SCAN_LIMIT_MAX) as i64,
             active_cutoff_ms,
-            hide_deleted
+            hide_deleted,
+            if options.include_playground { 1_i64 } else { 0_i64 }
         ],
         workbuddy_session_row_from_sql,
     ) else {
@@ -16641,6 +16647,7 @@ mod tests {
         assert!(resolve_scan_options(None).include_codex);
 
         let options = resolve_scan_options(Some(ScanOptions {
+            include_playground: None,
             max_sessions: None,
             active_window_days: None,
             hide_archived: None,
@@ -16660,6 +16667,7 @@ mod tests {
     #[test]
     fn scan_options_control_copilot_chat_and_cli_independently() {
         let options = resolve_scan_options(Some(ScanOptions {
+            include_playground: None,
             max_sessions: None,
             active_window_days: None,
             hide_archived: None,
@@ -16806,6 +16814,7 @@ mod tests {
         );
 
         let explicit_empty = resolve_scan_options(Some(ScanOptions {
+            include_playground: None,
             max_sessions: None,
             active_window_days: None,
             hide_archived: None,
@@ -16826,6 +16835,7 @@ mod tests {
         assert!(resolve_scan_options(None).include_open_code);
 
         let options = resolve_scan_options(Some(ScanOptions {
+            include_playground: None,
             max_sessions: None,
             active_window_days: None,
             hide_archived: None,
@@ -16847,6 +16857,7 @@ mod tests {
         assert!(resolve_scan_options(None).include_zcode);
 
         let options = resolve_scan_options(Some(ScanOptions {
+            include_playground: None,
             max_sessions: None,
             active_window_days: None,
             hide_archived: None,
@@ -16884,6 +16895,7 @@ mod tests {
             todo_ids: vec!["todo-awzc-abc123".to_string()],
         };
         let options = resolve_scan_options(Some(ScanOptions {
+            include_playground: None,
             max_sessions: Some(80),
             active_window_days: Some(7),
             hide_archived: Some(true),
@@ -17475,6 +17487,7 @@ mod tests {
 
         let scan_time_ms = current_time_ms();
         let options = resolve_scan_options(Some(ScanOptions {
+            include_playground: None,
             max_sessions: Some(80),
             active_window_days: Some(7),
             hide_archived: Some(true),
@@ -17561,6 +17574,7 @@ mod tests {
         fs::write(&session_path, jsonl).unwrap();
 
         let options = resolve_scan_options(Some(ScanOptions {
+            include_playground: None,
             max_sessions: Some(80),
             active_window_days: Some(7),
             hide_archived: Some(true),
@@ -17756,6 +17770,7 @@ mod tests {
             todo_ids: vec!["todo-awoc-abc123".to_string()],
         };
         let options = resolve_scan_options(Some(ScanOptions {
+            include_playground: None,
             max_sessions: Some(80),
             active_window_days: Some(7),
             hide_archived: Some(true),
@@ -17931,6 +17946,7 @@ mod tests {
 
         clear_opencode_scan_cache();
         let options = resolve_scan_options(Some(ScanOptions {
+            include_playground: None,
             max_sessions: Some(80),
             active_window_days: Some(7),
             hide_archived: Some(true),
@@ -18015,6 +18031,7 @@ mod tests {
         let scan_time_ms = 1_780_651_255_000;
         let updated_ms = scan_time_ms - STATUS_RECENT_CONTENT_WINDOW_MS - 1;
         let options = resolve_scan_options(Some(ScanOptions {
+            include_playground: None,
             max_sessions: Some(80),
             active_window_days: Some(7),
             hide_archived: Some(true),
@@ -18102,6 +18119,7 @@ mod tests {
         let scan_time_ms = 1_780_651_255_000;
         let updated_ms = scan_time_ms - 60_000;
         let options = resolve_scan_options(Some(ScanOptions {
+            include_playground: None,
             max_sessions: Some(80),
             active_window_days: Some(7),
             hide_archived: Some(true),
@@ -18157,6 +18175,7 @@ mod tests {
         let scan_time_ms = 1_780_651_255_000;
         let updated_ms = scan_time_ms - STATUS_RECENT_CONTENT_WINDOW_MS - 1;
         let options = resolve_scan_options(Some(ScanOptions {
+            include_playground: None,
             max_sessions: Some(80),
             active_window_days: Some(7),
             hide_archived: Some(true),
@@ -18194,6 +18213,7 @@ mod tests {
         let scan_time_ms = 1_780_651_255_000;
         let updated_ms = scan_time_ms - STATUS_RECENT_CONTENT_WINDOW_MS - 1;
         let options = resolve_scan_options(Some(ScanOptions {
+            include_playground: None,
             max_sessions: Some(80),
             active_window_days: Some(7),
             hide_archived: Some(true),
@@ -18296,6 +18316,7 @@ mod tests {
             .unwrap();
 
         let options = resolve_scan_options(Some(ScanOptions {
+            include_playground: None,
             max_sessions: Some(20),
             active_window_days: Some(7),
             hide_archived: Some(true),
@@ -18359,6 +18380,7 @@ mod tests {
     #[test]
     fn codex_scan_turn_fetch_budget_stays_small() {
         let options = resolve_scan_options(Some(ScanOptions {
+            include_playground: None,
             max_sessions: Some(80),
             active_window_days: Some(7),
             hide_archived: Some(true),
@@ -18406,6 +18428,7 @@ mod tests {
 
         let thread_id = launch_codex_handoff(&workspace_path, &prompt).unwrap();
         let options = resolve_scan_options(Some(ScanOptions {
+            include_playground: None,
             max_sessions: Some(80),
             active_window_days: Some(7),
             hide_archived: Some(true),
@@ -19139,6 +19162,7 @@ mod tests {
 
         fn scan_options_with(active_days: Option<u64>, max: Option<usize>) -> ScanOptions {
             ScanOptions {
+                include_playground: None,
                 max_sessions: max,
                 active_window_days: active_days,
                 hide_archived: None,
@@ -20421,6 +20445,7 @@ mod tests {
 
     fn scan_options_workbuddy_only() -> ScanOptions {
         ScanOptions {
+            include_playground: None,
             max_sessions: None,
             active_window_days: None,
             hide_archived: None,
@@ -20654,6 +20679,70 @@ mod tests {
         assert_eq!(rows[0].cwd, "F:/AiProject/AgentWatcher");
         assert_eq!(rows[0].model.as_deref(), Some("deepseek-v4.1-flash"));
         assert_eq!(rows[0].context_window, Some(1_000_000));
+    }
+
+    #[test]
+    fn workbuddy_candidate_rows_include_playground_with_cwd_by_default() {
+        let connection = workbuddy_memory_connection();
+        let scan_time_ms = 1_780_651_255_000_u64;
+        let options = resolve_scan_options(Some(scan_options_workbuddy_only()));
+        let now = scan_time_ms as i64;
+        insert_workbuddy_session(
+            &connection,
+            "playground-with-cwd",
+            "C:/Users/pb763/WorkBuddy/2026-11-03-17-01-29",
+            Some("珠海航展摄影全流程指南"),
+            None,
+            now - 600_000,
+            now - 60_000,
+            Some(now - 60_000),
+            None,
+            1,
+            Some("deepseek-v4.1-flash"),
+            Some(1_000_000),
+        );
+
+        let rows = workbuddy_candidate_rows(&connection, &options, scan_time_ms);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "playground-with-cwd");
+        assert_eq!(rows[0].cwd, "C:/Users/pb763/WorkBuddy/2026-11-03-17-01-29");
+    }
+
+    #[test]
+    fn workbuddy_candidate_rows_exclude_playground_when_disabled() {
+        let connection = workbuddy_memory_connection();
+        let scan_time_ms = 1_780_651_255_000_u64;
+        let mut options = scan_options_workbuddy_only();
+        options.include_playground = Some(false);
+        let resolved = resolve_scan_options(Some(options));
+        let now = scan_time_ms as i64;
+        insert_workbuddy_session(
+            &connection,
+            "playground-with-cwd",
+            "C:/Users/pb763/WorkBuddy/2026-11-03-17-01-29",
+            Some("珠海航展摄影全流程指南"),
+            None,
+            now - 600_000,
+            now - 60_000,
+            Some(now - 60_000),
+            None,
+            1,
+            None,
+            None,
+        );
+
+        let rows = workbuddy_candidate_rows(&connection, &resolved, scan_time_ms);
+
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn resolve_scan_options_defaults_include_playground_to_true() {
+        assert!(resolve_scan_options(None).include_playground);
+        let mut options = scan_options_workbuddy_only();
+        options.include_playground = Some(false);
+        assert!(!resolve_scan_options(Some(options)).include_playground);
     }
 
     #[test]
@@ -20917,7 +21006,6 @@ mod tests {
         assert_eq!(session.message_count, 2);
     }
 
-    #[test]
     #[test]
     fn workbuddy_package_entries_use_session_path_as_raw_jsonl() {
         let root = env::temp_dir().join(format!("aw-wb-pkg-{}", current_time_ms()));
