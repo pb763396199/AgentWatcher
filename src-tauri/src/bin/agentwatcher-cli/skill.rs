@@ -16,6 +16,37 @@ struct HostStatus {
     state: String,
 }
 
+/// status 比 list 多给一个「下一步该做什么」，让 agent 能自检后自己修。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StatusEntry {
+    host: String,
+    path: String,
+    state: String,
+    action: String,
+}
+
+fn action_of(state: &str) -> &'static str {
+    match state {
+        "installed" => "none",
+        "outdated" | "not-installed" => "skill install",
+        _ => "skip",
+    }
+}
+
+/// 文档版本从 frontmatter 的 `version:` 行读，避免和文档两处各写一个版本号。
+fn doc_version() -> &'static str {
+    for line in SKILL_DOC.lines().take(12) {
+        if let Some(rest) = line.strip_prefix("version:") {
+            let trimmed = rest.trim();
+            if !trimmed.is_empty() {
+                return trimmed;
+            }
+        }
+    }
+    "unknown"
+}
+
 fn candidate_roots() -> Vec<(&'static str, PathBuf)> {
     let Some(home) = std::env::var_os("USERPROFILE") else {
         return Vec::new();
@@ -26,8 +57,9 @@ fn candidate_roots() -> Vec<(&'static str, PathBuf)> {
         ("claude-code", home.join(".claude").join("skills")),
         ("agents", home.join(".agents").join("skills")),
         ("codex", home.join(".codex").join("skills")),
-        ("opencode", home.join(".config").join("opencode").join("skill")),
         ("workbuddy", home.join(".workbuddy").join("skills")),
+        ("copilot", home.join(".copilot").join("skills")),
+        ("opencode", home.join(".config").join("opencode").join("skill")),
     ]
 }
 
@@ -120,7 +152,11 @@ pub fn skill_list(dir: Option<&str>) {
             status.host, status.state, status.path
         ));
     }
-    let data = serde_json::json!({ "hosts": serde_json::to_value(&hosts).expect("status serializes") });
+    let data = serde_json::json!({
+        "docVersion": doc_version(),
+        "docBytes": SKILL_DOC.len(),
+        "hosts": serde_json::to_value(&hosts).expect("status serializes"),
+    });
     output::finish_success("skill list", data, Some(human));
 }
 
@@ -158,4 +194,73 @@ pub fn skill_remove(dir: Option<&str>) {
 
 fn dir_is_empty(path: &Path) -> bool {
     path.read_dir().map(|mut entries| entries.next().is_none()).unwrap_or(false)
+}
+
+/// 自检视图：在 list 的基础上给每个宿主一个下一步动作，并汇总计数。
+/// 目的是让 agent 一条命令就能判断「要不要重装」，不用自己比对字节。
+pub fn skill_status(dir: Option<&str>) {
+    let entries: Vec<(String, PathBuf)> = if let Some(custom) = dir.map(str::trim).filter(|value| !value.is_empty()) {
+        vec![("custom".to_string(), PathBuf::from(custom))]
+    } else {
+        candidate_roots()
+            .into_iter()
+            .map(|(host, root)| (host.to_string(), root))
+            .collect()
+    };
+    let hosts: Vec<StatusEntry> = entries
+        .iter()
+        .map(|(host, root)| {
+            let state = state_of(root).to_string();
+            StatusEntry {
+                host: host.clone(),
+                path: skill_file(root).to_string_lossy().into_owned(),
+                action: action_of(&state).to_string(),
+                state,
+            }
+        })
+        .collect();
+    let count = |state: &str| hosts.iter().filter(|entry| entry.state == state).count();
+    let summary = serde_json::json!({
+        "installed": count("installed"),
+        "outdated": count("outdated"),
+        "notInstalled": count("not-installed"),
+        "hostAbsent": count("host-absent"),
+    });
+    let mut human = format!(
+        "doc: v{} ({} bytes)\n{:<12}{:<14}{:<16}{}\n",
+        doc_version(),
+        SKILL_DOC.len(),
+        "HOST",
+        "STATE",
+        "ACTION",
+        "PATH"
+    );
+    for entry in &hosts {
+        human.push_str(&format!(
+            "{:<12}{:<14}{:<16}{}\n",
+            entry.host, entry.state, entry.action, entry.path
+        ));
+    }
+    let data = serde_json::json!({
+        "docVersion": doc_version(),
+        "docBytes": SKILL_DOC.len(),
+        "hosts": serde_json::to_value(&hosts).expect("status serializes"),
+        "summary": summary,
+    });
+    output::finish_success("skill status", data, Some(human));
+}
+
+/// 直接吐出内嵌的技能正文：宿主可以自己写盘、也可以跟已装副本做 diff。
+pub fn skill_print() {
+    let mut human = String::new();
+    human.push_str(SKILL_DOC);
+    if !human.ends_with('\n') {
+        human.push('\n');
+    }
+    let data = serde_json::json!({
+        "docVersion": doc_version(),
+        "docBytes": SKILL_DOC.len(),
+        "content": SKILL_DOC,
+    });
+    output::finish_success("skill print", data, Some(human));
 }

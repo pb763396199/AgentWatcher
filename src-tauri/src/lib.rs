@@ -35,6 +35,19 @@ const CLAUDE_PROMPT_SCAN_BYTES: usize = 8 * 1024 * 1024;
 const CODEX_APP_SERVER_READY_TIMEOUT_MS: u64 = 8_000;
 const CODEX_APP_SERVER_RPC_TIMEOUT_MS: u64 = 20_000;
 const CODEX_APP_SERVER_START_ATTEMPTS: usize = 4;
+/// 建议采样走官方同款服务档。priority 只影响带模型的请求，扫描用的 thread/list 不受影响；
+/// 账号不支持时请求会失败，sample 分支自然回落 codex exec（exec 用 config.toml 的档位）。
+const CODEX_SUGGESTION_SERVICE_TIER: &str = "priority";
+
+/// 服务档允许用环境变量覆盖：`priority` 走的是更高费率，账号不支持或想退回默认档时
+/// 不必改代码（`AGENTWATCHER_SERVICE_TIER=default`）。
+fn codex_service_tier() -> String {
+    std::env::var("AGENTWATCHER_SERVICE_TIER")
+        .map(|value| value.trim().to_string())
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| CODEX_SUGGESTION_SERVICE_TIER.to_string())
+}
 const CODEX_TURN_FETCH_LIMIT: usize = 8;
 const CODEX_SCAN_TURN_FETCH_BUDGET: usize = 3;
 const OPENCODE_SESSION_SCAN_LIMIT_MAX: usize = 240;
@@ -1065,6 +1078,8 @@ static CODEX_FILE_SESSION_CACHE: OnceLock<
     Mutex<HashMap<String, CachedJsonlSummary<CodexFileSessionSummary>>>,
 > = OnceLock::new();
 static CODEX_APP_SERVER: OnceLock<Mutex<Option<CodexAppServerProcess>>> = OnceLock::new();
+/// 建议专用常驻 server（priority 档 + 关 MCP），与扫描/handoff 的 server 分开。
+static CODEX_SUGGESTION_SERVER: OnceLock<Mutex<Option<CodexAppServerProcess>>> = OnceLock::new();
 static OPENCODE_SESSION_SUMMARY_CACHE: OnceLock<Mutex<HashMap<String, CachedOpenCodeSummary>>> =
     OnceLock::new();
 static OPENCODE_SCAN_CACHE: OnceLock<Mutex<Option<CachedOpenCodeScan>>> = OnceLock::new();
@@ -9692,11 +9707,17 @@ pub fn set_codex_app_server_disabled(disabled: bool) {
     CODEX_APP_SERVER_DISABLED.store(disabled, Ordering::Relaxed);
 }
 
-fn ensure_codex_app_server() -> Result<u16, String> {
+/// 常驻 server 的公共启动逻辑。`extra_args` 是额外的 `-c key=value` 配置：
+/// 扫描用的 server 不带覆盖（handoff 要在默认档跑），建议用的 server 带
+/// `service_tier=priority` 与 `mcp_servers={}`。
+fn ensure_codex_server(
+    slot: &'static OnceLock<Mutex<Option<CodexAppServerProcess>>>,
+    extra_args: &[String],
+) -> Result<u16, String> {
     if CODEX_APP_SERVER_DISABLED.load(Ordering::Relaxed) {
         return Err("Codex app-server is disabled for this process".to_string());
     }
-    let server_mutex = CODEX_APP_SERVER.get_or_init(|| Mutex::new(None));
+    let server_mutex = slot.get_or_init(|| Mutex::new(None));
     let mut server_guard = server_mutex
         .lock()
         .map_err(|_| "Codex app-server lock poisoned".to_string())?;
@@ -9717,6 +9738,7 @@ fn ensure_codex_app_server() -> Result<u16, String> {
         let mut command = Command::new(&codex_cli);
         command
             .args(["app-server", "--listen", &listen_url])
+            .args(extra_args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -9748,19 +9770,37 @@ fn ensure_codex_app_server() -> Result<u16, String> {
     Err(last_error.unwrap_or_else(|| "Unable to start Codex app-server".to_string()))
 }
 
+fn ensure_codex_app_server() -> Result<u16, String> {
+    ensure_codex_server(&CODEX_APP_SERVER, &[])
+}
+
+/// 建议专用常驻 server：与扫描/handoff 分开，避免 priority 档波及普通 turn 的计费。
+/// 它不跑工具，所以直接关掉 MCP（省启动时间与内存）。
+fn ensure_codex_suggestion_server() -> Result<u16, String> {
+    let args = vec![
+        "-c".to_string(),
+        "mcp_servers={}".to_string(),
+        "-c".to_string(),
+        format!("service_tier={}", codex_service_tier()),
+    ];
+    ensure_codex_server(&CODEX_SUGGESTION_SERVER, &args)
+}
+
 fn stop_codex_app_server(server: &mut CodexAppServerProcess) {
     terminate_server_tree(&mut server.child, &mut server.job);
 }
 
-fn shutdown_codex_app_server() {
-    let Some(server_mutex) = CODEX_APP_SERVER.get() else {
-        return;
-    };
-    let Ok(mut server_guard) = server_mutex.lock() else {
-        return;
-    };
-    if let Some(mut server) = server_guard.take() {
-        stop_codex_app_server(&mut server);
+pub fn shutdown_codex_app_server() {
+    for slot in [&CODEX_APP_SERVER, &CODEX_SUGGESTION_SERVER] {
+        let Some(server_mutex) = slot.get() else {
+            continue;
+        };
+        let Ok(mut server_guard) = server_mutex.lock() else {
+            continue;
+        };
+        if let Some(mut server) = server_guard.take() {
+            stop_codex_app_server(&mut server);
+        }
     }
 }
 
@@ -9850,6 +9890,19 @@ impl CodexWsClient {
     }
 
     fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        self.request_with_timeout(method, params, CODEX_APP_SERVER_RPC_TIMEOUT_MS)
+    }
+
+    /// 长请求（thread/sample 要等模型出字）用这个：socket 读超时与等待上限一起放宽。
+    fn request_with_timeout(
+        &mut self,
+        method: &str,
+        params: Value,
+        timeout_ms: u64,
+    ) -> Result<Value, String> {
+        let timeout = Duration::from_millis(timeout_ms);
+        let _ = self.stream.set_read_timeout(Some(timeout));
+        let _ = self.stream.set_write_timeout(Some(timeout));
         let request_id = self.next_id;
         self.next_id = self.next_id.saturating_add(1);
         websocket_send_text(
@@ -9862,7 +9915,7 @@ impl CodexWsClient {
             .to_string(),
         )?;
 
-        let deadline = Instant::now() + Duration::from_millis(CODEX_APP_SERVER_RPC_TIMEOUT_MS);
+        let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
             let message = websocket_read_text(&mut self.stream)?;
             let Some(response_json) = serde_json::from_str::<Value>(&message).ok() else {
@@ -15097,9 +15150,106 @@ pub struct PendingQuestion {
     pub options: Vec<String>,
 }
 
-/// 只有"新进入 waiting"才触发建议；running 转 idle 默认不出建议。
-fn suggestion_should_trigger(prev_status: Option<&str>, cur_status: &str) -> bool {
-    cur_status == "waiting" && prev_status != Some("waiting")
+/// 触发原因。对齐官方 Composer Predictions 的 live / catch_up 两类，
+/// 另保留 AgentWatcher 原有的 waiting（等审批 / AskUserQuestion 选项）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SuggestionTrigger {
+    /// turn 跑完、会话转 idle：官方 live，采样率 1.0。
+    Live,
+    /// 会话从扫描结果消失后重新出现（切回旧会话）：官方 catch_up，采样率 0.5。
+    CatchUp,
+    /// 等待用户审批或选项：AgentWatcher 原有语义，不采样。
+    Waiting,
+}
+
+impl SuggestionTrigger {
+    fn sample_rate(self) -> f64 {
+        match self {
+            SuggestionTrigger::Live | SuggestionTrigger::Waiting => SUGGESTION_LIVE_SAMPLE_RATE,
+            SuggestionTrigger::CatchUp => SUGGESTION_CATCH_UP_SAMPLE_RATE,
+        }
+    }
+}
+
+/// 纯状态转换判定（不含时间新鲜度）。
+/// 关键语义（2026-11-09 对齐官方后修正）：官方在「turn 完成、会话转 idle」时预测下一句，
+/// 而不是只在等审批时预测；旧实现只认 waiting，导致绝大多数正常结束的会话永不出建议。
+fn suggestion_status_transition(
+    prev_status: Option<&str>,
+    cur_status: &str,
+    was_known: bool,
+) -> Option<SuggestionTrigger> {
+    match cur_status {
+        "waiting" => (prev_status != Some("waiting")).then_some(SuggestionTrigger::Waiting),
+        "idle" => match prev_status {
+            Some("running") | Some("waiting") => Some(SuggestionTrigger::Live),
+            // 曾见过、本轮重新出现：按 catch_up 采样。首见的 idle 不触发。
+            None if was_known => Some(SuggestionTrigger::CatchUp),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// 管线用的完整判定：状态转换 + 时间新鲜度。
+/// 只有最近 SUGGESTION_LIVE_RECENCY_MS 内有内容更新的会话才可能是「刚跑完一轮」；
+/// 冷启动首见的 idle 会话一律不触发，避免对全部历史会话刷模型调用。
+fn suggestion_trigger_for(
+    prev_status: Option<&str>,
+    cur_status: &str,
+    was_known: bool,
+    updated_ms: u64,
+    now_ms: u64,
+) -> Option<SuggestionTrigger> {
+    if (cur_status == "idle" || cur_status == "waiting")
+        && now_ms.saturating_sub(updated_ms) > SUGGESTION_LIVE_RECENCY_MS
+    {
+        return None;
+    }
+    suggestion_status_transition(prev_status, cur_status, was_known)
+}
+
+/// 确定性采样：基于 session_id 与分钟级时间片做 FNV-1a 风格哈希，
+/// 不引入随机数依赖，且同一会话在同一分钟内结果稳定（便于测试与排查）。
+fn suggestion_sample_allowed(session_id: &str, rate: f64, now_ms: u64) -> bool {
+    if rate >= 1.0 {
+        return true;
+    }
+    if rate <= 0.0 {
+        return false;
+    }
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let salt = (now_ms / 60_000).to_string();
+    for byte in session_id.as_bytes().iter().chain(salt.as_bytes()) {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    (hash % 10_000) as f64 / 10_000.0 < rate
+}
+
+/// 官方资格校验的本地子集：非 openai provider、plan 模式、黑名单模型一律放弃。
+fn suggestion_eligibility(
+    model_provider: Option<&str>,
+    model: Option<&str>,
+    plan_mode: bool,
+) -> Result<(), &'static str> {
+    if plan_mode {
+        return Err("plan 模式不生成建议");
+    }
+    if let Some(provider) = model_provider {
+        if !provider.is_empty() && !provider.eq_ignore_ascii_case("openai") {
+            return Err("非 openai provider 不生成建议");
+        }
+    }
+    if let Some(model) = model {
+        if SUGGESTION_UNSUPPORTED_MODELS
+            .iter()
+            .any(|blocked| model.eq_ignore_ascii_case(blocked))
+        {
+            return Err("模型在 unsupported_models 黑名单内");
+        }
+    }
+    Ok(())
 }
 
 const SUGGESTION_MAX_CHARS: usize = 120;
@@ -15237,7 +15387,31 @@ fn auto_answer_audit_line(
 const SUGGESTIONS_EVENT: &str = "agentwatcher-suggestions-updated";
 const SUGGESTION_MAX_TURNS: usize = 4;
 const SUGGESTION_TURN_CHAR_BUDGET: usize = 300;
-const SUGGESTION_MODEL_TIMEOUT_SECS: u64 = 60;
+/// 提示词版本号：对齐官方「服务端下发 + 版本化」的做法，本地固定版本串，
+/// 写进遥测后可按版本比较接受率（报告 §5、§7）。
+const SUGGESTION_PROMPT_VERSION: &str = "v5-agentwatcher-1";
+/// 官方 thread/sample 的 SAMPLE_TIMEOUT = 30s；本地 CLI 冷启动略慢，
+/// 留 15s 余量（实测端到端 16-17s）。
+const CODEX_SUGGESTION_TIMEOUT_SECS: u64 = 45;
+/// 官方 live_sample_rate / catch_up_sample_rate（服务端下发，本地取默认值）。
+const SUGGESTION_LIVE_SAMPLE_RATE: f64 = 1.0;
+const SUGGESTION_CATCH_UP_SAMPLE_RATE: f64 = 0.5;
+/// 护栏：只对最近 5 分钟内有内容更新的会话做「turn 完成」触发，
+/// 冷启动首见的 idle 会话一律不触发，避免对全部历史会话刷模型。
+const SUGGESTION_LIVE_RECENCY_MS: u64 = 5 * 60 * 1000;
+/// 同一会话自动生成冷却，避免快速连续扫描反复调用。
+const SUGGESTION_AUTO_COOLDOWN_MS: u64 = 2 * 60 * 1000;
+/// 单轮扫描最多起几个生成任务（官方也允许 composer 主动跳过预测）。
+const SUGGESTION_MAX_SPAWNS_PER_SCAN: usize = 2;
+/// 官方 unsupported_models 的本地子集：命中即放弃生成（可按需扩充）。
+const SUGGESTION_UNSUPPORTED_MODELS: &[&str] = &[
+    "gpt-6-sol",
+    "gpt-6-luna",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+];
 
 #[derive(Default)]
 struct SuggestionRuntime {
@@ -15245,6 +15419,10 @@ struct SuggestionRuntime {
     auto_enabled_sessions: HashSet<String>,
     /// 上一次扫描时各会话的状态。
     last_statuses: HashMap<String, String>,
+    /// 至少见过一次的会话；首见的 idle 会话不触发生成（防冷启动全量刷）。
+    known_sessions: HashSet<String>,
+    /// 每个会话上次自动生成的时间戳，用于冷却。
+    last_generation_ms: HashMap<String, u64>,
     /// 正在生成建议的会话，防止重复触发。
     in_flight: HashSet<String>,
     /// 每个会话当前有效的建议（发送前做防陈旧校验用）。
@@ -15267,8 +15445,12 @@ fn suggestion_runtime() -> &'static Mutex<SuggestionRuntime> {
     SUGGESTION_RUNTIME.get_or_init(|| Mutex::new(SuggestionRuntime::default()))
 }
 
-/// 扫描完成后跑一次：更新状态快照，对新进入 waiting 的 ZCode 会话生成建议。
+/// 扫描完成后跑一次：更新状态快照，对新结束一轮的会话生成建议。
 /// 生成在独立线程里做，不阻塞扫描返回。
+///
+/// 2026-11-09 对齐官方 Composer Predictions：主触发是「turn 完成 → idle」（live），
+/// 会话重新出现按 catch_up 采样，waiting 仍保留给审批 / AskUserQuestion 选项场景。
+/// 护栏：时间新鲜度、每会话冷却、单轮生成上限、确定性采样，防止冷启动刷模型。
 fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSession]) {
     let now_ms = current_time_ms();
     let mut spawns: Vec<(String, Option<String>)> = Vec::new();
@@ -15283,26 +15465,48 @@ fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSessio
             }
             seen.insert(session.id.as_str());
             let prev = runtime.last_statuses.get(&session.id).cloned();
+            let was_known = runtime.known_sessions.contains(&session.id);
             runtime.last_statuses.insert(session.id.clone(), session.status.clone());
-            match session.status.as_str() {
-                "waiting" => {
-                    if prev != Some("waiting".to_string()) {
-                        runtime.waiting_since.entry(session.id.clone()).or_insert(now_ms);
-                    }
-                    if suggestion_should_trigger(prev.as_deref(), "waiting")
-                        && !runtime.in_flight.contains(&session.id)
-                    {
-                        runtime.in_flight.insert(session.id.clone());
-                        let avoid = runtime.last_avoid.get(&session.id).cloned();
-                        spawns.push((session.id.clone(), avoid));
-                    }
+            runtime.known_sessions.insert(session.id.clone());
+            if session.status == "waiting" {
+                if prev.as_deref() != Some("waiting") {
+                    runtime.waiting_since.entry(session.id.clone()).or_insert(now_ms);
                 }
-                _ => {
-                    runtime.waiting_since.remove(&session.id);
+            } else {
+                runtime.waiting_since.remove(&session.id);
+            }
+            let Some(trigger) = suggestion_trigger_for(
+                prev.as_deref(),
+                session.status.as_str(),
+                was_known,
+                session.updated_ms,
+                now_ms,
+            ) else {
+                continue;
+            };
+            if runtime.in_flight.contains(&session.id) {
+                continue;
+            }
+            if let Some(last) = runtime.last_generation_ms.get(&session.id) {
+                if now_ms.saturating_sub(*last) < SUGGESTION_AUTO_COOLDOWN_MS {
+                    continue;
                 }
             }
+            if !suggestion_sample_allowed(&session.id, trigger.sample_rate(), now_ms) {
+                eprintln!("suggestion pipeline: 采样跳过 {}", session.id);
+                continue;
+            }
+            if spawns.len() >= SUGGESTION_MAX_SPAWNS_PER_SCAN {
+                eprintln!("suggestion pipeline: 达到单轮上限，跳过 {}", session.id);
+                continue;
+            }
+            runtime.in_flight.insert(session.id.clone());
+            runtime.last_generation_ms.insert(session.id.clone(), now_ms);
+            let avoid = runtime.last_avoid.get(&session.id).cloned();
+            spawns.push((session.id.clone(), avoid));
         }
-        // 本轮没出现的会话从快照里清掉，避免长期积累。
+        // 本轮没出现的会话从状态快照里清掉；known_sessions 保留，
+        // 这样会话重新出现时能识别为 catch_up 而不是冷启动首见。
         runtime
             .last_statuses
             .retain(|session_id, _| seen.contains(session_id.as_str()));
@@ -15316,14 +15520,93 @@ fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSessio
     }
 }
 
+/// 按 session 所属 agent 路由生成器：新增 provider 只需在这里加一支，
+/// 未接线的 provider 明确放弃，不误用别的 agent 的引擎。
+/// pub 供 agentwatcher-cli 的 suggest 子命令复用，命令行与 GUI 走同一条链路。
+pub fn generate_suggestion_for_session(
+    session_id: &str,
+    avoid: Option<&str>,
+) -> Option<SessionSuggestion> {
+    generate_suggestion_for_session_with(session_id, avoid, &SuggestionEngineOptions::default())
+}
+
+/// 同上，但允许显式指定引擎的模型与推理档（命令行验收、后续服务端下发参数都走这里）。
+pub fn generate_suggestion_for_session_with(
+    session_id: &str,
+    avoid: Option<&str>,
+    options: &SuggestionEngineOptions,
+) -> Option<SessionSuggestion> {
+    if codex_session_key(session_id).is_some()
+        && (session_id.starts_with("codex:") || session_id.starts_with("codex://"))
+    {
+        generate_codex_suggestion(session_id, avoid, options)
+    } else if session_id.starts_with("zcode:") {
+        // ZCode 走自己的无头会话，模型与档位沿用用户 ZCode 配置。
+        generate_zcode_suggestion(session_id, avoid)
+    } else if session_id.starts_with("workbuddy:") {
+        generate_workbuddy_suggestion(session_id, avoid, options)
+    } else {
+        eprintln!("suggestion generator: 未接线的 agent，跳过 {session_id}");
+        None
+    }
+}
+
+/// 命令行 dry-run 用的预览：只看上下文与提示词，不调用模型、不产生副作用。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuggestionPreview {
+    pub session_id: String,
+    pub provider: String,
+    pub prompt_version: String,
+    pub prompt_chars: usize,
+    pub prompt_bytes: usize,
+    pub workspace_path: String,
+    pub fingerprint: String,
+    pub turns: Vec<String>,
+    pub prompt: String,
+}
+
+pub fn suggestion_prompt_preview(session_id: &str) -> Result<SuggestionPreview, String> {
+    let (context, provider) = if session_id.starts_with("codex:") || session_id.starts_with("codex://") {
+        let Some((context, _)) = codex_suggestion_context(session_id) else {
+            return Err("找不到该 Codex 会话的 JSONL，或没有可用的对话正文".to_string());
+        };
+        (context, "codex")
+    } else if session_id.starts_with("zcode:") {
+        let Some(context) = zcode_suggestion_context(session_id) else {
+            return Err("找不到该 ZCode 会话，或没有可用的对话正文".to_string());
+        };
+        (context, "zcode")
+    } else if session_id.starts_with("workbuddy:") {
+        let Some(context) = workbuddy_suggestion_context(session_id) else {
+            return Err("找不到该 WorkBuddy 会话的转录，或没有可用的对话正文".to_string());
+        };
+        (context, "workbuddy")
+    } else {
+        return Err("未接线的 agent：只支持 codex / zcode / workbuddy 会话的建议".to_string());
+    };
+    let prompt = build_suggestion_prompt(&context, None);
+    Ok(SuggestionPreview {
+        session_id: session_id.to_string(),
+        provider: provider.to_string(),
+        prompt_version: SUGGESTION_PROMPT_VERSION.to_string(),
+        prompt_chars: prompt.chars().count(),
+        prompt_bytes: prompt.len(),
+        workspace_path: context.workspace_path,
+        fingerprint: context.fingerprint,
+        turns: context
+            .turns
+            .iter()
+            .map(|(role, _)| role.clone())
+            .collect(),
+        prompt,
+    })
+}
+
 /// 生成一个会话的建议并广播。扫描触发与「换一个」共用这一条路。
 fn spawn_suggestion_generation(app: tauri::AppHandle, session_id: String, avoid: Option<String>) {
     std::thread::spawn(move || {
-        let suggestion = if session_id.starts_with("codex:") {
-            generate_codex_suggestion(&session_id, avoid.as_deref())
-        } else {
-            generate_zcode_suggestion(&session_id, avoid.as_deref())
-        };
+        let suggestion = generate_suggestion_for_session(&session_id, avoid.as_deref());
         let mut runtime = suggestion_runtime().lock().ok();
         if let Some(runtime) = runtime.as_deref_mut() {
             runtime.in_flight.remove(&session_id);
@@ -15683,33 +15966,781 @@ fn append_audit_line_in_dir(dir: &std::path::Path, line: &str) {
 
 // ---- Codex 发送与建议 ----
 
-/// Codex 建议：从 JSONL 提取上下文 → v5 提示词 → headless codex 生成。
-fn generate_codex_suggestion(session_id: &str, avoid: Option<&str>) -> Option<SessionSuggestion> {
-    let context = codex_suggestion_context(session_id)?;
+/// Codex 会话的资格信息，对齐官方的 plan 模式 / provider / unsupported_models 校验。
+#[derive(Debug, Clone, Default)]
+struct CodexSuggestionMeta {
+    model_provider: Option<String>,
+    model: Option<String>,
+    plan_mode: bool,
+}
+
+/// 从各种 ID 形态里抽出 Codex 会话 UUID：
+/// `codex:<uuid>`（CLI 内部 ID）、`codex://threads/<uuid>`（跳转深链）、裸 UUID 均可。
+fn codex_session_key(session_id: &str) -> Option<&str> {
+    let raw = session_id
+        .strip_prefix("codex://threads/")
+        .or_else(|| session_id.strip_prefix("codex:"))
+        .unwrap_or(session_id);
+    let candidate = raw.rsplit('/').next().unwrap_or(raw).trim();
+    // UUID 形状：8-4-4-4-12，只做形状校验，不做版本校验。
+    let parts: Vec<&str> = candidate.split('-').collect();
+    let lengths = [8usize, 4, 4, 4, 12];
+    let valid = parts.len() == 5
+        && parts
+            .iter()
+            .zip(lengths.iter())
+            .all(|(part, len)| part.len() == *len && part.bytes().all(|b| b.is_ascii_hexdigit()));
+    valid.then_some(candidate)
+}
+
+/// 从 codex exec --json 的 JSONL 事件流里取最后一条 agent_message 文本。
+/// 官方输出不是单个 JSON 信封，不能复用 ZCode 的 parse_headless_response。
+fn parse_codex_agent_message(stdout: &str) -> Option<String> {
+    let mut last: Option<String> = None;
+    for line in stdout.lines() {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) != Some("item.completed") {
+            continue;
+        }
+        let item = value.get("item")?;
+        if item.get("type").and_then(Value::as_str) != Some("agent_message") {
+            continue;
+        }
+        if let Some(text) = item.get("text").and_then(Value::as_str) {
+            last = Some(text.to_string());
+        }
+    }
+    last
+}
+
+/// 遥测：只记元数据，不记建议正文与会话内容（对齐官方接受/编辑率闭环的最小版）。
+/// `engine = Some((model, effort))` 时把实际下发给引擎的模型与推理档一并记下，
+/// 便于事后确认「这条建议到底是不是用指定档位生成的」。
+fn suggestion_audit(
+    session_id: &str,
+    provider: &str,
+    outcome: &str,
+    elapsed_ms: u64,
+    trigger: &str,
+    engine: Option<(&str, &str)>,
+) {
+    let Some(dir) = suggestion_audit_dir() else {
+        return;
+    };
+    let mut line = serde_json::json!({
+        "atMs": current_time_ms(),
+        "sessionId": session_id,
+        "provider": provider,
+        "promptVersion": SUGGESTION_PROMPT_VERSION,
+        "outcome": outcome,
+        "trigger": trigger,
+        "elapsedMs": elapsed_ms,
+    });
+    if let (Some((model, effort)), Some(object)) = (engine, line.as_object_mut()) {
+        object.insert("model".to_string(), serde_json::json!(model));
+        object.insert("effort".to_string(), serde_json::json!(effort));
+    }
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("suggestions-audit.jsonl"))
+    {
+        let _ = writeln!(file, "{line}");
+    }
+}
+
+fn suggestion_audit_dir() -> Option<std::path::PathBuf> {
+    let dir = std::env::temp_dir().join("AgentWatcher").join("suggestions");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+/// 建议生成引擎。`Sample` 走 app-server 隐藏的 `thread/sample`（继承真实会话、
+/// 命中前缀缓存），`Exec` 走 `codex exec` 单轮；`Auto` 按来源自动挑并互相兜底。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SuggestionEngine {
+    #[default]
+    Auto,
+    Sample,
+    Exec,
+}
+
+impl SuggestionEngine {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "sample" => Some(Self::Sample),
+            "exec" => Some(Self::Exec),
+            _ => None,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Sample => "sample",
+            Self::Exec => "exec",
+        }
+    }
+}
+
+/// 生成引擎的显式覆盖项。空值 = 沿用本机 Codex 配置。
+/// 对应官方 `prediction_reasoning_effort` 与父线程模型的「下发/回退」语义。
+#[derive(Debug, Clone, Default)]
+pub struct SuggestionEngineOptions {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    /// 引擎超时（秒）。官方 30 秒是 priority 档的成绩，本地 codex exec 跑 high 档会明显更久，
+    /// 所以留一个显式覆盖口，默认仍走 45 秒。
+    pub timeout_secs: Option<u64>,
+    /// 引擎选择。默认 Auto：codex 会话先试 sample，失败回落 exec。
+    pub engine: SuggestionEngine,
+}
+
+/// 组装 codex exec 的参数。抽成纯函数便于单测锁住必需 flag。
+/// --ephemeral 不落盘、--skip-git-repo-check 允许 scratch 目录（实测缺了会直接退出码 1）、
+/// -s read-only 禁副作用、-o 拿最终文本、末尾 "-" 表示 prompt 从 stdin 读。
+fn codex_exec_args(
+    cli: &str,
+    scratch: &str,
+    output_file: &str,
+    options: &SuggestionEngineOptions,
+) -> Vec<String> {
+    let mut args = vec![
+        cli.to_string(),
+        "exec".to_string(),
+        "--json".to_string(),
+        "--ephemeral".to_string(),
+        "--skip-git-repo-check".to_string(),
+        "-s".to_string(),
+        "read-only".to_string(),
+        "-C".to_string(),
+        scratch.to_string(),
+        "-o".to_string(),
+        output_file.to_string(),
+    ];
+    // 模型与推理档显式指定时就覆盖用户 config.toml 的默认值；
+    // 不指定则沿用本机配置（与官方「服务端下发 + 父线程回退」的语义一致）。
+    if let Some(model) = options.model.as_deref().filter(|value| !value.trim().is_empty()) {
+        args.push("-m".to_string());
+        args.push(model.trim().to_string());
+    }
+    if let Some(effort) = options.effort.as_deref().filter(|value| !value.trim().is_empty()) {
+        args.push("-c".to_string());
+        args.push(format!("model_reasoning_effort={}", effort.trim()));
+    }
+    args.push("-".to_string());
+    args
+}
+
+/// Codex 建议：从 JSONL 提取上下文 → v5 提示词 → codex exec 单轮生成 → 解析 → 防陈旧复核。
+/// 命令参数与解析口径 2026-11-09 修正（见逆向报告 §8）：
+/// prompt 走 stdin、-o 拿最终文本，JSONL agent_message 兜底；
+/// 不再复用 ZCode 的 {"response":…} 信封解析。
+/// 建议的上下文来源。引擎统一是 codex exec，差别只在「从哪个 agent 的会话里读上下文」。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SuggestionSource {
+    Codex,
+    Workbuddy,
+}
+
+fn generate_codex_suggestion(
+    session_id: &str,
+    avoid: Option<&str>,
+    options: &SuggestionEngineOptions,
+) -> Option<SessionSuggestion> {
+    generate_with_codex_engine(session_id, avoid, options, SuggestionSource::Codex)
+}
+
+/// WorkBuddy 会话复用同一套 codex exec 引擎：上下文来自 WorkBuddy 转录，
+/// 生成质量仍按官方 v5 契约校验。资格校验不套用源模型（WorkBuddy 可能是别家模型）。
+fn generate_workbuddy_suggestion(
+    session_id: &str,
+    avoid: Option<&str>,
+    options: &SuggestionEngineOptions,
+) -> Option<SessionSuggestion> {
+    generate_with_codex_engine(session_id, avoid, options, SuggestionSource::Workbuddy)
+}
+
+// ---- Codex app-server 热路径（thread/sample） ----
+
+/// app-server 的 JSON-RPC 客户端，只服务建议生成。
+/// codex 0.167 把 `thread/sample` 编译进了二进制但没导出到公开 schema，
+/// 客户端必须声明 `experimentalApi` 才能调用。这里按最小面实现，不引入通用 RPC 层。
+struct CodexAppServer {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    lines: std::sync::mpsc::Receiver<String>,
+    next_id: u64,
+}
+
+impl CodexAppServer {
+    fn spawn(node: &Path, cli: &Path, cwd: &Path) -> Result<Self, String> {
+        let mut command = std::process::Command::new(node);
+        command
+            .arg(cli)
+            .arg("app-server")
+            // 建议只读文本，不需要 MCP 工具；关掉可省 5-7 秒的 MCP 冷启动。
+            .arg("-c")
+            .arg("mcp_servers={}")
+            // 与官方预测同款服务档；常驻 server 走的是另一条启动参数，这里保持一致。
+            .arg("-c")
+            .arg(format!("service_tier={}", codex_service_tier()))
+            .current_dir(cwd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        #[cfg(target_os = "windows")]
+        {
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("无法启动 codex app-server：{error}"))?;
+        let stdin = child.stdin.take().ok_or_else(|| "app-server 的 stdin 不可用".to_string())?;
+        let stdout = child.stdout.take().ok_or_else(|| "app-server 的 stdout 不可用".to_string())?;
+        let (sender, lines) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            let reader = std::io::BufReader::new(stdout);
+            for line in reader.lines() {
+                let Ok(line) = line else { break };
+                if sender.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(Self {
+            child,
+            stdin,
+            lines,
+            next_id: 0,
+        })
+    }
+
+    fn notify(&mut self, method: &str, params: serde_json::Value) -> Result<(), String> {
+        self.write(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        }))
+    }
+
+    fn request(&mut self, method: &str, params: serde_json::Value) -> Result<u64, String> {
+        self.next_id += 1;
+        let id = self.next_id;
+        self.write(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        }))?;
+        Ok(id)
+    }
+
+    fn write(&mut self, value: &serde_json::Value) -> Result<(), String> {
+        use std::io::Write;
+        let mut line = serde_json::to_string(value).map_err(|error| format!("序列化请求失败：{error}"))?;
+        line.push('\n');
+        self.stdin
+            .write_all(line.as_bytes())
+            .map_err(|error| format!("写入 app-server 失败：{error}"))?;
+        self.stdin
+            .flush()
+            .map_err(|error| format!("刷新 app-server stdin 失败：{error}"))
+    }
+
+    /// 等指定 id 的响应。期间的 notification（thread/started、turn/* 等）直接跳过。
+    fn wait(&mut self, id: u64, deadline: Instant) -> Result<serde_json::Value, String> {
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err("app-server 响应超时".to_string());
+            }
+            let line = self
+                .lines
+                .recv_timeout(left)
+                .map_err(|_| "app-server 响应超时".to_string())?;
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+            if value.get("id").and_then(|value| value.as_u64()) != Some(id) {
+                continue;
+            }
+            if let Some(error) = value.get("error") {
+                let message = error
+                    .get("message")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("未知错误");
+                return Err(message.to_string());
+            }
+            return Ok(value.get("result").cloned().unwrap_or(serde_json::Value::Null));
+        }
+    }
+
+    fn initialize(&mut self, deadline: Instant) -> Result<(), String> {
+        let id = self.request(
+            "initialize",
+            serde_json::json!({
+                "clientInfo": {
+                    "name": "agentwatcher",
+                    "version": env!("CARGO_PKG_VERSION"),
+                },
+                "capabilities": { "experimentalApi": true },
+            }),
+        )?;
+        self.wait(id, deadline)?;
+        self.notify("initialized", serde_json::json!({}))
+    }
+}
+
+impl Drop for CodexAppServer {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// sample 的「采样指令」：fork 已带上完整历史，所以这里只说清要什么，不复述对话。
+fn build_sample_instruction(avoid: Option<&str>) -> String {
+    let mut instruction = String::new();
+    instruction.push_str("这是 AgentWatcher 发起的预测请求，不是用户本人写的消息。\n");
+    instruction.push_str("根据这段会话的完整上下文，预测用户接下来最可能敲进输入框的一句话。\n");
+    instruction.push_str("要求：\n");
+    instruction.push_str("- 只输出这一句话本身：不要解释、不要加引号、不要 markdown、不要 JSON 包装。\n");
+    instruction.push_str("- 一句话，不超过 120 个字。\n");
+    instruction.push_str("- 指向具体的下一步动作与对象（文件、函数、测试、命令），不要泛泛的跟进。\n");
+    instruction.push_str("- 用用户自己的口吻，保留他认为必要的约束；不要复述助手刚给出的结论。\n");
+    if let Some(avoid) = avoid {
+        instruction.push_str(&format!("- 避开这条已经给过的建议：{avoid}；给出明显不同的方向。\n"));
+    }
+    instruction
+}
+
+/// 解析 sample 返回的裸文本：模型偶尔仍会包一层引号、代码围栏或「用户：」前缀。
+fn parse_sample_suggestion(body: &str, max_chars: usize) -> Option<String> {
+    let mut text = body.trim();
+    if let Some(stripped) = text.strip_prefix("```") {
+        text = stripped.trim_start_matches(|c: char| c.is_ascii_alphabetic()).trim_start();
+        if let Some(without_suffix) = text.strip_suffix("```") {
+            text = without_suffix.trim();
+        }
+    }
+    let line = text
+        .lines()
+        .map(|line| line.trim())
+        .find(|line| !line.is_empty())?;
+    let mut line = line.trim_start_matches(['-', '*', '·']).trim_start();
+    for prefix in ["suggestion:", "建议：", "建议:", "用户：", "用户:"] {
+        if let Some(stripped) = line.strip_prefix(prefix) {
+            line = stripped.trim();
+        }
+    }
+    let trimmed = line
+        .trim_matches(|c: char| matches!(c, '"' | '\'' | '“' | '”' | '「' | '」' | '『' | '』'));
+    let trimmed = trimmed.trim();
+    if trimmed.is_empty() || trimmed.chars().count() > max_chars {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+/// sample 会把整段历史喂给模型（fork 不走增量，历史部分几乎不命中缓存），
+/// 耗时随会话线性增长。实测：622KB（约 8 万 token）12.5 秒，4.3MB（约 32 万）27 秒；
+/// 而 exec 固定只带尾部 4 轮（约 3.4 万 token），约 11-12 秒。
+/// 1MB（约 5 万 token）是两者的交叉点，超过就交给 exec。
+const CODEX_SAMPLE_MAX_ROLLOUT_BYTES: u64 = 1024 * 1024;
+
+/// 纯函数便于单测：rollout 体积是否在 sample 的预算内。
+fn rollout_within_sample_budget(bytes: u64) -> bool {
+    bytes <= CODEX_SAMPLE_MAX_ROLLOUT_BYTES
+}
+
+/// Auto 引擎的选路：只有小会话才值得走 sample。
+fn codex_sample_affordable(session_id: &str) -> bool {
+    codex_session_file(session_id)
+        .and_then(|path| std::fs::metadata(path).ok())
+        .is_some_and(|meta| rollout_within_sample_budget(meta.len()))
+}
+
+/// 同一个时刻只跑一个 sample 进程（见 `codex_sample_attempt` 的说明）。
+static CODEX_SAMPLE_SLOT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// sample 四步（read → fork → sample → archive）与传输无关：
+/// 常驻 WS server 与一次性 stdio 进程各实现一份，流程只写一遍。
+trait SampleRpc {
+    fn rpc(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+        timeout_secs: u64,
+    ) -> Result<serde_json::Value, String>;
+}
+
+impl SampleRpc for CodexWsClient {
+    fn rpc(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+        timeout_secs: u64,
+    ) -> Result<serde_json::Value, String> {
+        self.request_with_timeout(method, params, timeout_secs.saturating_mul(1_000))
+    }
+}
+
+impl SampleRpc for CodexAppServer {
+    fn rpc(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+        timeout_secs: u64,
+    ) -> Result<serde_json::Value, String> {
+        let id = self.request(method, params)?;
+        self.wait(
+            id,
+            Instant::now() + std::time::Duration::from_secs(timeout_secs.max(1)),
+        )
+    }
+}
+
+/// 采样主流程。桌面端会独占 `thread-writer-locks/<id>.lock`，`thread/resume` 必然
+/// Access Denied，所以走 `thread/read`（只读）→ `thread/fork`（持久副本）→ `thread/sample`。
+fn codex_sample_flow<R: SampleRpc>(
+    rpc: &mut R,
+    thread_key: &str,
+    cwd: &str,
+    avoid: Option<&str>,
+    timeout_secs: u64,
+) -> Result<String, String> {
+    let read = rpc.rpc(
+        "thread/read",
+        serde_json::json!({ "threadId": thread_key, "includeTurns": true }),
+        timeout_secs,
+    )?;
+    let turns = read
+        .pointer("/thread/turns")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let expected_turn = turns
+        .last()
+        .and_then(|turn| turn.get("id"))
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "源会话没有可用的 turn".to_string())?
+        .to_string();
+
+    // ephemeral 副本过不了 thread/sample 的 persistent root 校验，只能用持久副本。
+    let fork = rpc.rpc(
+        "thread/fork",
+        serde_json::json!({ "threadId": thread_key, "cwd": cwd }),
+        timeout_secs,
+    )?;
+    let fork_id = fork
+        .pointer("/thread/id")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "fork 未返回线程 id".to_string())?
+        .to_string();
+
+    let instruction = build_sample_instruction(avoid);
+    let sampled = rpc.rpc(
+        "thread/sample",
+        serde_json::json!({
+            "threadId": fork_id,
+            "expectedTurnId": expected_turn,
+            "prompt": instruction,
+            "disableMcp": true,
+        }),
+        timeout_secs,
+    );
+
+    // 副本用完即归档，避免每次预测都往用户的会话列表里多塞一条。
+    let _ = rpc.rpc(
+        "thread/archive",
+        serde_json::json!({ "threadId": fork_id }),
+        3,
+    );
+
+    let sampled = sampled?;
+    let text = sampled
+        .get("text")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    parse_sample_suggestion(text, SUGGESTION_MAX_CHARS).ok_or_else(|| {
+        format!(
+            "sample 输出无法解析：{}",
+            text.chars().take(120).collect::<String>()
+        )
+    })
+}
+
+/// sample 引擎跑一次预测，返回建议正文。
+/// 首选复用常驻 app-server（扫描时已经拉起，省掉 3–5 秒冷启动）；
+/// 它不可用时退回一次性 stdio 进程，仍然不走 `thread/resume`。
+fn codex_sample_text(
+    session_id: &str,
+    avoid: Option<&str>,
+    options: &SuggestionEngineOptions,
+    context: &SuggestionContext,
+) -> Result<String, String> {
+    let thread_key = codex_session_key(session_id)
+        .ok_or_else(|| "会话 ID 不是 Codex thread".to_string())?;
+    let scratch = suggestion_scratch_dir().ok_or_else(|| "无法创建建议临时目录".to_string())?;
+    let timeout_secs = options.timeout_secs.unwrap_or(CODEX_SUGGESTION_TIMEOUT_SECS);
+    let cwd = if !context.workspace_path.is_empty() && Path::new(&context.workspace_path).exists() {
+        context.workspace_path.clone()
+    } else {
+        path_to_string(&scratch)
+    };
+
+    match ensure_codex_suggestion_server() {
+        Ok(port) => match CodexWsClient::connect(port) {
+            Ok(mut client) => match client.initialize() {
+                Ok(()) => {
+                    return codex_sample_flow(&mut client, &thread_key, &cwd, avoid, timeout_secs)
+                }
+                Err(reason) => eprintln!("suggestion generator: 常驻 app-server 握手失败（{reason}）"),
+            },
+            Err(reason) => eprintln!("suggestion generator: 连不上常驻 app-server（{reason}）"),
+        },
+        Err(reason) => eprintln!("suggestion generator: 常驻 app-server 不可用（{reason}）"),
+    }
+
+    let cli = codex_cli_path().ok_or_else(|| "未找到 Codex CLI（npm 全局 @openai/codex）".to_string())?;
+    let node = which_node().ok_or_else(|| "未找到 node，无法拉起 app-server".to_string())?;
+    let mut server = CodexAppServer::spawn(&node, &cli, &scratch)?;
+    server.initialize(Instant::now() + std::time::Duration::from_secs(timeout_secs))?;
+    codex_sample_flow(&mut server, &thread_key, &cwd, avoid, timeout_secs)
+}
+
+
+/// sample 分支的完整流程：资格校验 → 采样 → 防陈旧复核 → 审计。
+fn codex_sample_attempt(
+    session_id: &str,
+    avoid: Option<&str>,
+    options: &SuggestionEngineOptions,
+    started: Instant,
+) -> Result<SessionSuggestion, String> {
+    // 每个 app-server 进程要吃几百 MB；扫描时多个会话同时触发会把内存打满。
+    // 抢不到槽位就直接回落 exec，不排队（排队只会让建议更晚到）。
+    let _slot = CODEX_SAMPLE_SLOT
+        .try_lock()
+        .map_err(|_| "已有采样在进行，避免并发拉起多个 app-server".to_string())?;
+    let (context, meta) = codex_suggestion_context(session_id)
+        .ok_or_else(|| "找不到该 Codex 会话的 JSONL，或没有可用的对话正文".to_string())?;
+    if let Err(reason) = suggestion_eligibility(
+        meta.model_provider.as_deref(),
+        meta.model.as_deref(),
+        meta.plan_mode,
+    ) {
+        return Err(format!("资格校验未通过（{reason}）"));
+    }
+    // sample 的模型与档位由 fork 出的父线程决定，`--model` / `--effort` 对它无效。
+    // 审计里如实写「继承父线程」，不把 CLI 传进来的档位记成实际档位。
+    let engine_label = ("session", "inherited");
+    let text = match codex_sample_text(session_id, avoid, options, &context) {
+        Ok(text) => text,
+        Err(reason) => {
+            suggestion_audit(
+                session_id,
+                "codex",
+                "sample_failed",
+                started.elapsed().as_millis() as u64,
+                &reason,
+                Some(engine_label),
+            );
+            return Err(reason);
+        }
+    };
+    // 防陈旧：与 exec 引擎同一口径。
+    match codex_suggestion_context(session_id).map(|(fresh, _)| fresh.fingerprint) {
+        Some(fresh) if fresh == context.fingerprint => {}
+        Some(_) => {
+            suggestion_audit(
+                session_id,
+                "codex",
+                "stale",
+                started.elapsed().as_millis() as u64,
+                "live",
+                Some(engine_label),
+            );
+            return Err("生成期间源会话已前进".to_string());
+        }
+        None => {
+            suggestion_audit(
+                session_id,
+                "codex",
+                "stale",
+                started.elapsed().as_millis() as u64,
+                "live",
+                Some(engine_label),
+            );
+            return Err("复核时读不到会话".to_string());
+        }
+    }
+    suggestion_audit(
+        session_id,
+        "codex",
+        "generated",
+        started.elapsed().as_millis() as u64,
+        "live",
+        Some(engine_label),
+    );
+    Ok(SessionSuggestion {
+        session_id: session_id.to_string(),
+        provider: "codex".to_string(),
+        text,
+        question: None,
+        options: None,
+        fingerprint: context.fingerprint,
+        created_at_ms: current_time_ms(),
+    })
+}
+
+fn generate_with_codex_engine(
+    session_id: &str,
+    avoid: Option<&str>,
+    options: &SuggestionEngineOptions,
+    source: SuggestionSource,
+) -> Option<SessionSuggestion> {
+    let started = Instant::now();
+    // codex 会话优先走 app-server 的 thread/sample：继承真实历史、命中前缀缓存。
+    // 只有 Codex 源才有 thread id，WorkBuddy 会话仍走 exec。
+    // Auto 时按 rollout 体积选路：长会话 sample 要全量 prefill，不如 exec 只带尾部几轮。
+    if source == SuggestionSource::Codex && options.engine != SuggestionEngine::Exec {
+        let affordable = options.engine == SuggestionEngine::Sample
+            || codex_sample_affordable(session_id);
+        if !affordable {
+            eprintln!("suggestion generator: 会话体积超出 sample 预算，走 codex exec");
+        } else {
+            match codex_sample_attempt(session_id, avoid, options, started) {
+                Ok(suggestion) => return Some(suggestion),
+                Err(reason) => {
+                    if options.engine == SuggestionEngine::Sample {
+                        eprintln!("suggestion generator: sample 引擎失败（{reason}）");
+                        return None;
+                    }
+                    eprintln!("suggestion generator: sample 不可用（{reason}），回落 codex exec");
+                }
+            }
+        }
+    }
+    let provider_label = match source {
+        SuggestionSource::Codex => "codex",
+        SuggestionSource::Workbuddy => "workbuddy",
+    };
+    let engine_label = (
+        options.model.as_deref().unwrap_or("default"),
+        options.effort.as_deref().unwrap_or("default"),
+    );
+    let context = match source {
+        SuggestionSource::Codex => {
+            let (context, meta) = codex_suggestion_context(session_id)?;
+            if let Err(reason) = suggestion_eligibility(
+                meta.model_provider.as_deref(),
+                meta.model.as_deref(),
+                meta.plan_mode,
+            ) {
+                eprintln!("suggestion generator: 资格校验未通过（{reason}），跳过 {session_id}");
+                suggestion_audit(session_id, provider_label, "ineligible", 0, reason, None);
+                return None;
+            }
+            context
+        }
+        SuggestionSource::Workbuddy => workbuddy_suggestion_context(session_id)?,
+    };
     let prompt = build_suggestion_prompt(&context, avoid);
-    // Codex CLI 生成建议（走 codex exec 单轮模式）
+    if prompt.len() > 4_000 {
+        // 官方 MAX_PROMPT_BYTES = 4000，超了直接放弃而不是截断。
+        eprintln!("suggestion generator: prompt 超过 4000 字节，跳过");
+        suggestion_audit(session_id, provider_label, "prompt_too_long", 0, "live", Some(engine_label));
+        return None;
+    }
     let cli = codex_cli_path()?;
     let node = which_node()?;
-    let args = vec![
-        cli.to_string_lossy().to_string(),
-        "exec".to_string(),
-        prompt,
-        "--json".to_string(),
-    ];
+    let scratch = suggestion_scratch_dir()?;
+    // 每个会话一个输出文件，避免并发生成互相覆盖。
+    let key = codex_session_key(session_id)
+        .or_else(|| session_id.split([':', '/']).next_back())
+        .unwrap_or("unknown");
+    let output_file = scratch.join(format!("codex-suggestion-{key}.txt"));
+    let _ = std::fs::remove_file(&output_file);
+    let args = codex_exec_args(
+        &cli.to_string_lossy(),
+        &path_to_string(&scratch),
+        &path_to_string(&output_file),
+        options,
+    );
     let mut command = std::process::Command::new(&node);
-    command.args(&args).current_dir(std::env::temp_dir());
-    let stdout = run_child_with_timeout(&mut command, 180, "Codex 建议生成超时").ok()?;
-    parse_headless_response(&stdout)
-        .and_then(|raw| parse_suggestion_response(&raw, SUGGESTION_MAX_CHARS))
-        .map(|text| SessionSuggestion {
-            session_id: session_id.to_string(),
-            provider: "codex".to_string(),
-            text,
-            question: None,
-            options: None,
-            fingerprint: context.fingerprint,
-            created_at_ms: current_time_ms(),
-        })
+    command.args(&args).current_dir(&scratch);
+    let timeout_secs = options.timeout_secs.unwrap_or(CODEX_SUGGESTION_TIMEOUT_SECS);
+    let stdout = match run_child_with_timeout_stdin(
+        &mut command,
+        timeout_secs,
+        &format!("Codex 建议生成超时（{timeout_secs} 秒），已中止"),
+        &prompt,
+    ) {
+        Ok(stdout) => stdout,
+        Err(error) => {
+            eprintln!("suggestion generator: {error}");
+            suggestion_audit(session_id, provider_label, "engine_failed", started.elapsed().as_millis() as u64, "live", Some(engine_label));
+            let _ = std::fs::remove_file(&output_file);
+            return None;
+        }
+    };
+    // 优先读 -o 落盘的最终文本，兜底从事件流取 agent_message。
+    let raw = std::fs::read_to_string(&output_file)
+        .ok()
+        .filter(|text| !text.trim().is_empty())
+        .or_else(|| parse_codex_agent_message(&stdout));
+    let _ = std::fs::remove_file(&output_file);
+    let text = raw.and_then(|body| parse_suggestion_response(&body, SUGGESTION_MAX_CHARS));
+    let Some(text) = text else {
+        eprintln!(
+            "suggestion generator: 输出解析失败，stdout 尾部 200 字：{}",
+            stdout.chars().rev().take(200).collect::<String>()
+        );
+        suggestion_audit(session_id, provider_label, "parse_failed", started.elapsed().as_millis() as u64, "live", Some(engine_label));
+        return None;
+    };
+    // 防陈旧：对齐官方 thread_sample 的「sample source changed」复核。
+    // 生成期间源会话又前进了，这条建议就作废，避免把旧建议展示成新建议。
+    let fresh_fingerprint = match source {
+        SuggestionSource::Codex => codex_suggestion_context(session_id).map(|(fresh, _)| fresh.fingerprint),
+        SuggestionSource::Workbuddy => workbuddy_suggestion_context(session_id).map(|fresh| fresh.fingerprint),
+    };
+    match fresh_fingerprint {
+        Some(fresh) if fresh != context.fingerprint => {
+            eprintln!("suggestion generator: 源会话已前进，丢弃陈旧建议 {session_id}");
+            suggestion_audit(session_id, provider_label, "stale", started.elapsed().as_millis() as u64, "live", Some(engine_label));
+            return None;
+        }
+        None => {
+            suggestion_audit(session_id, provider_label, "stale", started.elapsed().as_millis() as u64, "live", Some(engine_label));
+            return None;
+        }
+        _ => {}
+    }
+    suggestion_audit(session_id, provider_label, "generated", started.elapsed().as_millis() as u64, "live", Some(engine_label));
+    // provider 记源会话所属 agent，而不是实际执行生成的引擎：
+    // WorkBuddy 会话当前复用 codex exec 生成，卡片仍要挂回 workbuddy 上。
+    let provider = session_id
+        .split([':', '/'])
+        .next()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("codex")
+        .to_string();
+    Some(SessionSuggestion {
+        session_id: session_id.to_string(),
+        provider,
+        text,
+        question: None,
+        options: None,
+        fingerprint: context.fingerprint,
+        created_at_ms: current_time_ms(),
+    })
 }
 
 /// Codex CLI 路径（npm 全局安装的 @openai/codex）。
@@ -15723,55 +16754,90 @@ fn codex_cli_path() -> Option<PathBuf> {
     None
 }
 
-/// Codex 会话的 JSONL 文件路径（从 AgentSession 的 session_path 获取）。
+/// Codex 会话的 JSONL 文件路径。按 `sessions/YYYY/MM/DD` 日期分区倒序找，命中即返回。
+/// 同一 thread 可能有多个 rollout 片段（resume/fork 会追加 `_<新uuid>` 后缀文件），
+/// 同名日期内按文件名倒序，保证拿到最新片段（上下文尾部才有意义）。
 fn codex_session_file(session_id: &str) -> Option<PathBuf> {
-    // AgentSession 的 session_path 就是 JSONL 路径
-    // 但这里是独立的：直接从 id 搜索最近的 rollout 文件
-    let session_key = session_id.strip_prefix("codex:")?;
-    // codex session 的自然键就是文件名的一部分
+    let key = codex_session_key(session_id)?;
     let sessions_dir = std::env::var("USERPROFILE")
         .ok()
         .map(|home| PathBuf::from(home).join(".codex").join("sessions"))?;
-    // 遍历日期目录找匹配的文件
-    for entry in walkdir_jsonl_files(&sessions_dir) {
-        let filename = entry.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-        if filename.contains(session_key) {
-            return Some(entry);
+    fn sorted_dirs(dir: &Path) -> Vec<PathBuf> {
+        let mut dirs: Vec<PathBuf> = std::fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path())
+                    .filter(|path| path.is_dir())
+                    .collect()
+            })
+            .unwrap_or_default();
+        dirs.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+        dirs
+    }
+    fn find_in_day(dir: &Path, key: &str) -> Option<PathBuf> {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path())
+                    .filter(|path| {
+                        path.extension().is_some_and(|ext| ext == "jsonl")
+                            && path
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .is_some_and(|name| name.contains(key))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        files.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+        files.into_iter().next()
+    }
+    for year in sorted_dirs(&sessions_dir) {
+        for month in sorted_dirs(&year) {
+            for day in sorted_dirs(&month) {
+                if let Some(found) = find_in_day(&day, key) {
+                    return Some(found);
+                }
+            }
         }
     }
     None
 }
 
-fn walkdir_jsonl_files(dir: &Path) -> Vec<PathBuf> {
-    let mut result = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.filter_map(Result::ok) {
-            let path = entry.path();
-            if path.is_dir() {
-                result.extend(walkdir_jsonl_files(&path));
-            } else if path.extension().is_some_and(|ext| ext == "jsonl") {
-                result.push(path);
-            }
-        }
-    }
-    result
-}
-
-/// Codex 会话上下文：从 JSONL 尾部提取最近几轮对话。
-fn codex_suggestion_context(session_id: &str) -> Option<SuggestionContext> {
+/// Codex 会话上下文：最近若干轮 + 工作区 + 指纹 + 资格信息。
+/// 修正点（2026-11-09）：workspace 从 session_meta.cwd 取；fingerprint 从 payload.id
+/// 取（旧代码取顶层 id，Codex JSONL 顶层没有该字段，导致指纹恒空）；
+/// 尾部 4 轮若全是 assistant，补入最近一条 user 轮，避免提示词只看到模型自述。
+fn codex_suggestion_context(session_id: &str) -> Option<(SuggestionContext, CodexSuggestionMeta)> {
     let jsonl_path = codex_session_file(session_id)?;
     let content = std::fs::read_to_string(&jsonl_path).ok()?;
-    let mut turns: Vec<(String, String)> = Vec::new();
-    let mut fingerprint = String::new();
-    // 逐行解析，取最后 N 条 role/content 对
-    for line in content.lines().rev() {
-        if turns.len() >= SUGGESTION_MAX_TURNS { break; }
-        let Ok(value) = serde_json::from_str::<Value>(line) else { continue };
+    let mut all: Vec<(String, String, String)> = Vec::new();
+    let mut workspace_path = String::new();
+    let mut meta = CodexSuggestionMeta::default();
+    for line in content.lines() {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
         let item_type = value.get("type").and_then(Value::as_str).unwrap_or("");
-        if item_type != "response_item" { continue; }
         let payload = value.get("payload").unwrap_or(&value);
-        let role = payload.get("role").and_then(Value::as_str).unwrap_or("");
-        if role != "user" && role != "assistant" { continue; }
+        if item_type == "session_meta" && workspace_path.is_empty() {
+            workspace_path = string_at(&value, &["/payload/cwd"]).unwrap_or("").to_string();
+            meta.model_provider = string_at(&value, &["/payload/model_provider"]).map(str::to_string);
+            meta.plan_mode = string_at(&value, &["/payload/collaboration_mode"])
+                .is_some_and(|mode| mode.eq_ignore_ascii_case("plan"));
+        }
+        if item_type == "turn_context" {
+            meta.model = string_at(&value, &["/payload/model"]).map(str::to_string);
+        }
+        if item_type != "response_item" {
+            continue;
+        }
+        let role = string_at(&value, &["/payload/role"]).unwrap_or("");
+        if role != "user" && role != "assistant" {
+            continue;
+        }
         let text = payload
             .get("content")
             .and_then(Value::as_array)
@@ -15782,19 +16848,137 @@ fn codex_suggestion_context(session_id: &str) -> Option<SuggestionContext> {
                     .join("")
             })
             .unwrap_or_default();
-        if text.trim().is_empty() { continue; }
-        let text: String = text.chars().take(SUGGESTION_TURN_CHAR_BUDGET).collect();
-        if fingerprint.is_empty() {
-            fingerprint = value.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+        if text.trim().is_empty() {
+            continue;
         }
-        turns.push((role.to_string(), text.trim().to_string()));
+        let text: String = text.chars().take(SUGGESTION_TURN_CHAR_BUDGET).collect();
+        let id = string_at(&value, &["/payload/id"]).unwrap_or("").to_string();
+        all.push((role.to_string(), text.trim().to_string(), id));
     }
-    turns.reverse();
-    if turns.is_empty() { return None; }
+    if all.is_empty() {
+        return None;
+    }
+    let fingerprint = all.last()?.2.clone();
+    let mut tail: Vec<(String, String, String)> = all
+        .iter()
+        .rev()
+        .take(SUGGESTION_MAX_TURNS)
+        .cloned()
+        .collect();
+    if !tail.iter().any(|(role, _, _)| role == "user") {
+        if let Some(last_user) = all.iter().rev().find(|(role, _, _)| role == "user").cloned() {
+            if tail.len() >= SUGGESTION_MAX_TURNS {
+                tail.pop();
+            }
+            tail.push(last_user);
+        }
+    }
+    tail.reverse();
+    let turns = tail
+        .into_iter()
+        .map(|(role, text, _)| (role, text))
+        .collect();
+    Some((
+        SuggestionContext {
+            workspace_path,
+            turns,
+            question: None, // Codex 的 AskUserQuestion 在 JSONL 中格式不同，暂不产出选项芯片
+            fingerprint,
+        },
+        meta,
+    ))
+}
+
+/// WorkBuddy 后台任务完成通知等自动注入的 user 消息，不是用户本人说的话。
+fn is_workbuddy_system_notification(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    trimmed.starts_with("<task-notification>")
+        || trimmed.starts_with("[SYSTEM NOTIFICATION")
+        || trimmed.starts_with("<system-reminder")
+}
+
+/// WorkBuddy 库里 cwd 存的是小写盘符（`f:/x/y`），卡片统一用 `F:\x\y`。
+fn normalize_windows_drive(path: &str) -> String {
+    let mut chars: Vec<char> = path.chars().collect();
+    if chars.len() > 2 && chars[1] == ':' {
+        chars[0] = chars[0].to_ascii_uppercase();
+    }
+    chars.into_iter().collect()
+}
+
+/// WorkBuddy 建议上下文：从 projects/<workspace>/<sessionId>.jsonl 尾部取最近几轮。/// 行结构：`type=message` + `role` + `content[]`（user 用 input_text，assistant 用 output_text），
+/// 且消息行自带 `cwd`，可直接当工作区写进提示词。
+/// 首条用户消息常混入 `<system-reminder>` 身份注入块，必须先剔除再截断，
+/// 否则 300 字预算会被注入文本吃光。
+fn workbuddy_suggestion_context(session_id: &str) -> Option<SuggestionContext> {
+    const TAIL_BYTES: usize = 2 * 1024 * 1024;
+    let key = session_id.strip_prefix("workbuddy:")?;
+    let transcript_path = workbuddy_transcript_paths().remove(key)?;
+    let file_len = fs::metadata(&transcript_path).ok()?.len();
+    let tail_text = read_file_suffix_text(&transcript_path, file_len, TAIL_BYTES)?;
+    let mut all: Vec<(String, String, String)> = Vec::new();
+    let mut workspace_path = String::new();
+    for line in jsonl_lines(&tail_text) {
+        let Some(value) = json_value_from_jsonl_line(line) else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) != Some("message") {
+            continue;
+        }
+        let role = value.get("role").and_then(Value::as_str).unwrap_or("");
+        if role != "user" && role != "assistant" {
+            continue;
+        }
+        if workspace_path.is_empty() {
+            if let Some(cwd) = string_at(&value, &["/cwd"]).filter(|cwd| !cwd.trim().is_empty()) {
+                workspace_path = normalize_windows_drive(&cwd.replace('/', "\\"));
+            }
+        }
+        let part_type = if role == "user" { "input_text" } else { "output_text" };
+        let mut text = workbuddy_message_text(&value, part_type);
+        if text.is_empty() {
+            // 兜底：不同版本用 "text" 作部件类型。
+            text = workbuddy_message_text(&value, "text");
+        }
+        if role == "user" {
+            text = strip_workbuddy_system_reminder_spans(&text);
+            // 后台任务完成通知也是 role=user 的自动消息，不是用户本人说的话。
+            // 留着会把「用户意图」带偏，直接丢弃。
+            if is_workbuddy_system_notification(&text) {
+                continue;
+            }
+        }
+        if text.trim().is_empty() {
+            continue;
+        }
+        let text: String = text.chars().take(SUGGESTION_TURN_CHAR_BUDGET).collect();
+        let id = string_at(&value, &["/id"]).unwrap_or("").to_string();
+        all.push((role.to_string(), text.trim().to_string(), id));
+    }
+    if all.is_empty() {
+        return None;
+    }
+    let fingerprint = all.last()?.2.clone();
+    let mut tail: Vec<(String, String, String)> = all
+        .iter()
+        .rev()
+        .take(SUGGESTION_MAX_TURNS)
+        .cloned()
+        .collect();
+    // 与 Codex 侧同一条口径：上下文必须含至少一条 user 轮，否则模型无从判断用户意图。
+    if !tail.iter().any(|(role, _, _)| role == "user") {
+        if let Some(last_user) = all.iter().rev().find(|(role, _, _)| role == "user").cloned() {
+            if tail.len() >= SUGGESTION_MAX_TURNS {
+                tail.pop();
+            }
+            tail.push(last_user);
+        }
+    }
+    tail.reverse();
     Some(SuggestionContext {
-        workspace_path: String::new(),
-        turns,
-        question: None, // Codex 的 AskUserQuestion 在 JSONL 中格式不同，暂时跳过
+        workspace_path,
+        turns: tail.into_iter().map(|(role, text, _)| (role, text)).collect(),
+        question: None,
         fingerprint,
     })
 }
@@ -15835,11 +17019,41 @@ async fn send_codex_message(
     text: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(session_key) = id.strip_prefix("codex:") else {
+        if !(id.starts_with("codex:") || id.starts_with("codex://")) {
             return Err("只支持 Codex 会话的发送".to_string());
+        }
+        let Some(session_key) = codex_session_key(&id) else {
+            return Err("会话 ID 不是合法的 Codex UUID".to_string());
         };
+        if text.trim().is_empty() {
+            return Err("发送内容为空".to_string());
+        }
+        // 与官方 expectedTurnId 同义：手头有该会话的建议时先对一遍当前指纹。
+        let stale = {
+            let Ok(runtime) = suggestion_runtime().lock() else {
+                return Err("建议状态不可用".to_string());
+            };
+            match runtime.current.get(&id) {
+                Some(suggestion) => match codex_suggestion_context(&id) {
+                    Some((context, _)) => {
+                        !suggestion_fingerprint_valid(suggestion, &context.fingerprint)
+                    }
+                    None => true,
+                },
+                None => false,
+            }
+        };
+        if stale {
+            return Err("会话已前进，这条建议失效了，请等新建议".to_string());
+        }
         send_codex_message_blocking(session_key, &text)?;
-        let _ = app;
+        if let Ok(mut runtime) = suggestion_runtime().lock() {
+            runtime.current.remove(&id);
+            runtime.regen_counts.remove(&id);
+            runtime.last_avoid.remove(&id);
+        }
+        suggestion_audit(&id, "codex", "accepted", 0, "live", None);
+        let _ = app.emit(SESSIONS_CHANGED_EVENT, current_time_ms());
         Ok(())
     })
     .await
@@ -15957,6 +17171,75 @@ fn zcode_send_args(cjs: &str, session_key: &str, workspace_path: &str, text: &st
     args.push(text.to_string());
     args.push("--json".to_string());
     args
+}
+
+/// 与 run_child_with_timeout 相同，但把 input 写进子进程 stdin 后关闭。
+/// Codex 的预测 prompt 含中文与换行，走 stdin 比当 argv 传更稳（也对齐官方
+/// thread/sample 的 prompt 字段语义）；输入很短，不会撑满管道缓冲。
+fn run_child_with_timeout_stdin(
+    command: &mut std::process::Command,
+    timeout_secs: u64,
+    timeout_message: &str,
+    input: &str,
+) -> Result<String, String> {
+    command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("无法启动子进程：{error}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin
+            .write_all(input.as_bytes())
+            .map_err(|error| format!("写入子进程 stdin 失败：{error}"))?;
+    }
+    let deadline = Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = child
+                    .stdout
+                    .take()
+                    .map(|mut stream| {
+                        use std::io::Read;
+                        let mut buffer = String::new();
+                        let _ = stream.read_to_string(&mut buffer);
+                        buffer
+                    })
+                    .unwrap_or_default();
+                if status.success() {
+                    return Ok(stdout);
+                }
+                let stderr = child
+                    .stderr
+                    .take()
+                    .map(|mut stream| {
+                        use std::io::Read;
+                        let mut buffer = String::new();
+                        let _ = stream.read_to_string(&mut buffer);
+                        buffer
+                    })
+                    .unwrap_or_default();
+                let head: String = stderr.trim().chars().take(200).collect();
+                return Err(format!(
+                    "子进程失败（退出码 {}）：{head}",
+                    status.code().unwrap_or(-1)
+                ));
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(timeout_message.to_string());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
+            Err(error) => return Err(format!("等待子进程失败：{error}")),
+        }
+    }
 }
 
 /// 拉起子进程并等它结束，带超时。成功返回 Ok，失败分类报错：
@@ -16122,9 +17405,12 @@ fn send_zcode_message_fast(
 
 /// 查某个 ZCode 会话当前的工作区路径（发送要带 --cwd，保持会话目录一致）。
 fn suggestion_workspace_path(session_id: &str) -> Option<String> {
-    zcode_suggestion_context(session_id)
-        .map(|context| context.workspace_path)
-        .filter(|directory| !directory.trim().is_empty())
+    let workspace = if session_id.starts_with("codex:") || session_id.starts_with("codex://") {
+        codex_suggestion_context(session_id).map(|(context, _)| context.workspace_path)
+    } else {
+        zcode_suggestion_context(session_id).map(|context| context.workspace_path)
+    };
+    workspace.filter(|directory| !directory.trim().is_empty())
 }
 
 #[cfg(test)]
@@ -21057,12 +22343,30 @@ mod tests {
 
     #[test]
     fn zcode_suggestion_pipeline_contract() {
-        // 状态转换：新进入 waiting 才触发。
-        assert!(suggestion_should_trigger(Some("idle"), "waiting"));
-        assert!(suggestion_should_trigger(Some("running"), "waiting"));
-        assert!(suggestion_should_trigger(None, "waiting"));
-        assert!(!suggestion_should_trigger(Some("running"), "idle"));
-        assert!(!suggestion_should_trigger(Some("waiting"), "waiting"));
+        // 状态转换：waiting（等审批）与 turn 完成转 idle（官方 live）都触发。
+        assert_eq!(
+            suggestion_status_transition(Some("idle"), "waiting", true),
+            Some(SuggestionTrigger::Waiting)
+        );
+        assert_eq!(
+            suggestion_status_transition(Some("running"), "waiting", true),
+            Some(SuggestionTrigger::Waiting)
+        );
+        assert_eq!(
+            suggestion_status_transition(None, "waiting", true),
+            Some(SuggestionTrigger::Waiting)
+        );
+        assert_eq!(
+            suggestion_status_transition(Some("running"), "idle", true),
+            Some(SuggestionTrigger::Live)
+        );
+        assert_eq!(
+            suggestion_status_transition(Some("waiting"), "idle", true),
+            Some(SuggestionTrigger::Live)
+        );
+        assert_eq!(suggestion_status_transition(Some("waiting"), "waiting", true), None);
+        assert_eq!(suggestion_status_transition(Some("idle"), "idle", true), None);
+        assert_eq!(suggestion_status_transition(Some("running"), "running", true), None);
 
         // 提示词契约：v5 改造的关键句都在，待选项与避开上条各就位。
         let context = SuggestionContext {
@@ -21146,6 +22450,269 @@ mod tests {
         };
         assert!(suggestion_fingerprint_valid(&suggestion, "msg-9"));
         assert!(!suggestion_fingerprint_valid(&suggestion, "msg-10"));
+    }
+
+    #[test]
+    fn codex_session_key_accepts_cli_id_and_deep_link() {
+        let uuid = "01a1b08c-3b17-7d83-94be-a3ce08ab951a";
+        assert_eq!(codex_session_key(&format!("codex:{uuid}")), Some(uuid));
+        assert_eq!(
+            codex_session_key(&format!("codex://threads/{uuid}")),
+            Some(uuid)
+        );
+        assert_eq!(codex_session_key(uuid), Some(uuid));
+        assert_eq!(codex_session_key("codex://threads/not-a-uuid"), None);
+        assert_eq!(codex_session_key("zcode:abc"), None);
+        assert_eq!(codex_session_key(""), None);
+    }
+
+    #[test]
+    fn codex_jsonl_event_stream_parses_last_agent_message() {
+        let events = [
+            r#"{"type":"thread.started","thread_id":"t1"}"#,
+            r#"{"type":"item.completed","item":{"id":"item_0","type":"error","message":"config warning"}}"#,
+            r#"{"type":"item.completed","item":{"id":"item_1","type":"reasoning","text":"思考中"}}"#,
+            r#"{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"{\"suggestion\":\"第一条\"}"}}"#,
+            r#"{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"{\"suggestion\":\"继续修剩下的用例\"}"}}"#,
+            r#"{"type":"turn.completed","usage":{"input_tokens":100}}"#,
+        ]
+        .join("\n");
+        assert_eq!(
+            parse_codex_agent_message(&events),
+            Some(r#"{"suggestion":"继续修剩下的用例"}"#.to_string())
+        );
+        assert_eq!(parse_codex_agent_message("not jsonl"), None);
+        assert_eq!(
+            parse_codex_agent_message(&events).and_then(|raw| parse_suggestion_response(&raw, 120)),
+            Some("继续修剩下的用例".to_string())
+        );
+        // 回归：旧实现把整段事件流当单个 JSON 信封，必然解析失败。
+        assert_eq!(parse_headless_response(&events), None);
+    }
+
+    #[test]
+    fn suggestion_trigger_matches_official_live_and_catch_up_semantics() {
+        let now = 1_000_000_u64;
+        let fresh = now - 1_000;
+        let stale = now - SUGGESTION_LIVE_RECENCY_MS - 1;
+        // live：turn 跑完转 idle。
+        assert_eq!(
+            suggestion_trigger_for(Some("running"), "idle", true, fresh, now),
+            Some(SuggestionTrigger::Live)
+        );
+        // catch_up：曾见过的会话重新出现。
+        assert_eq!(
+            suggestion_trigger_for(None, "idle", true, fresh, now),
+            Some(SuggestionTrigger::CatchUp)
+        );
+        // 冷启动首见的 idle 不触发，避免对全部历史会话刷模型。
+        assert_eq!(
+            suggestion_trigger_for(None, "idle", false, fresh, now),
+            None
+        );
+        // 持续 idle 不重复触发。
+        assert_eq!(
+            suggestion_trigger_for(Some("idle"), "idle", true, fresh, now),
+            None
+        );
+        // 陈旧的 idle 不触发。
+        assert_eq!(
+            suggestion_trigger_for(Some("running"), "idle", true, stale, now),
+            None
+        );
+        // waiting（等审批）仍触发，且不受采样率影响。
+        assert_eq!(
+            suggestion_trigger_for(Some("running"), "waiting", true, fresh, now),
+            Some(SuggestionTrigger::Waiting)
+        );
+        assert_eq!(
+            suggestion_trigger_for(Some("waiting"), "waiting", true, fresh, now),
+            None
+        );
+        assert_eq!(SuggestionTrigger::Live.sample_rate(), 1.0);
+        assert_eq!(SuggestionTrigger::CatchUp.sample_rate(), 0.5);
+    }
+
+    #[test]
+    fn suggestion_eligibility_blocks_plan_provider_and_blacklist() {
+        assert!(suggestion_eligibility(Some("openai"), Some("gpt-6.1-sol"), false).is_ok());
+        assert!(suggestion_eligibility(None, None, false).is_ok());
+        assert!(suggestion_eligibility(Some("openai"), None, true).is_err());
+        assert!(suggestion_eligibility(Some("Sub2API"), None, false).is_err());
+        assert!(suggestion_eligibility(Some("openai"), Some("gpt-5.5"), false).is_err());
+    }
+
+    #[test]
+    fn suggestion_sampling_is_deterministic_and_bounded() {
+        let now = 1_000_000_u64;
+        assert!(suggestion_sample_allowed("codex:a", 1.0, now));
+        assert!(!suggestion_sample_allowed("codex:a", 0.0, now));
+        let first = suggestion_sample_allowed("codex:a", 0.5, now);
+        assert_eq!(first, suggestion_sample_allowed("codex:a", 0.5, now));
+        // 采样率 0.5 时应既有放行也有跳过，不是恒真或恒假。
+        let ids: Vec<String> = (0..40).map(|i| format!("codex:session-{i}")).collect();
+        let allowed = ids
+            .iter()
+            .filter(|id| suggestion_sample_allowed(id, 0.5, now))
+            .count();
+        assert!(allowed > 0 && allowed < ids.len(), "采样分布异常：{allowed}/{}", ids.len());
+    }
+
+    #[test]
+    fn codex_exec_args_include_required_flags() {
+        // 锁定必需 flag，防止后续改动把 --skip-git-repo-check / --ephemeral
+        // 弄丢导致整条链路再次静默失败。
+        let args = codex_exec_args(
+            "codex.js",
+            r"C:\Temp\scratch",
+            r"C:\Temp\out.txt",
+            &SuggestionEngineOptions::default(),
+        );
+        assert_eq!(args[0], "codex.js");
+        assert_eq!(args[1], "exec");
+        for flag in [
+            "--json",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "-s",
+            "read-only",
+            "-C",
+            "-o",
+            "-",
+        ] {
+            assert!(args.contains(&flag.to_string()), "缺少 codex exec 必需参数 {flag}");
+        }
+        assert_eq!(args.last().map(String::as_str), Some("-"));
+        assert!(args.contains(&r"C:\Temp\scratch".to_string()));
+        assert!(args.contains(&r"C:\Temp\out.txt".to_string()));
+        // 回归：prompt 不再作为 argv 参数传递（改走 stdin）。
+        assert!(!args.iter().any(|arg| arg.contains("预测") || arg.contains("suggestion")));
+    }
+
+    #[test]
+    fn codex_exec_args_apply_model_and_effort_overrides() {
+        let options = SuggestionEngineOptions {
+            model: Some("gpt-6.1-sol".to_string()),
+            effort: Some("high".to_string()),
+            timeout_secs: None,
+            engine: SuggestionEngine::Exec,
+        };
+        let args = codex_exec_args("codex.js", "scratch", "out.txt", &options);
+        let model_at = args.iter().position(|arg| arg == "-m").expect("缺少 -m");
+        assert_eq!(args[model_at + 1], "gpt-6.1-sol");
+        assert!(args.contains(&"model_reasoning_effort=high".to_string()));
+        // "-" 必须仍然是最后一个参数，否则 prompt 不再走 stdin。
+        assert_eq!(args.last().map(String::as_str), Some("-"));
+
+        // 空值不生成半截参数。
+        let blanks = SuggestionEngineOptions {
+            model: Some("  ".to_string()),
+            effort: None,
+            timeout_secs: None,
+            engine: SuggestionEngine::Exec,
+        };
+        let args = codex_exec_args("codex.js", "scratch", "out.txt", &blanks);
+        assert!(!args.iter().any(|arg| arg == "-m" || arg.starts_with("model_reasoning_effort=")));
+    }
+
+    #[test]
+    fn suggestion_engine_parses_known_labels() {
+        assert_eq!(SuggestionEngine::parse("auto"), Some(SuggestionEngine::Auto));
+        assert_eq!(SuggestionEngine::parse("Sample"), Some(SuggestionEngine::Sample));
+        assert_eq!(SuggestionEngine::parse(" exec "), Some(SuggestionEngine::Exec));
+        assert_eq!(SuggestionEngine::parse("nope"), None);
+        assert_eq!(SuggestionEngine::default(), SuggestionEngine::Auto);
+    }
+
+    #[test]
+    fn sample_instruction_asks_for_bare_sentence() {
+        let plain = build_sample_instruction(None);
+        assert!(plain.contains("120"));
+        assert!(plain.contains("不要 JSON"));
+        assert!(!plain.contains("避开"));
+
+        let avoided = build_sample_instruction(Some("再跑一遍测试"));
+        assert!(avoided.contains("再跑一遍测试"));
+        assert!(avoided.contains("避开"));
+    }
+
+    #[test]
+    fn parse_sample_suggestion_strips_wrappers() {
+        assert_eq!(
+            parse_sample_suggestion("「补一下这个函数的中文注释」", 120).as_deref(),
+            Some("补一下这个函数的中文注释")
+        );
+        assert_eq!(
+            parse_sample_suggestion("```\n用户：继续修 CLIManager 的边界\n```", 120).as_deref(),
+            Some("继续修 CLIManager 的边界")
+        );
+        assert_eq!(
+            parse_sample_suggestion("- suggestion: \"跑一遍 cargo test --lib\"", 120).as_deref(),
+            Some("跑一遍 cargo test --lib")
+        );
+        // 空输出与超长一律不出建议。
+        assert_eq!(parse_sample_suggestion("   ", 120), None);
+        assert_eq!(parse_sample_suggestion(&"字".repeat(121), 120), None);
+    }
+
+    #[test]
+    fn sample_budget_only_covers_small_rollouts() {
+        assert!(rollout_within_sample_budget(200 * 1024));
+        assert!(rollout_within_sample_budget(CODEX_SAMPLE_MAX_ROLLOUT_BYTES));
+        assert!(!rollout_within_sample_budget(CODEX_SAMPLE_MAX_ROLLOUT_BYTES + 1));
+        // 4.3MB 这种长会话实测 sample 要 27 秒，必须交给 exec。
+        assert!(!rollout_within_sample_budget(4 * 1024 * 1024));
+    }
+
+    /// 记录调用的假 RPC，用来锁住 sample 四步的顺序与关键参数。
+    #[derive(Default)]
+    struct RecordingRpc {
+        calls: Vec<(String, serde_json::Value)>,
+    }
+
+    impl SampleRpc for RecordingRpc {
+        fn rpc(
+            &mut self,
+            method: &str,
+            params: serde_json::Value,
+            _timeout_secs: u64,
+        ) -> Result<serde_json::Value, String> {
+            self.calls.push((method.to_string(), params));
+            Ok(match method {
+                "thread/read" => serde_json::json!({ "thread": { "turns": [{ "id": "turn-1" }] } }),
+                "thread/fork" => serde_json::json!({ "thread": { "id": "fork-1" } }),
+                "thread/sample" => serde_json::json!({ "text": "继续检查剩余的缓存目录" }),
+                _ => serde_json::json!({}),
+            })
+        }
+    }
+
+    #[test]
+    fn sample_flow_orders_calls_and_pins_params() {
+        let mut rpc = RecordingRpc::default();
+        let text = codex_sample_flow(&mut rpc, "thread-1", "C:/ws", None, 30)
+            .expect("four-step flow should succeed");
+        assert_eq!(text, "继续检查剩余的缓存目录");
+
+        let methods: Vec<&str> = rpc.calls.iter().map(|(method, _)| method.as_str()).collect();
+        assert_eq!(
+            methods,
+            ["thread/read", "thread/fork", "thread/sample", "thread/archive"]
+        );
+
+        // read 必须带 turns，否则拿不到 expectedTurnId。
+        assert_eq!(rpc.calls[0].1["threadId"], "thread-1");
+        assert_eq!(rpc.calls[0].1["includeTurns"], true);
+        // fork 必须在会话自己的工作区里做，否则 cwd 校验会把副本放到 scratch。
+        assert_eq!(rpc.calls[1].1["threadId"], "thread-1");
+        assert_eq!(rpc.calls[1].1["cwd"], "C:/ws");
+        // sample 打的是副本线程，且必须带父线程最后一条 turn id 与 disableMcp。
+        let sample = &rpc.calls[2].1;
+        assert_eq!(sample["threadId"], "fork-1");
+        assert_eq!(sample["expectedTurnId"], "turn-1");
+        assert_eq!(sample["disableMcp"], true);
+        // 收尾必须归档副本，否则每次预测都往会话列表里多塞一条。
+        assert_eq!(rpc.calls[3].1["threadId"], "fork-1");
     }
 
     #[test]

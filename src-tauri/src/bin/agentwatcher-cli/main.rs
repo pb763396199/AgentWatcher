@@ -5,7 +5,7 @@ mod scan_cache;
 mod skill;
 
 use clap::Parser;
-use cli::{Cli, Commands, HandoffAction, SessionAction, SkillAction};
+use cli::{Cli, Commands, HandoffAction, SessionAction, SkillAction, SuggestAction};
 
 fn main() {
     // headless 无副作用：不拉起常驻 Codex app-server（扫描走本地会话文件），
@@ -45,7 +45,33 @@ fn main() {
         Commands::Skill { action } => match action {
             SkillAction::Install { dir } => skill::skill_install(dir.as_deref()),
             SkillAction::List { dir } => skill::skill_list(dir.as_deref()),
+            SkillAction::Status { dir } => skill::skill_status(dir.as_deref()),
+            SkillAction::Print => skill::skill_print(),
             SkillAction::Remove { dir } => skill::skill_remove(dir.as_deref()),
+        },
+        Commands::Suggest { action } => match action {
+            SuggestAction::Generate {
+                id,
+                avoid,
+                model,
+                effort,
+                timeout,
+                engine,
+            } => {
+                // 采样首选复用常驻 app-server（省冷启动）。CLI 默认关着它，这里按需开、
+                // 用完即收；即便进程被提前结束，job object 也会带走子进程。
+                agentwatcher_lib::set_codex_app_server_disabled(false);
+                commands::suggest_generate(
+                    &id,
+                    avoid.as_deref(),
+                    model.as_deref(),
+                    effort.as_deref(),
+                    timeout,
+                    engine.as_deref(),
+                );
+                agentwatcher_lib::shutdown_codex_app_server();
+            }
+            SuggestAction::Prompt { id } => commands::suggest_prompt(&id),
         },
     }
 }

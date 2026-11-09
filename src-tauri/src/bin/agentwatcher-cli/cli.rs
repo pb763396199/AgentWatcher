@@ -1,5 +1,10 @@
 // 命令定义层：只放 clap 结构，不依赖其他模块，测试用 #[path] 直接引入。
-// 命令按名词分组（session / handoff），同一动词在不同组里保持同一语义。
+// 顶层按「副作用等级」分组，而不是按功能多少：
+//   session  只读查询
+//   handoff  写临时目录（导出交接文件）
+//   suggest  调外部模型、产生用量（唯一计费类别，宿主可单独收紧授权）
+//   skill    写宿主技能目录（技能分发）
+// 同一动词在不同组里保持同一语义。
 
 use clap::{Parser, Subcommand};
 
@@ -40,6 +45,40 @@ pub enum Commands {
     Skill {
         #[command(subcommand)]
         action: SkillAction,
+    },
+    /// 为某个会话生成一条 AI 建议回复（按会话所属 agent 路由生成器）
+    Suggest {
+        #[command(subcommand)]
+        action: SuggestAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SuggestAction {
+    /// 生成建议并输出结构化结果；会真实调用该 agent 的模型
+    Generate {
+        /// 会话 ID，支持 codex:<uuid>、codex://threads/<uuid>、zcode:<uuid>、workbuddy:<uuid>
+        id: String,
+        /// 带着上一条建议要求避开，用于「换一个」
+        #[arg(long = "avoid")]
+        avoid: Option<String>,
+        /// 覆盖生成模型（如 gpt-6.1-sol）；不给则沿用本机 Codex 配置
+        #[arg(long = "model")]
+        model: Option<String>,
+        /// 覆盖推理档：minimal / low / medium / high；不给则沿用本机配置
+        #[arg(long = "effort")]
+        effort: Option<String>,
+        /// 引擎超时秒数（默认 45）；high 档本地通常要更久，按需调大
+        #[arg(long = "timeout")]
+        timeout: Option<u64>,
+        /// 生成引擎：auto（默认，先试 sample 再回落 exec）/ sample / exec
+        #[arg(long = "engine")]
+        engine: Option<String>,
+    },
+    /// 只组装上下文与提示词，不调用模型、不写盘，用于核对 v5 prompt
+    Prompt {
+        /// 会话 ID，支持 codex:<uuid>、codex://threads/<uuid>、zcode:<uuid>、workbuddy:<uuid>
+        id: String,
     },
 }
 
@@ -110,6 +149,14 @@ pub enum SkillAction {
         #[arg(long = "dir")]
         dir: Option<String>,
     },
+    /// 自检安装状态：逐宿主给出下一步动作与汇总，供 agent 判断要不要重装
+    Status {
+        /// 只看这个目录
+        #[arg(long = "dir")]
+        dir: Option<String>,
+    },
+    /// 打印内嵌的用法技能正文，可用于自行写盘或与已装副本比对
+    Print,
     /// 从宿主技能目录移除 AgentWatcher 用法技能
     Remove {
         /// 只从这个目录移除

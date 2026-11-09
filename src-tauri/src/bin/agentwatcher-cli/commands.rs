@@ -2,8 +2,10 @@
 
 use crate::output;
 use agentwatcher_lib::{
-    lookup_session_full_history, prepare_handoff_source_context_blocking, scan_sessions_blocking,
-    session_usage_detail, AgentSession, HandoffSourceContextRequest, ScanOptions,
+    generate_suggestion_for_session_with, lookup_session_full_history,
+    prepare_handoff_source_context_blocking, scan_sessions_blocking, session_usage_detail,
+    suggestion_prompt_preview, AgentSession, HandoffSourceContextRequest, ScanOptions,
+    SuggestionEngine, SuggestionEngineOptions,
 };
 
 /// 列表只暴露卡片级元数据；最后输入/输出等预览文本一律不进 list。
@@ -381,5 +383,74 @@ pub fn handoff_export(id: &str) {
             output::finish_success("handoff export", data, Some(human));
         }
         Err(message) => output::finish_failure("handoff export", "export_failed", message),
+    }
+}
+
+/// 建议生成：按会话所属 agent 路由，未接线的 provider 明确报错而不是静默空结果。
+pub fn suggest_generate(
+    id: &str,
+    avoid: Option<&str>,
+    model: Option<&str>,
+    effort: Option<&str>,
+    timeout_secs: Option<u64>,
+    engine: Option<&str>,
+) {
+    let is_supported = id.starts_with("codex:")
+        || id.starts_with("codex://")
+        || id.starts_with("zcode:")
+        || id.starts_with("workbuddy:");
+    if !is_supported {
+        output::finish_failure(
+            "suggest generate",
+            "unsupported_provider",
+            format!("会话 {id} 的 agent 未接线，目前只支持 codex / zcode / workbuddy"),
+        );
+    }
+    let engine = match engine {
+        Some(value) => SuggestionEngine::parse(value).unwrap_or_else(|| {
+            output::finish_failure(
+                "suggest generate",
+                "invalid_argument",
+                format!("未知引擎 {value}，可选 auto / sample / exec"),
+            )
+        }),
+        None => SuggestionEngine::Auto,
+    };
+    let options = SuggestionEngineOptions {
+        model: model.map(str::to_string),
+        effort: effort.map(str::to_string),
+        timeout_secs,
+        engine,
+    };
+    // sample 继承 fork 出的父线程配置，模型与档位不由 CLI 决定。
+    // 显式指定时要说明清楚，否则会误以为改档生效了。
+    if engine == SuggestionEngine::Sample && (model.is_some() || effort.is_some()) {
+        eprintln!(
+            "提示：--engine sample 继承会话本身的模型与档位，--model / --effort 对它不生效；需要指定档位请用 --engine exec"
+        );
+    }
+    match generate_suggestion_for_session_with(id, avoid, &options) {
+        Some(suggestion) => {
+            let data = serde_json::to_value(&suggestion).expect("suggestion always serializes");
+            let human = format!("{}\n", suggestion.text);
+            output::finish_success("suggest generate", data, Some(human));
+        }
+        None => output::finish_failure(
+            "suggest generate",
+            "generation_failed",
+            "建议生成失败：可能是会话文件不存在、资格校验未通过、引擎超时或输出无法解析；stderr 里有分类日志".to_string(),
+        ),
+    }
+}
+
+/// 只出提示词不调模型，便于核对 v5 契约与上下文。
+pub fn suggest_prompt(id: &str) {
+    match suggestion_prompt_preview(id) {
+        Ok(preview) => {
+            let human = format!("{}\n", preview.prompt);
+            let data = serde_json::to_value(&preview).expect("preview always serializes");
+            output::finish_success("suggest prompt", data, Some(human));
+        }
+        Err(message) => output::finish_failure("suggest prompt", "preview_failed", message),
     }
 }

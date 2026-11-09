@@ -200,6 +200,43 @@ fn skill_list_without_dir_reports_host_candidates() {
 }
 
 #[test]
+fn skill_print_and_status_expose_doc_surface() {
+    // print：把内嵌文档原样吐出来，宿主可自行写盘或 diff。
+    let (envelope, _stderr, code) = run_cli(&["--format", "json", "skill", "print"]);
+    assert_eq!(code, Some(0));
+    assert_eq!(envelope["command"], "skill print");
+    let content = envelope["data"]["content"].as_str().expect("data.content is a string");
+    assert!(content.contains("name: agentwatcher"), "doc has frontmatter");
+    assert!(content.contains("version: 2"), "doc carries a version");
+    assert!(content.contains("suggest generate"), "doc teaches the suggest command");
+    assert!(
+        envelope["data"]["docBytes"].as_u64().unwrap_or(0) > 0,
+        "docBytes is reported"
+    );
+
+    // status：比 list 多一个可执行的动作建议与汇总计数。
+    let (envelope, _stderr, code) = run_cli(&["--format", "json", "skill", "status"]);
+    assert_eq!(code, Some(0));
+    assert_eq!(envelope["command"], "skill status");
+    assert_eq!(envelope["data"]["docVersion"], "2");
+    let hosts = envelope["data"]["hosts"].as_array().expect("data.hosts is an array");
+    assert!(!hosts.is_empty(), "至少有一个宿主候选");
+    let valid_actions = ["none", "skill install", "skip"];
+    for host in hosts {
+        let action = host["action"].as_str().unwrap_or_default();
+        assert!(
+            valid_actions.contains(&action),
+            "action {action} must be one of {valid_actions:?}"
+        );
+        assert!(host.get("state").is_some(), "entry keeps state");
+    }
+    let summary = envelope["data"]["summary"].as_object().expect("summary object");
+    for key in ["installed", "outdated", "notInstalled", "hostAbsent"] {
+        assert!(summary.contains_key(key), "summary 缺 {key}");
+    }
+}
+
+#[test]
 fn default_window_session_list_leaves_no_scan_cache() {
     // 默认活跃窗口是轻量扫描，不允许落全历史缓存文件（AC-004 前半）。
     let cache_dir = std::env::temp_dir()

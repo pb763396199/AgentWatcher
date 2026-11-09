@@ -5,7 +5,7 @@
 mod cli;
 
 use clap::{CommandFactory, Parser};
-use cli::{Cli, Commands, HandoffAction, OutputFormat, SessionAction, SkillAction};
+use cli::{Cli, Commands, HandoffAction, OutputFormat, SessionAction, SkillAction, SuggestAction};
 
 fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
     Cli::try_parse_from(std::iter::once("agentwatcher-cli").chain(args.iter().copied()))
@@ -187,8 +187,151 @@ fn skill_verbs_parse_with_optional_dir() {
     assert_eq!(dir.as_deref(), Some("C:/tmp/skills"));
 
     assert!(parse(&["skill", "list"]).is_ok());
+    assert!(parse(&["skill", "status"]).is_ok());
+    assert!(parse(&["skill", "status", "--dir", "X"]).is_ok());
+    assert!(parse(&["skill", "print"]).is_ok());
     assert!(parse(&["skill", "remove", "--dir", "X"]).is_ok());
     assert!(parse(&["skill", "fly"]).is_err());
+}
+
+#[test]
+fn skill_doc_commands_resolve_in_clap() {
+    // 防文档腐烂：技能文档里写到的每条命令都必须能在 CLI 里解析到。
+    // 只抽 `agentwatcher-cli <动词> [<子命令>]` 的路径，参数写法（占位符、方括号）不参与断言。
+    let paths = doc_command_paths();
+    assert!(
+        paths.len() >= 8,
+        "技能文档里的命令数量异常（{}），抽取逻辑可能失效：{paths:?}",
+        paths.len()
+    );
+    let root = Cli::command();
+    for (verb, sub) in &paths {
+        let Some(top) = root.get_subcommands().find(|command| command.get_name() == verb) else {
+            panic!("技能文档写了不存在的顶层命令 `{verb}`");
+        };
+        if let Some(sub) = sub {
+            assert!(
+                top.get_subcommands().any(|command| command.get_name() == sub),
+                "技能文档写了不存在的子命令 `{verb} {sub}`"
+            );
+        }
+    }
+}
+
+const SKILL_DOC: &str = include_str!("../src/bin/agentwatcher-cli/skill/SKILL.md");
+
+fn doc_command_paths() -> Vec<(String, Option<String>)> {
+    let mut paths = Vec::new();
+    for span in SKILL_DOC.split('`') {
+        let Some(rest) = span.trim().strip_prefix("agentwatcher-cli ") else {
+            continue;
+        };
+        let mut parts = rest.split_whitespace();
+        let Some(verb) = parts.next() else { continue };
+        if verb.starts_with('-') {
+            continue;
+        }
+        let sub = parts
+            .next()
+            .filter(|token| {
+                !token.starts_with('-') && !token.starts_with('[') && !token.starts_with('<')
+            })
+            .map(str::to_string);
+        paths.push((verb.to_string(), sub));
+    }
+    paths
+}
+
+#[test]
+fn suggest_generate_parses_id_and_avoid() {
+    assert!(parse(&["suggest", "generate"]).is_err());
+    let parsed = parse(&[
+        "suggest",
+        "generate",
+        "codex://threads/01a1b08c-3b17-7d83-94be-a3ce08ab951a",
+    ])
+    .expect("suggest generate parses deep-link id");
+    let Commands::Suggest {
+        action: SuggestAction::Generate { id, avoid, .. },
+    } = parsed.command
+    else {
+        panic!("expected suggest generate");
+    };
+    assert_eq!(id, "codex://threads/01a1b08c-3b17-7d83-94be-a3ce08ab951a");
+    assert!(avoid.is_none());
+
+    let parsed = parse(&["suggest", "generate", "zcode:abc", "--avoid", "跳过它"])
+        .expect("--avoid parses");
+    let Commands::Suggest {
+        action: SuggestAction::Generate { avoid, .. },
+    } = parsed.command
+    else {
+        panic!("expected suggest generate");
+    };
+    assert_eq!(avoid.as_deref(), Some("跳过它"));
+}
+
+#[test]
+fn suggest_generate_parses_model_and_effort() {
+    let parsed = parse(&[
+        "suggest",
+        "generate",
+        "workbuddy:abc",
+        "--model",
+        "gpt-6.1-sol",
+        "--effort",
+        "high",
+    ])
+    .expect("--model/--effort parse");
+    let Commands::Suggest {
+        action:
+            SuggestAction::Generate {
+                id, model, effort, ..
+            },
+    } = parsed.command
+    else {
+        panic!("expected suggest generate");
+    };
+    assert_eq!(id, "workbuddy:abc");
+    assert_eq!(model.as_deref(), Some("gpt-6.1-sol"));
+    assert_eq!(effort.as_deref(), Some("high"));
+}
+
+#[test]
+fn suggest_generate_parses_engine_flag() {
+    let parsed = parse(&["suggest", "generate", "codex:abc", "--engine", "sample"])
+        .expect("--engine parses");
+    let Commands::Suggest {
+        action: SuggestAction::Generate { engine, .. },
+    } = parsed.command
+    else {
+        panic!("expected suggest generate");
+    };
+    assert_eq!(engine.as_deref(), Some("sample"));
+
+    // 不传时留空，交给生成器按 auto 选路。
+    let parsed = parse(&["suggest", "generate", "codex:abc"]).expect("defaults parse");
+    let Commands::Suggest {
+        action: SuggestAction::Generate { engine, .. },
+    } = parsed.command
+    else {
+        panic!("expected suggest generate");
+    };
+    assert!(engine.is_none());
+}
+
+#[test]
+fn suggest_prompt_requires_id() {
+    assert!(parse(&["suggest", "prompt"]).is_err());
+    let parsed = parse(&["suggest", "prompt", "codex:abc"]).expect("prompt parses");
+    let Commands::Suggest {
+        action: SuggestAction::Prompt { id },
+    } = parsed.command
+    else {
+        panic!("expected suggest prompt");
+    };
+    assert_eq!(id, "codex:abc");
+    assert!(parse(&["suggest", "fly"]).is_err());
 }
 
 #[test]

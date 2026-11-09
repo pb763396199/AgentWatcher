@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChatGPT 桌面端 Composer Predictions 逆向报告</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1a1f28; --muted:#5b6472; --border:#e2e6ec; --code-bg:#f5f7fa;
+    --accent:#0b6bcb; --accent-soft:#eaf2fb; --ok:#1a7f4e; --warn:#9a6700; --pre-border:#d7dde6;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#14181f; --fg:#dfe4ec; --muted:#98a2b3; --border:#2c333f; --code-bg:#1b2029;
+      --accent:#6ab0f3; --accent-soft:#1b2a3d; --ok:#5cd39a; --warn:#e0b34c; --pre-border:#2c333f;
+    }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:0 20px 64px; background:var(--bg); color:var(--fg);
+    font-family:"Segoe UI","Microsoft YaHei",-apple-system,BlinkMacSystemFont,sans-serif;
+    font-size:15px; line-height:1.75;
+  }
+  .page{max-width:960px;margin:0 auto}
+  header{padding:40px 0 8px;border-bottom:2px solid var(--border);margin-bottom:28px}
+  h1{font-size:26px;margin:0 0 10px;line-height:1.35}
+  .meta{color:var(--muted);font-size:13.5px;display:flex;flex-wrap:wrap;gap:6px 22px}
+  .meta b{color:var(--fg);font-weight:500}
+  h2{font-size:19px;margin:44px 0 14px;padding-left:10px;border-left:4px solid var(--accent)}
+  h3{font-size:16px;margin:22px 0 8px}
+  p{margin:8px 0}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}
+  th,td{border:1px solid var(--border);padding:7px 11px;text-align:left;vertical-align:top}
+  th{background:var(--code-bg);font-weight:600;white-space:nowrap}
+  code{font-family:Consolas,"Cascadia Mono",monospace;font-size:13px;background:var(--code-bg);
+       padding:1px 5px;border-radius:4px;word-break:break-all}
+  pre{background:var(--code-bg);border:1px solid var(--pre-border);border-radius:8px;
+      padding:14px 16px;overflow-x:auto;line-height:1.65}
+  pre code{background:none;padding:0;font-size:13px;word-break:normal;white-space:pre-wrap}
+  .prompt-box{position:relative;border:1px solid var(--accent);border-radius:8px}
+  .prompt-box pre{border:none;background:var(--accent-soft)}
+  .copy-btn{
+    position:absolute;top:8px;right:8px;font-size:12px;padding:3px 12px;border-radius:6px;
+    border:1px solid var(--border);background:var(--bg);color:var(--muted);cursor:pointer;
+  }
+  .copy-btn:hover{color:var(--fg);border-color:var(--fg)}
+  .flow{list-style:none;margin:14px 0;padding:0}
+  .flow li{position:relative;padding:6px 0 6px 34px}
+  .flow li::before{
+    content:"↓";position:absolute;left:8px;top:2px;color:var(--muted);font-size:15px;
+  }
+  .flow li:first-child::before{content:"①"} .flow li:nth-child(2)::before{content:"②"}
+  .flow li:nth-child(3)::before{content:"③"} .flow li:nth-child(4)::before{content:"④"}
+  .flow li:nth-child(5)::before{content:"⑤"} .flow li:nth-child(6)::before{content:"⑥"}
+  .arrow-flow{margin:10px 0;padding:12px 16px;background:var(--code-bg);border-radius:8px;
+              font-size:14px;line-height:2}
+  .arrow-flow .step{display:block}
+  .arrow-flow .down{color:var(--muted);display:block;text-align:center;line-height:1.4}
+  ol.plain{padding-left:24px} ol.plain li{margin:7px 0}
+  ul.tight{padding-left:22px;margin:8px 0} ul.tight li{margin:5px 0}
+  .note{padding:10px 14px;border-left:3px solid var(--warn);background:var(--code-bg);
+        border-radius:0 8px 8px 0;margin:12px 0;font-size:14px}
+  footer{margin-top:56px;padding-top:16px;border-top:1px solid var(--border);
+         color:var(--muted);font-size:13px}
+  a{color:var(--accent)}
+  .path{font-size:12.5px}
+  @media print{
+    body{padding:0;font-size:12px} .copy-btn{display:none}
+    h2{page-break-after:avoid} pre,table{page-break-inside:avoid}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <h1>ChatGPT 桌面端「输入框 AI 建议」逆向报告</h1>
+  <div class="meta">
+    <span>初版 <b>2026-10-29</b></span>
+    <span>复核 <b>2026-11-09</b>（见 §8）</span>
+    <span>官方功能名 <b>Composer Predictions</b></span>
+    <span>内部代号 <b>Cumberbatch</b></span>
+    <span>初版客户端 <b>OpenAI.Codex 26.1023.6621.0 (MSIX)</b></span>
+    <span>复核客户端 <b>26.1103.4239.0 + Runtime 26.1104.2876.0</b></span>
+    <span>app-server daemon <b>0.162.1 → 0.166.0 (CLI)</b></span>
+    <span>提示词版本 <b>v5</b></span>
+  </div>
+</header>
+
+<h2>1. 功能定义</h2>
+<table>
+  <tr><th>项</th><th>内容</th></tr>
+  <tr><td>交互</td><td>会话每轮回复完成后，输入框自动出现一条建议；<b>Tab = 接受为可编辑草稿</b>，绝不自动发送</td></tr>
+  <tr><td>范围</td><td>beta；个人 ChatGPT Pro；Codex 桌面应用；GPT-6 Astra / GPT-6.1 Sol / GPT-6.1 Terra 线程</td></tr>
+  <tr><td>开关</td><td>Settings → General → Composer → Show predictions（默认开）</td></tr>
+  <tr><td>成本</td><td>生成不计用量；发送（含接受的建议）正常计费</td></tr>
+  <tr><td>上下文</td><td>仅当前线程对话；不查 memory、不拉外部数据</td></tr>
+</table>
+
+<h2>2. 调查路径</h2>
+<div class="arrow-flow">
+  <span class="step">官方文档 → 定名 <b>Composer Predictions</b>，确认交互边界（Tab 只填入不发送）</span>
+  <span class="down">↓</span>
+  <span class="step">openai/codex 开源仓库 → 协议与执行机构全部可见（Rust）</span>
+  <span class="down">↓</span>
+  <span class="step">确认 CLI 无此功能（TUI 不发起、忽略通知；app-server 返回 method_not_found）</span>
+  <span class="down">↓</span>
+  <span class="step">本机进程侦察 → 桌面端为 Electron(MSIX)，app-server 走本地 unix/ws，抓包价值低</span>
+  <span class="down">↓</span>
+  <span class="step">解包 <code>resources/app.asar</code>（660MB）→ 主进程逻辑，代号 <b>Cumberbatch</b></span>
+  <span class="down">↓</span>
+  <span class="step">关键发现：prompt 不在客户端，由服务端配置接口下发</span>
+  <span class="down">↓</span>
+  <span class="step">GET <code>/wham/predictions/config</code>（用 ~/.codex/auth.json 凭证）→ <b>拿到提示词本体</b></span>
+</div>
+
+<h2>3. 完整执行链</h2>
+<h3>触发</h3>
+<ul class="tight">
+  <li><b>live</b>：turn 完成、用户在线 → 采样率 <b>1.0</b>（必预测）</li>
+  <li><b>catch_up</b>：切回旧会话 → 采样率 <b>0.5</b></li>
+</ul>
+
+<ol class="flow">
+  <li><b>拉配置</b>　GET <code>chatgpt.com/backend-api/wham/predictions/config</code>（认证请求，react-query 缓存 5 分钟）</li>
+  <li><b>资格校验</b>（任一命中即放弃，回报 ineligible）：collaborationMode == plan ／ 线程模型 ∈ unsupported_models ／ modelProvider ≠ openai</li>
+  <li><b>采样</b>　Math.random() ≥ rate → 静默放弃</li>
+  <li><b>生成</b>　<code>thread/sample { threadId, expectedTurnId, prompt, effort, turnTrigger:"composer_predictions", disableMcp, … }</code>，<br><small>注：这是桌面端 runtime 的调用签名；本地 <code>codex-cli 0.167.0</code> 的 <code>ThreadSampleParams</code> 只有 9 个字段，字段名串里<b>没有</b> <code>effort</code> 与 <code>serviceTier</code>，推理档只能由父线程继承。</small>
+    app-server 执行机构：
+    <ul class="tight">
+      <li>对当前会话做<b>临时分叉</b>（ephemeral、exclude_turns、不落盘、父会话零污染）</li>
+      <li>继承完整上下文（含压缩历史）+ 工具/权限/MCP 定义，<b>执行全部阻断</b></li>
+      <li><b>30 秒硬超时</b>（<code>SAMPLE_TIMEOUT</code>），prompt ≤ <b>4000 字节</b>，输出 ≤ 64 KiB</li>
+      <li><code>effort</code> 取服务端下发的 <code>prediction_reasoning_effort</code>；为空则<b>回退父线程 reasoningEffort</b>（初版记为固定 high，2026-11-09 复核更正，见 §8）</li>
+      <li><code>serviceTier</code> <b>透传父线程值</b>，非固定 priority（初版记为 priority，同上方更正）</li>
+      <li>护栏：源会话必须 idle 且为 persistent root thread；<code>expectedTurnId</code> 必须是最新结束的 turn；分叉必须 ephemeral；结束后复核 <code>history_version</code> 防陈旧</li>
+    </ul>
+  </li>
+  <li><b>解析</b>　响应 text → JSON.parse → 取 <code>.suggestion</code>（zod 校验，null 允许）；工具调用/审批请求一律判 null</li>
+  <li><b>安全过滤</b>　statsig 动态配置 <code>codex-app-cumberbatch-mod-policy</code> + 该源轮次 moderation 元数据 → 命中即丢弃</li>
+  <li><b>展示</b>　输入框幽灵文本；Tab → 可编辑草稿；用户可改可弃；<b>绝不自动发送或自动继续任务</b></li>
+  <li><b>遥测</b>　<code>codex_prediction_submitted { prompt_version, edited, outcome, model, effort, … }</code>（新版改走 <code>/unified_user_signals</code>，字段见 §8）</li>
+</ol>
+<div class="note">初版把当次实拉值（effort=high、service_tier=priority、live=1、catch_up=0.5）写成了固定值。复核确认这些均为<b>服务端下发、可变</b>：客户端读 <code>live_sample_rate</code> / <code>catch_up_sample_rate</code>（缺省 1），effort 为空回退父线程档位，serviceTier 透传父线程。采样率与模型名单仍由 <code>/wham/predictions/config</code> 控制。</div>
+
+<h2>4. 提示词本体（prompt_version = 5，2026-10-29 实拉）</h2>
+<div class="prompt-box">
+  <button class="copy-btn" type="button" onclick="copyPrompt(this)">复制</button>
+<pre id="prompt-text"><code>This is an app-generated request for a suggested next user message. The user did not write this message.
+
+Your suggestion will appear in the user's empty message composer. They can accept it, edit it, or ignore it; it will not be sent automatically.
+
+Predict the single message this user is most likely to type next from the visible conversation. Use the whole conversation to understand their current intent and the latest exchange. Choose the action and specific object that best continue that intent, rather than a generally useful follow-up. Express its core naturally in the user's voice, keeping the requirements needed to retain its meaning. Choose the strongest grounded move even if several continuations are possible; uncertainty about exact wording or incidental details is not a reason to return null. Use null only when the conversation offers no grounded next move at all.
+
+Set suggestion to exactly one natural user message, one line, at most 240 characters, or null. No alternatives or explanation.</code></pre>
+</div>
+
+<p>客户端发送前拼接的固定 JSON 后缀（<code>src-D0VLwrLy.js</code> 的 <code>s</code> 函数）：</p>
+<pre><code>&lt;prompt&gt;\n\nReturn only JSON matching this schema: {"type":"object","properties":{"suggestion":{"type":"string","nullable":true}},…}</code></pre>
+
+<h3>同请求返回的运行参数（2026-10-29 实拉值，服务端可变）</h3>
+<table>
+  <tr><th>参数</th><th>初版实拉值</th><th>2026-11-09 复核</th></tr>
+  <tr><td><code>prediction_reasoning_effort</code></td><td><b>"high"</b>（高推理档）</td><td>下发值，为空回退父线程 <code>reasoningEffort</code>；仅当模型支持 effort 更新且 provider 为 openai 时生效</td></tr>
+  <tr><td><code>live_sample_rate</code></td><td>1</td><td>下发值，缺省 1</td></tr>
+  <tr><td><code>catch_up_sample_rate</code></td><td>0.5</td><td>下发值，缺省 1</td></tr>
+  <tr><td><code>is_enabled</code></td><td>—（初版未记录）</td><td><b>必填 boolean 服务端总开关</b>，false 直接放弃</td></tr>
+  <tr><td><code>unsupported_models</code></td><td>gpt-6-sol、gpt-6-luna、gpt-5.6-sol/terra/luna、gpt-5.5、gpt-daybreak-blue-latest、gpt-daybreak-red-latest</td><td>仍为服务端下发黑名单；官方帮助中心另有白名单口径（见 §8）</td></tr>
+</table>
+
+<h2>5. 关键结论</h2>
+<ol class="plain">
+  <li><b>生成模型 = 当前线程同款模型</b>（分叉继承），高推理档、priority 服务档——不是小自动补全模型，这是建议质量高的第一原因。</li>
+  <li><b>提示词服务端下发、版本化（v5）</b>，配套接受/编辑率遥测——质量靠 A/B 迭代闭环，不是一次写好。</li>
+  <li><b>输出契约严格</b>：JSON <code>{suggestion: string|null}</code>，一条、一行、≤240 字符、禁止解释。</li>
+  <li><b>提示词五项设计</b>（对应五种失败模式）：反幻觉前言（app 生成请求）→ UX 语义（草稿、不自动发送）→ 反泛化（点名具体对象，禁止"继续"类废话）→ 用户口吻 → 空值校准（措辞不确定 ≠ null，无 grounded 下一步才 null）。</li>
+  <li><b>安全与防滥用三层</b>：资格校验（plan 模式/排除模型）、生成侧无副作用（工具禁执行 + 临时分叉）、输出侧 moderation 过滤。</li>
+  <li><b>CLI 无 UI，但引擎在</b>：协议与 TUI 占位已铺好，<code>thread/prediction/request</code> 在开源 app-server 仍是 stub；执行机构 <code>thread/sample</code> 已编译进二进制且可调用（<b>2026-11-09 实测</b>），只是没导出到公开 JSON schema，客户端需在 <code>initialize</code> 声明 <code>capabilities.experimentalApi: true</code>。</li>
+  <li><b>本机复现方式</b>：用 <code>~/.codex/auth.json</code> 的 access_token + <code>ChatGPT-Account-ID</code> 请求头 GET 配置端点，一次成功（token 不落日志）。</li>
+</ol>
+
+<h2>6. 证据索引</h2>
+<table>
+  <tr><th>结论</th><th>证据位置</th></tr>
+  <tr><td>协议三件套</td><td class="path"><a href="file:///F:/AiProject/AgentWatcher/.tmp/codex-src/codex-rs/app-server-protocol/src/protocol/v2/thread_prediction.rs">.tmp/codex-src/…/protocol/v2/thread_prediction.rs</a></td></tr>
+  <tr><td>发动机实现（超时/上限/idle 校验）</td><td class="path"><a href="file:///F:/AiProject/AgentWatcher/.tmp/codex-src/codex-rs/app-server/src/thread_sample.rs">.tmp/codex-src/…/app-server/src/thread_sample.rs</a></td></tr>
+  <tr><td>分叉护栏（必须 ephemeral、禁改配置）</td><td class="path"><a href="file:///F:/AiProject/AgentWatcher/.tmp/codex-src/codex-rs/app-server/src/request_processors/thread_processor.rs">.tmp/codex-src/…/request_processors/thread_processor.rs</a> :5256</td></tr>
+  <tr><td>CLI 不接入（忽略分组）</td><td class="path"><a href="file:///F:/AiProject/AgentWatcher/.tmp/codex-src/codex-rs/tui/src/chatwidget/protocol.rs">.tmp/codex-src/…/tui/src/chatwidget/protocol.rs</a> :384</td></tr>
+  <tr><td>客户端主逻辑/调用链（hVe / runPrediction / bVe）</td><td class="path"><a href="file:///F:/AiProject/AgentWatcher/.tmp/chatgpt-asar/.vite/build/main-CP9z2iYn.js">.tmp/chatgpt-asar/.vite/build/main-CP9z2iYn.js</a></td></tr>
+  <tr><td>JSON 后缀与配置 schema</td><td class="path"><a href="file:///F:/AiProject/AgentWatcher/.tmp/chatgpt-asar/.vite/build/src-D0VLwrLy.js">.tmp/chatgpt-asar/.vite/build/src-D0VLwrLy.js</a>（文件头）</td></tr>
+  <tr><td>提示词本体</td><td><code>/wham/predictions/config</code> 实拉（本报告 §4）</td></tr>
+  <tr><td>官方口径</td><td><a href="https://learn.chatgpt.com/docs/features/composer-predictions">learn.chatgpt.com/docs/features/composer-predictions</a>、<a href="https://help.openai.com/en/articles/20001601-composer-predictions-in-codex">help.openai.com/…/composer-predictions-in-codex</a></td></tr>
+  <tr><td>§8 新版主逻辑</td><td class="path"><code>OpenAI.Codex_26.1103.4239.0\app\resources\app.asar</code> → <code>.vite/build/early-bootstrap-199-e3316cddb4ea6a6b.js</code></td></tr>
+  <tr><td>§8 新版遥测</td><td class="path"><code>app.asar</code> → <code>webview/assets/async/39017.8e35999c14.js</code></td></tr>
+  <tr><td>§8 引擎硬护栏</td><td class="path"><a href="file:///F:/AiProject/AgentWatcher/.tmp/codex-src/codex-rs/app-server/src/thread_sample.rs">.tmp/codex-src/…/app-server/src/thread_sample.rs</a> :55、:118、:185、:192、:278、:330</td></tr>
+  <tr><td>§8 协议参数</td><td class="path"><a href="file:///F:/AiProject/AgentWatcher/.tmp/codex-src/codex-rs/app-server-protocol/src/protocol/v2/thread_sample.rs">.tmp/codex-src/…/protocol/v2/thread_sample.rs</a> :15</td></tr>
+</table>
+
+<h2>7. 可复用产出（对 AgentWatcher）</h2>
+<ul class="tight">
+  <li><b>提示词模板</b>：§4 可直接改造（把 composer 描述换成卡片建议位），五项设计与输出契约原样保留。</li>
+  <li><b>生成引擎</b>：Codex 会话可走 <code>thread/sample</code>（官方发动机，上下文继承 + 护栏免自研）；其他 provider 用任意 API 模型 + 上述提示词。<b>2026-11-09 落地</b>：已打通 app-server 里未导出的 <code>thread/sample</code>（<code>initialize</code> 必须带 <code>capabilities.experimentalApi: true</code>），路径为 <code>thread/read → thread/fork → thread/sample → thread/archive</code>；<code>thread/resume</code> 因桌面端独占 <code>thread-writer-locks</code> 不可用，<code>thread/prediction/request</code> 仍是 stub。实测：短会话 5.0 秒 / 3.4 万 token / 99.5% 缓存命中，622KB 会话 12.5 秒，4.3MB 会话 27 秒（历史全量 prefill 不命中缓存）。因此按 1MB 体积门控，超过回落 <code>codex exec</code>（只带尾部 4 轮，固定约 3.4 万 token）。<b>同日第二轮</b>：采样改为复用「建议专用常驻 app-server」（<code>service_tier=priority</code> + <code>mcp_servers={}</code>，与扫描/handoff 的 server 分开，避免 priority 波及普通 turn 计费）；<b>推理档无法按请求指定</b>——<code>ThreadSampleParams</code> 的 9 个字段里没有 <code>serviceTier</code>/<code>effort</code>，且该服务的 serde <b>不拒绝未知字段</b>（实测塞 <code>zzzProbeField</code> 也照常返回结果），所以「传了不报错」不能当作字段存在的证据，只能以二进制里的字段名串为准。实测 priority 的 sample 阶段均值 7.0s、default 8.4s（各 6 样本，方向一致但差异在噪声内），fork 阶段 0.2–6.7s 波动最大。</li>
+  <li><b>迭代机制</b>：prompt 下发 + 版本号 + 采样率 + 接受/编辑遥测，是质量闭环的关键，值得照搬。</li>
+  <li><b>边界</b>：Tab 不自动发送是刻意设计（防 AI 自答循环）；自动化发送若做，仅限 AskUserQuestion 选项作答场景。最新版官方口径进一步明确「don't automatically accept or send follow-up messages」，偏离须显式记录。</li>
+</ul>
+
+<div class="note">
+  附注：本机另发现 <code>~/.codex/ambient-suggestions/</code> 为<b>另一功能</b>（项目级主动任务建议，gpt-6-luna 小模型生成、JSON 落盘），与输入框预测无关，但同为"服务端下发 prompt + 本地生成"模式。
+</div>
+
+<h2>8. 2026-11-09 复核：最新版客户端与官方口径</h2>
+
+<h3>8.1 版本基线</h3>
+<table>
+  <tr><th>项</th><th>初版（2026-10-29）</th><th>复核（2026-11-09）</th></tr>
+  <tr><td>MSIX 主包</td><td>OpenAI.Codex 26.1023.6621.0</td><td><b>OpenAI.Codex 26.1103.4239.0</b></td></tr>
+  <tr><td>Runtime 包</td><td>—（初版未单列）</td><td><b>CodexPrimaryRuntime 26.1104.2876.0</b>（另有 26.1104.709.0 并存）</td></tr>
+  <tr><td>app.asar</td><td>660 MB</td><td><b>761 MB</b></td></tr>
+  <tr><td>CLI / daemon</td><td>daemon 0.162.1</td><td><code>codex-cli 0.166.0</code></td></tr>
+  <tr><td>提示词版本</td><td>v5</td><td>v5（客户端 schema 仍含 <code>prompt_version</code>，未见版本升位）</td></tr>
+</table>
+
+<h3>8.2 复核方法</h3>
+<p>直接读取 <code>C:\Program Files\WindowsApps\OpenAI.Codex_26.1103.4239.0_x64__2p2nqsd0c76g0\app\resources\app.asar</code>：自写 Node 脚本解析 asar 头部 Pickle 索引（10 669 个文件），全量扫描 761 MB 定位关键词，再按 offset 抽出主 bundle <code>.vite/build/early-bootstrap-199-e3316cddb4ea6a6b.js</code>（6.0 MB）与遥测 chunk <code>webview/assets/async/39017.8e35999c14.js</code>（160 KB）。<b>未发起任何网络请求，未使用 auth.json 凭证。</b></p>
+
+<h3>8.3 结论：核心 8 步链路未变</h3>
+<div class="arrow-flow">
+  <span class="step">GET <code>/wham/predictions/config</code>（react-query <code>staleTime:3e5</code> = 5 分钟）→ <code>is_enabled</code> / 采样率 / 黑名单 / prompt / 版本 / effort</span>
+  <span class="down">↓</span>
+  <span class="step">资格校验：<code>plan</code> 模式 → <code>plan_mode</code>；<code>"openai" !== modelProvider</code> → <code>unsupported_provider</code>；模型命中黑名单 → <code>unsupported_model</code>。命中即回调 <code>onPredictionIneligible</code> 并放弃</span>
+  <span class="down">↓</span>
+  <span class="step">采样：<code>("live"===trigger ? live_sample_rate : catch_up_sample_rate) ?? 1</code>，<code>rate &lt; 1 &amp;&amp; Math.random() &gt;= rate</code> 静默放弃</span>
+  <span class="down">↓</span>
+  <span class="step"><code>sampleThread({ threadId, expectedTurnId, prompt, effort, threadSource:"composer_predictions", turnTrigger:"composer_predictions", responsesapiClientMetadata, disableMcp:true, interruptOnCancel })</code></span>
+  <span class="down">↓</span>
+  <span class="step">解析 <code>iwW.parse(JSON.parse(w.text)).suggestion || null</code> → statsig <code>codex-app-cumberbatch-mod-policy</code> + 源轮次 moderation → 幽灵文本 → 遥测</span>
+</div>
+
+<h3>8.4 相对初版的新增点</h3>
+<table>
+  <tr><th>新增项</th><th>实测内容</th></tr>
+  <tr><td><code>is_enabled</code></td><td>config schema 的必填 boolean 总开关；<code>null==o || !o.is_enabled</code> 直接 return null。初版只记录了用户侧 <em>Show predictions</em> 开关</td></tr>
+  <tr><td>app-server 版本门控</td><td><code>rt(appServerVersion,"threadSample")</code> 能力检测，不满足直接放弃；另有 <code>threadSampleInterruptOnCancel:"0.167.0-alpha.1"</code> 特性门控</td></tr>
+  <tr><td><code>interruptOnCancel</code></td><td>按版本门控可选传入；控制取消时是否中断上游</td></tr>
+  <tr><td><code>responsesapiClientMetadata</code></td><td><code>prediction_source_thread_id</code> / <code>prediction_source_turn_id</code> / <code>prediction_trigger</code>，用于服务端归属与计费判定</td></tr>
+  <tr><td><code>threadSource</code></td><td>与 <code>turnTrigger</code> 同时置为 <code>composer_predictions</code>（初版只记 turnTrigger）</td></tr>
+  <tr><td><code>disableMcp</code></td><td>恒为 true；引擎侧仅在 <code>use_responses_lite</code> 且历史含 <code>AdditionalTools</code> 时真正插 <code>McpServersDisabled</code></td></tr>
+  <tr><td>effort / serviceTier</td><td>不再是固定 high/priority：<code>effort = configured ?? parent.reasoningEffort</code>，<code>serviceTier = parent.serviceTier</code></td></tr>
+  <tr><td>遥测通道</td><td>改走 <code>/unified_user_signals</code> 的 <code>signal_type:"codex_prediction_submitted"</code>；新增 <code>prediction_thread_id</code>、<code>prediction_turn_id</code>、<code>prediction_response_id</code>、<code>submitted_turn_id</code>、<code>generation_trigger</code>、<code>parent_reasoning_effort</code>、<code>host_kind</code>、<code>total_duration_ms</code>、<code>memory_enabled</code>、<code>outcome</code>、<code>edited</code></td></tr>
+</table>
+
+<h3>8.5 引擎侧硬护栏（<code>app-server/src/thread_sample.rs</code> 源码复核）</h3>
+<ul class="tight">
+  <li><code>SAMPLE_TIMEOUT = 30s</code>、<code>MAX_PROMPT_BYTES = 4000</code>、<code>MAX_OUTPUT_BYTES = 64 KiB</code></li>
+  <li>源会话 <code>agent_status == Running</code> → 拒绝；<code>snapshot.ephemeral</code> 或非 root agent → 拒绝（必须是 persistent root thread）</li>
+  <li><code>expectedTurnId</code> 必须是 <code>load_latest_model_context</code> / <code>list_turns</code> 查到的<b>最新一个已完成/失败/中断</b> turn，否则 <code>sample source turn must be the latest finished turn</code></li>
+  <li>分叉强制 <code>config.ephemeral = true</code>、插 <code>AutoCompactionDisabled</code>、<code>session_source:"thread_sample"</code>、<code>thread_source:Feature("thread_sample")</code></li>
+  <li>采样循环遇 <code>ExecApprovalRequest</code> / <code>ApplyPatchApprovalRequest</code> / <code>RequestPermissions</code> / <code>RequestUserInput</code> / <code>DynamicToolCallRequest</code> / <code>ElicitationRequest</code> 一律报错终止；<code>collect_response</code> 见任何非 assistant 文本或工具调用即 <code>text = null</code></li>
+  <li>收尾复核 <code>parent.conversation_history_snapshot().history_version() != revision</code> → <code>sample source changed</code> 拒绝；随后 shutdown、移除分叉线程、清理 capture 注册</li>
+</ul>
+
+<h3>8.6 官方帮助中心口径（2026-11-09 查）</h3>
+<ul class="tight">
+  <li>支持模型由 2026-10-09 公告的 GPT-6 Astra / GPT-6.1 Sol，扩到 <b>+ GPT-6.1 Terra</b>；本地与 SSH 线程；Work 的本地线程也可能出现</li>
+  <li>「A prediction won't appear after every response」「The composer may choose to skip a prediction」——<b>不保证每轮都有</b>；数秒延迟、长会话更久，用户无需等待可继续输入</li>
+  <li>「Predictions don't automatically accept or send follow-up messages」——<b>绝不自动接受或发送</b>；Tab 只把文本放进输入框成为可编辑草稿</li>
+  <li>只用当前 thread 内已有上下文，不主动查 memory、不拉 connected apps；memory 关闭时同样可用</li>
+  <li>beta 期生成预测<b>不计用量、不消耗 credits</b>；发送（含被采纳的预测）按正常计费</li>
+</ul>
+
+<h3>8.7 对 AgentWatcher 的影响</h3>
+<div class="note">
+  初版 §3 写「live：turn 完成、用户在线」；AgentWatcher 现有 <code>suggestion_should_trigger</code> 却只在<b>新进入 waiting</b> 时触发，而 Codex 的 <code>waiting</code> 来自 <code>waitingOnApproval</code> / <code>waitingOnUserInput</code>（等审批），与「回复完成、等用户下一句」不是同一事件。这是语义错位：即使修好解析、cwd、ID 三处实现断点，绝大多数正常结束的 idle 会话仍不会自动生成建议。另需注意官方「Tab 不自动发送」是刻意设计，AgentWatcher 的 ZCode 自动作答属有意偏离，须在设计里明确标注。
+</div>
+
+<footer>
+  初版 2026-10-29，复核 2026-11-09 · 调查工具：git sparse-clone、@electron/asar、Get-CimInstance/netstat、node fetch（凭证取自本机 ~/.codex/auth.json，未落日志）；复核阶段仅做本地 asar 只读解析与公开文档检索 · 本文件位于 AgentWatcher 仓库未跟踪的 docs/ 目录，不随代码提交。
+</footer>
+
+</div>
+<script>
+function copyPrompt(btn){
+  var text=document.getElementById('prompt-text').innerText;
+  function done(){btn.textContent='已复制';setTimeout(function(){btn.textContent='复制'},1600);}
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(function(){fallback()});
+  }else{fallback();}
+  function fallback(){
+    var ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);
+    ta.select();try{document.execCommand('copy');done();}catch(e){}
+    document.body.removeChild(ta);
+  }
+}
+</script>
+</body>
+</html>
