@@ -17365,7 +17365,11 @@ fn run_codex_exec_with_auth_watch(
     let saw_unauthorized = || {
         collected
             .lock()
-            .map(|buffer| buffer.contains("401") || buffer.to_lowercase().contains("unauthorized"))
+            // 特征串取 "401 Unauthorized"：裸 "401" 会误杀画「HTTP 401 错误页」这类
+            // 提示词的正常生图（模型回复里就会出现 401 字样）。评审 R1。
+            .map(|buffer| {
+                buffer.contains("401 Unauthorized") || buffer.to_lowercase().contains("401 unauthorized")
+            })
             .unwrap_or(false)
     };
     let deadline = Instant::now() + std::time::Duration::from_secs(timeout_secs);
@@ -17416,7 +17420,10 @@ pub fn generate_image_via_codex(
     let started = Instant::now();
     let timeout = timeout_secs.unwrap_or(IMAGEGEN_DEFAULT_TIMEOUT_SECS);
     let classify_spawn_error = |error: String| {
-        if error == "__CODEX_AUTH_FAILED__" || error.contains("401") || error.to_lowercase().contains("unauthorized") {
+        if error == "__CODEX_AUTH_FAILED__"
+            || error.contains("401 Unauthorized")
+            || error.to_lowercase().contains("401 unauthorized")
+        {
             CodexImagegenError::AuthFailed
         } else if error.contains("生图超时") {
             CodexImagegenError::Timeout { secs: timeout }
@@ -17443,7 +17450,7 @@ pub fn generate_image_via_codex(
         &prompt,
     )
     .map_err(classify_spawn_error)?;
-    if stdout.contains("401") || stdout.to_lowercase().contains("unauthorized") {
+    if stdout.contains("401 Unauthorized") || stdout.to_lowercase().contains("401 unauthorized") {
         return Err(CodexImagegenError::AuthFailed);
     }
     let thread_id = parse_codex_thread_id(&stdout).ok_or_else(|| CodexImagegenError::GenerationFailed {
