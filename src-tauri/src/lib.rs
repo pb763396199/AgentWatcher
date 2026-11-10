@@ -17188,6 +17188,17 @@ pub struct CodexImagegenOutcome {
     pub prompt_source: &'static str,
     pub thread_id: String,
     pub elapsed_ms: u64,
+    /// 本次 exec 的编排模型 token 用量（turn.completed 事件；事件流缺失时为 None）。
+    /// 生图本身按张计费（ChatGPT 账号的生图额度），不走 token。
+    pub token_usage: Option<CodexExecTokenUsage>,
+}
+
+/// codex exec 的 turn.completed usage 字段（2026-11-10 实测形态）。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct CodexExecTokenUsage {
+    pub input_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub output_tokens: u64,
 }
 
 #[derive(Debug)]
@@ -17263,6 +17274,27 @@ fn parse_codex_thread_id(stdout: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// 从事件流提取最后一次 turn.completed 的 usage（token 用量）。取最后一次是因为
+/// 重试/续轮时会有多条，末值代表累计口径的最终快照。
+fn parse_codex_token_usage(stdout: &str) -> Option<CodexExecTokenUsage> {
+    let mut usage = None;
+    for line in stdout.lines() {
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) != Some("turn.completed") {
+            continue;
+        }
+        let Some(node) = value.get("usage") else { continue };
+        usage = Some(CodexExecTokenUsage {
+            input_tokens: node.get("input_tokens").and_then(Value::as_u64).unwrap_or(0),
+            cached_input_tokens: node.get("cached_input_tokens").and_then(Value::as_u64).unwrap_or(0),
+            output_tokens: node.get("output_tokens").and_then(Value::as_u64).unwrap_or(0),
+        });
+    }
+    usage
 }
 
 /// 产物目录里 mtime 最新的 png（产物名形态 exec-<uuid>.png，放宽为 *.png 兜底）。
@@ -17456,6 +17488,7 @@ pub fn generate_image_via_codex(
     let thread_id = parse_codex_thread_id(&stdout).ok_or_else(|| CodexImagegenError::GenerationFailed {
         detail: "事件流缺少 thread.started".to_string(),
     })?;
+    let token_usage = parse_codex_token_usage(&stdout);
     let images_dir = codex_home_dir().join("generated_images").join(&thread_id);
     let source_path = pick_latest_image(&images_dir).ok_or_else(|| CodexImagegenError::GenerationFailed {
         detail: format!("产物目录没有图片：{}", images_dir.display()),
@@ -17482,6 +17515,7 @@ pub fn generate_image_via_codex(
         prompt_source: source.label(),
         thread_id,
         elapsed_ms: started.elapsed().as_millis() as u64,
+        token_usage,
     })
 }
 
@@ -24140,6 +24174,21 @@ mod tests {
         assert_eq!(parse_codex_thread_id(""), None);
         assert_eq!(parse_codex_thread_id("{\"type\":\"turn.started\"}"), None);
         assert_eq!(parse_codex_thread_id("not json at all"), None);
+    }
+
+    #[test]
+    fn imagegen_parse_codex_token_usage_takes_last_turn_completed() {
+        let stream = concat!(
+            "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":10,\"cached_input_tokens\":0,\"output_tokens\":5}}\n",
+            "noise line\n",
+            "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":34317,\"cached_input_tokens\":1200,\"output_tokens\":48}}\n",
+        );
+        assert_eq!(
+            parse_codex_token_usage(stream),
+            Some(CodexExecTokenUsage { input_tokens: 34317, cached_input_tokens: 1200, output_tokens: 48 })
+        );
+        assert_eq!(parse_codex_token_usage(""), None);
+        assert_eq!(parse_codex_token_usage("{\"type\":\"turn.started\"}"), None);
     }
 
     #[test]

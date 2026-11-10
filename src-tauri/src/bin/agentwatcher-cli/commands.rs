@@ -484,6 +484,14 @@ pub fn imagegen_generate(prompt: &str, out: Option<&str>, timeout_secs: Option<u
                 "promptSource": outcome.prompt_source,
                 "threadId": outcome.thread_id,
                 "elapsedMs": outcome.elapsed_ms,
+                "tokenUsage": match outcome.token_usage {
+                    Some(usage) => serde_json::json!({
+                        "inputTokens": usage.input_tokens,
+                        "cachedInputTokens": usage.cached_input_tokens,
+                        "outputTokens": usage.output_tokens,
+                    }),
+                    None => serde_json::Value::Null,
+                },
                 "prompt": trimmed,
             });
             let human = format!(
