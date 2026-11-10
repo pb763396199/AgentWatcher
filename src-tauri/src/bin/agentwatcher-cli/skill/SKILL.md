@@ -25,7 +25,7 @@ version: 2
 | `agentwatcher-cli session usage <id>` | 用量明细：token、轮次、工具调用、成本、topTools |
 | `agentwatcher-cli handoff export <id>` | 导出接续上下文 Markdown |
 | `agentwatcher-cli suggest prompt <id>` | 只组装上下文与提示词，不调模型、不写盘，用来核对建议依据 |
-| `agentwatcher-cli suggest generate <id> [--avoid <上一条>] [--model <模型名>] [--effort <档>] [--timeout <秒>] [--engine auto\|sample\|exec]` | 真实调模型生成一条建议，会产生 token 用量 |
+| `agentwatcher-cli suggest generate <id> [--avoid <上一条>] [--model <模型名>] [--effort <档>] [--timeout <秒>] [--engine auto\|sample\|exec] [--via session\|codex] [--session-path <路径>]` | 真实调模型生成一条建议，会产生 token 用量 |
 | `agentwatcher-cli skill list [--dir <路径>]` | 看各宿主技能目录的安装状态 |
 | `agentwatcher-cli skill install [--dir <路径>]` | 把这份技能装进宿主目录，重复执行即覆盖升级 |
 
@@ -47,14 +47,17 @@ version: 2
 2. 再 `suggest generate <id>`。它会按会话所属 agent 选生成通道：Codex 会话优先走 app-server 的 `thread/sample`（直接继承真实会话历史，小会话更快），会话文件超过 1MB 或采样不可用时自动回落 `codex exec`；ZCode 走无头 `zcode.cjs`；WorkBuddy 复用 `codex exec` 但上下文取自它的转录。一次大约 5 到 15 秒。要指定模型或推理档就加 `--model gpt-6.1-sol --effort high`；不加则沿用本机 Codex 配置（当前是 `gpt-6.1-sol` / `medium`）。`high` 档本地实测约 30 秒以上，超过默认 45 秒上限时用 `--timeout 180` 放宽。
    - `--engine sample` 强制走采样、忽略体积门控；长会话会把整段历史送进模型，30 万 token 的会话要 25 秒以上，一般不要用。**采样的模型与档位继承会话本身，`--model` / `--effort` 对它无效**；要指定档位请用 `--engine exec`。
    - `--engine exec` 强制走单轮 `codex exec`（只带最近 4 轮上下文），长会话或不希望产生 fork 副本时用。
+   - `--via codex` 是**跨引擎**：让 Codex 给非 Codex 会话出建议，用于 copilot / copilot-cli / claude 这类自身没接生成引擎的会话，也可让 ZCode / WorkBuddy 临时换脑。它会读该会话转写的尾部几轮拼成 prompt，再走 `codex exec`（永远不走 `thread/sample`，因为源会话不是 Codex thread）。建议仍标记为原会话的 provider，但 `engineLabel` 是 `codex/cross`。转写读不到就明确失败——opencode 的会话在 sqlite 里，暂不支持。
+   - `--session-path <路径>`：跨引擎时手动指定转写文件。后端会按会话 id 里的 uuid 自行找（`~/.claude/projects/*/<uuid>.jsonl`、`~/.copilot/session-state/<uuid>/events.jsonl`），找不到时再用这个参数兜底；界面会直接把扫描到的 sessionPath 带过来。
    - 采样默认用 `service_tier=priority`（与官方预测同档，更快但费率更高）。想退回默认档就设环境变量 `AGENTWATCHER_SERVICE_TIER=default`。
    - 采样通道会为每次生成 fork 一份只读副本并在结束后归档，不会留在会话列表里；它要求该会话存在且至少有 1 轮对话。
-3. 返回 `data` 形如 `{ "sessionId", "provider", "text", "question", "options", "fingerprint", "createdAtMs" }`。`text` 就是那条建议，最多 120 字。
+3. 返回 `data` 形如 `{ "sessionId", "provider", "text", "question", "options", "fingerprint", "engineLabel", "createdAtMs" }`。`text` 就是那条建议，最多 120 字；`engineLabel` 标出实际生成引擎（`codex/sample` / `codex/exec` / `codex/cross` / `zcode`）。
 4. 建议只生成文本，**不会自动发送**。发不发由用户决定；本命令没有发送能力。
 
 失败码：
 
-- `unsupported_provider`：这个 agent 还没接生成通道，只能用查询命令。
+- `unsupported_provider`：这个 agent 还没接生成通道；改用 `--via codex` 或只能用查询命令。
+- `suggestion_generation_failed`：跨引擎时读不到会话转写（文件不存在、格式不认、没有有效的 user 轮）。加 `--session-path` 指定文件再试。
 - `generation_failed`：会话文件缺失、资格校验未过（plan 模式 / 非 openai provider / 模型在黑名单）、引擎超时或输出无法解析。真实原因在 stderr，stdout 只有信封。
 
 生成前后会各取一次会话指纹做比对：如果生成期间源会话又前进了，这条建议会作废（`generation_failed`），重跑一次即可。
@@ -96,7 +99,7 @@ version: 2
 
 - 只读命令：`session list` / `session show` / `session usage` / `suggest prompt` / `skill list`。
 - 写盘命令：`handoff export` 写系统临时目录的 `AgentWatcher\handoff-sources\`（每次导出生成新文件），对 `.jsonl.zst` 归档取正文时在同目录写解压副本；全历史 `session list`（`--active-days 0` 或 `--include-archived`）写 `AgentWatcher\cli-scan-cache\` 下的跨进程扫描缓存（120 秒有效）；`skill install` / `skill remove` 只动宿主的 `agentwatcher` 技能目录。
-- 计费命令：`suggest generate` 不写盘，但会真实调用外部模型、消耗该 agent 账号的用量。不要在一个循环里反复调用；同一条会话要换一条建议时加 `--avoid <上一条>`，而不是重试。两条通道的 token 口径不同：采样送整段历史，exec 只送尾部 4 轮，长会话用 exec 更省。
+- 计费命令：`suggest generate` 不写盘，但会真实调用外部模型、消耗该 agent 账号的用量。不要在一个循环里反复调用；同一条会话要换一条建议时加 `--avoid <上一条>`，而不是重试。两条通道的 token 口径不同：采样送整段历史，exec 只送尾部 4 轮，长会话用 exec 更省。`--via codex` 走的是 Codex 账号，即使源会话属于别的 agent。
 - 要最新状态就重新执行 `session list`。全历史模式的同参数查询 120 秒内可能读到缓存快照，需要确保重新扫描时加 `--no-cache`；默认 7 天窗口的查询不缓存。
 - 命令不启动任何后台服务，也不依赖 AgentWatcher 桌面程序在运行。
 - 宿主里装的技能副本可能落后于当前程序版本：`skill list` 报 `outdated` 时用 `skill install` 覆盖升级，装完再按新版命令用。

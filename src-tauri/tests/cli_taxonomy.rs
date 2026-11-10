@@ -321,6 +321,52 @@ fn suggest_generate_parses_engine_flag() {
 }
 
 #[test]
+fn suggest_generate_parses_via_and_session_path() {
+    let parsed = parse(&[
+        "suggest",
+        "generate",
+        "claude:01a2b3",
+        "--via",
+        "codex",
+        "--session-path",
+        r"C:\Users\me\.claude\projects\C--\01a2b3.jsonl",
+    ])
+    .expect("--via / --session-path parse");
+    let Commands::Suggest {
+        action:
+            SuggestAction::Generate {
+                id,
+                via,
+                session_path,
+                ..
+            },
+    } = parsed.command
+    else {
+        panic!("expected suggest generate");
+    };
+    assert_eq!(id, "claude:01a2b3");
+    assert_eq!(via.as_deref(), Some("codex"));
+    assert_eq!(
+        session_path.as_deref(),
+        Some(r"C:\Users\me\.claude\projects\C--\01a2b3.jsonl")
+    );
+
+    // 默认跟随会话，不需要显式转写路径。
+    let parsed = parse(&["suggest", "generate", "codex:abc"]).expect("defaults parse");
+    let Commands::Suggest {
+        action:
+            SuggestAction::Generate {
+                via, session_path, ..
+            },
+    } = parsed.command
+    else {
+        panic!("expected suggest generate");
+    };
+    assert!(via.is_none());
+    assert!(session_path.is_none());
+}
+
+#[test]
 fn suggest_prompt_requires_id() {
     assert!(parse(&["suggest", "prompt"]).is_err());
     let parsed = parse(&["suggest", "prompt", "codex:abc"]).expect("prompt parses");

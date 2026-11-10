@@ -65,6 +65,22 @@ Codex 会话的悬浮预览窗显示 AI 建议回复输入框，与 ZCode 建议
 
 thread/sample 通道已于 2026-11-09 落地（见上节），上下文与档位两项已补齐；成本与安全过滤仍依赖服务端，未对齐。
 
+## 界面适配与跨引擎（2026-11-10）
+
+拍板结论：**默认跟随会话，另给「用 Codex 生成」作为显式覆盖**。理由：上下文抽取与发送通道都是按 agent 写的，跨 agent 只能拼尾部转写，会丢掉 `thread/sample` 的完整历史；而建议最终必须发回原会话，发送通道本来就固定。所以「指定引擎」只改「谁在想」，不改归属与去向。
+
+| provider | 跟随会话生成 | 跨引擎（Codex） | 一键发送 |
+|---|---|---|---|
+| codex | ✅ sample / exec | 不需要 | ✅ `send_codex_message` |
+| zcode | ✅ `zcode.cjs` | ✅ | ✅ `send_zcode_message` |
+| workbuddy | ✅ 读转写 + codex exec | ✅ | ❌ 暂无通道，只能复制 |
+| claude / copilot / copilot-cli | ❌ 未接引擎 | ✅ 读尾部 JSONL | ❌ 只能复制 |
+| opencode | ❌ | ❌ 会话在 sqlite，无可读转写 | ❌ |
+
+- 后端：`SuggestionVia{Session,Codex}`、`cross_agent_suggestion_context`（claude 复用 `claude_clean_user_text`/`claude_assistant_text` 滤 isMeta 与注入轮；copilot 取 `user.message`/`assistant.message` 并跳过空 content 的工具轮）、`codex_exec_suggestion` 三路共用、`generate_cross_agent_codex_suggestion`。`regenerate_suggestion` 加 `via` / `sessionPath` 可选参数，失败 emit `agentwatcher-suggestion-failed`。
+- 界面：session card 右键按 provider 显示菜单项；建议区放开所有 provider，头部标 `engineLabel` 并带丢弃按钮；发送按 provider 路由；`createSessionCard` 回填建议修掉刷新丢失；`suggestionViaBySession` 让「换一个」沿用同一引擎。预览窗回复框同步放开。
+- 取舍：跨引擎的质量上限是「尾部 4 轮 × 300 字」，不如 codex 会话的 sample；opencode 明确不提供入口，不做半可用状态。
+
 ## 强约束
 
 - 预览窗 UI 按 provider 路由：ZCode 卡片显示 ZCode 建议，Codex 卡片显示 Codex 建议

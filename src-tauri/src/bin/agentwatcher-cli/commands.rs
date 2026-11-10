@@ -5,7 +5,7 @@ use agentwatcher_lib::{
     generate_suggestion_for_session_with, lookup_session_full_history,
     prepare_handoff_source_context_blocking, scan_sessions_blocking, session_usage_detail,
     suggestion_prompt_preview, AgentSession, HandoffSourceContextRequest, ScanOptions,
-    SuggestionEngine, SuggestionEngineOptions,
+    SuggestionEngine, SuggestionEngineOptions, SuggestionVia,
 };
 
 /// 列表只暴露卡片级元数据；最后输入/输出等预览文本一律不进 list。
@@ -394,8 +394,23 @@ pub fn suggest_generate(
     effort: Option<&str>,
     timeout_secs: Option<u64>,
     engine: Option<&str>,
+    via: Option<&str>,
+    session_path: Option<&str>,
 ) {
-    let is_supported = id.starts_with("codex:")
+    let via = match via {
+        Some(value) => SuggestionVia::parse(value).unwrap_or_else(|| {
+            output::finish_failure(
+                "suggest generate",
+                "invalid_argument",
+                format!("未知引擎归属 {value}，可选 session / codex"),
+            )
+        }),
+        None => SuggestionVia::Session,
+    };
+    // 跨引擎时任意 provider 都可以尝试（上下文从转写里抽），
+    // 读不到就由后端明确返回失败，不在 CLI 层按前缀拦掉。
+    let is_supported = via == SuggestionVia::Codex
+        || id.starts_with("codex:")
         || id.starts_with("codex://")
         || id.starts_with("zcode:")
         || id.starts_with("workbuddy:");
@@ -403,7 +418,9 @@ pub fn suggest_generate(
         output::finish_failure(
             "suggest generate",
             "unsupported_provider",
-            format!("会话 {id} 的 agent 未接线，目前只支持 codex / zcode / workbuddy"),
+            format!(
+                "会话 {id} 的 agent 未接线，目前只支持 codex / zcode / workbuddy；其他 agent 可加 --via codex"
+            ),
         );
     }
     let engine = match engine {
@@ -421,6 +438,8 @@ pub fn suggest_generate(
         effort: effort.map(str::to_string),
         timeout_secs,
         engine,
+        via,
+        transcript_path: session_path.map(str::to_string),
     };
     // sample 继承 fork 出的父线程配置，模型与档位不由 CLI 决定。
     // 显式指定时要说明清楚，否则会误以为改档生效了。

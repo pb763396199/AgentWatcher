@@ -74,6 +74,12 @@ pub enum SuggestAction {
         /// 生成引擎：auto（默认，先试 sample 再回落 exec）/ sample / exec
         #[arg(long = "engine")]
         engine: Option<String>,
+        /// 引擎归属：session（默认，跟随会话所属 agent）/ codex（跨引擎，用 Codex 生成）
+        #[arg(long = "via")]
+        via: Option<String>,
+        /// 源会话转写路径；跨引擎且后端无法按 id 自行定位时手动指定
+        #[arg(long = "session-path")]
+        session_path: Option<String>,
     },
     /// 只组装上下文与提示词，不调用模型、不写盘，用于核对 v5 prompt
     Prompt {

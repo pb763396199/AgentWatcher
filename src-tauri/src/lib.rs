@@ -6335,6 +6335,7 @@ pub fn run() {
             send_codex_message,
             set_zcode_auto_answer,
             regenerate_suggestion,
+            dismiss_suggestion,
             get_session_usage_detail,
             get_session_lifecycle,
             get_performance_snapshot,
@@ -15130,6 +15131,10 @@ pub struct SessionSuggestion {
     pub options: Option<Vec<String>>,
     /// 生成建议时会话最后一条消息的 id，用于防陈旧校验。
     pub fingerprint: String,
+    /// 实际「想出这句话」的引擎，跨引擎生成时与 provider 不同。
+    /// 界面用它标注建议来源，避免用户以为是自己 agent 的模型产出的。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine_label: Option<String>,
     pub created_at_ms: u64,
 }
 
@@ -15385,6 +15390,9 @@ fn auto_answer_audit_line(
 // ---- 扫描挂接与运行时状态 ----
 
 const SUGGESTIONS_EVENT: &str = "agentwatcher-suggestions-updated";
+/// 生成失败也要通知界面：regenerate_suggestion 是 fire-and-forget，
+/// 没有这个事件，跨引擎读不到转写时用户只会觉得「点了没反应」。
+const SUGGESTION_FAILED_EVENT: &str = "agentwatcher-suggestion-failed";
 const SUGGESTION_MAX_TURNS: usize = 4;
 const SUGGESTION_TURN_CHAR_BUDGET: usize = 300;
 /// 提示词版本号：对齐官方「服务端下发 + 版本化」的做法，本地固定版本串，
@@ -15536,6 +15544,12 @@ pub fn generate_suggestion_for_session_with(
     avoid: Option<&str>,
     options: &SuggestionEngineOptions,
 ) -> Option<SessionSuggestion> {
+    let own_provider = session_provider_key(session_id);
+    // 显式指定「用 Codex 生成」且源会话不是 Codex：走跨引擎路径。
+    // Codex 会话指定 Codex 就是默认行为，直接落回原路由，避免多绕一层。
+    if options.via == SuggestionVia::Codex && own_provider != "codex" {
+        return generate_cross_agent_codex_suggestion(session_id, avoid, options);
+    }
     if codex_session_key(session_id).is_some()
         && (session_id.starts_with("codex:") || session_id.starts_with("codex://"))
     {
@@ -15604,14 +15618,55 @@ pub fn suggestion_prompt_preview(session_id: &str) -> Result<SuggestionPreview, 
 }
 
 /// 生成一个会话的建议并广播。扫描触发与「换一个」共用这一条路。
-fn spawn_suggestion_generation(app: tauri::AppHandle, session_id: String, avoid: Option<String>) {
+fn spawn_suggestion_generation(
+    app: tauri::AppHandle,
+    session_id: String,
+    avoid: Option<String>,
+) {
+    // 扫描自动触发：失败是常态（未接线 provider、会话正忙），静默跳过。
+    spawn_suggestion_generation_impl(
+        app,
+        session_id,
+        avoid,
+        SuggestionEngineOptions::default(),
+        false,
+    );
+}
+
+/// 同上，但允许界面指定「用 Codex 生成」以及源会话转写路径。
+fn spawn_suggestion_generation_with(
+    app: tauri::AppHandle,
+    session_id: String,
+    avoid: Option<String>,
+    options: SuggestionEngineOptions,
+) {
+    // 用户右键手动触发：失败必须给反馈，否则「点了没反应」。
+    spawn_suggestion_generation_impl(app, session_id, avoid, options, true);
+}
+
+fn spawn_suggestion_generation_impl(
+    app: tauri::AppHandle,
+    session_id: String,
+    avoid: Option<String>,
+    options: SuggestionEngineOptions,
+    notify_failure: bool,
+) {
     std::thread::spawn(move || {
-        let suggestion = generate_suggestion_for_session(&session_id, avoid.as_deref());
+        let suggestion = generate_suggestion_for_session_with(&session_id, avoid.as_deref(), &options);
         let mut runtime = suggestion_runtime().lock().ok();
         if let Some(runtime) = runtime.as_deref_mut() {
             runtime.in_flight.remove(&session_id);
         }
         let Some(suggestion) = suggestion else {
+            if notify_failure {
+                let _ = app.emit(
+                    SUGGESTION_FAILED_EVENT,
+                    serde_json::json!({
+                        "sessionId": session_id,
+                        "reason": "建议生成失败：会话转写不可读，或该 agent 的引擎未接线",
+                    }),
+                );
+            }
             return;
         };
         if let Some(runtime) = runtime.as_deref_mut() {
@@ -15852,6 +15907,7 @@ fn generate_zcode_suggestion(session_id: &str, avoid: Option<&str>) -> Option<Se
             .filter(|question| !question.options.is_empty())
             .map(|question| question.options),
         fingerprint: context.fingerprint,
+        engine_label: Some("zcode".to_string()),
         created_at_ms: current_time_ms(),
     })
 }
@@ -16087,6 +16143,36 @@ impl SuggestionEngine {
     }
 }
 
+/// 生成引擎的归属。`Session`（默认）= 用会话自己 agent 的模型与通道；
+/// `Codex` = 显式指定由 Codex 引擎生成（走 `codex exec`，上下文从该会话的转写里抽）。
+///
+/// 目前只有 Codex 引擎能脱离自己的会话存储工作：ZCode 依赖它的 sqlite 库、
+/// WorkBuddy 本身就是「读转写 + codex exec」。所以「可指定引擎」实际是
+/// 「跟随会话 / 用 Codex 生成」两档，而不是任意 agent 两两互换。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SuggestionVia {
+    #[default]
+    Session,
+    Codex,
+}
+
+impl SuggestionVia {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "session" | "auto" | "" => Some(Self::Session),
+            "codex" => Some(Self::Codex),
+            _ => None,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Session => "session",
+            Self::Codex => "codex",
+        }
+    }
+}
+
 /// 生成引擎的显式覆盖项。空值 = 沿用本机 Codex 配置。
 /// 对应官方 `prediction_reasoning_effort` 与父线程模型的「下发/回退」语义。
 #[derive(Debug, Clone, Default)]
@@ -16098,6 +16184,292 @@ pub struct SuggestionEngineOptions {
     pub timeout_secs: Option<u64>,
     /// 引擎选择。默认 Auto：codex 会话先试 sample，失败回落 exec。
     pub engine: SuggestionEngine,
+    /// 引擎归属。默认 Session；Codex 表示跨引擎生成。
+    pub via: SuggestionVia,
+    /// 源会话转写文件路径。仅跨引擎、且后端无法按 id 自行定位时由界面传入
+    /// （扫描结果里的 sessionPath），避免重复实现各 provider 的目录发现逻辑。
+    pub transcript_path: Option<String>,
+}
+
+/// 会话 id 的 provider 前缀（`codex://threads/<uuid>` 也归到 codex）。
+fn session_provider_key(session_id: &str) -> &str {
+    session_id
+        .split([':', '/'])
+        .next()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("")
+}
+
+/// 跨引擎生成时定位源会话的转写文件。界面会带扫描到的 sessionPath；
+/// CLI 没这个信息，就按 id 里的 uuid 自行找（claude 是 JSONL，copilot 是 events.jsonl）。
+fn cross_agent_transcript_path(
+    session_id: &str,
+    hint: Option<&str>,
+    provider: &str,
+) -> Option<PathBuf> {
+    if let Some(path) = hint.map(PathBuf::from).filter(|path| path.is_file()) {
+        return Some(path);
+    }
+    let key = session_id.rsplit([':', '/']).next()?;
+    if key.is_empty() {
+        return None;
+    }
+    let home = PathBuf::from(std::env::var("USERPROFILE").ok()?);
+    match provider {
+        "claude" => {
+            let projects = home.join(".claude").join("projects");
+            std::fs::read_dir(projects)
+                .ok()?
+                .flatten()
+                .map(|entry| entry.path().join(format!("{key}.jsonl")))
+                .find(|path| path.is_file())
+        }
+        "copilot" | "copilot-cli" => {
+            let path = home
+                .join(".copilot")
+                .join("session-state")
+                .join(key)
+                .join("events.jsonl");
+            path.is_file().then_some(path)
+        }
+        // opencode 用 sqlite，没有可直接尾读的转写；等有需求再接。
+        _ => None,
+    }
+}
+
+/// 任意 provider 的尾部轮次抽取，供「用 Codex 生成」这条跨引擎路径使用。
+/// 只做 best-effort：读尾巴 2MB JSONL，挑出最近几轮 user/assistant 正文。
+fn cross_agent_suggestion_context(
+    session_id: &str,
+    hint: Option<&str>,
+) -> Option<SuggestionContext> {
+    const TAIL_BYTES: usize = 2 * 1024 * 1024;
+    let provider = session_provider_key(session_id);
+    let path = cross_agent_transcript_path(session_id, hint, provider)?;
+    let file_len = fs::metadata(&path).ok()?.len();
+    let tail_text = read_file_suffix_text(&path, file_len, TAIL_BYTES)?;
+    let mut all: Vec<(String, String)> = Vec::new();
+    let mut last_event_id = String::new();
+    let mut workspace_path = String::new();
+    for line in jsonl_lines(&tail_text) {
+        let Some(value) = json_value_from_jsonl_line(line) else {
+            continue;
+        };
+        if workspace_path.is_empty() {
+            if let Some(cwd) = string_at(&value, &["/cwd"]).filter(|cwd| !cwd.trim().is_empty()) {
+                workspace_path = normalize_windows_drive(&cwd.replace('/', "\\"));
+            }
+        }
+        let event_type = string_at(&value, &["/type"]).unwrap_or("");
+        let id = string_at(&value, &["/id"])
+            .or_else(|| string_at(&value, &["/uuid"]))
+            .or_else(|| string_at(&value, &["/data/messageId"]))
+            .unwrap_or("");
+        let entry: Option<(&str, String)> = match provider {
+            "claude" => match event_type {
+                // 这两个 helper 顺带滤掉 isMeta、tool_result、<system-reminder> 等注入轮。
+                "user" => claude_clean_user_text(&value).map(|text| ("user", text)),
+                "assistant" => claude_assistant_text(&value).map(|text| ("assistant", text)),
+                _ => None,
+            },
+            "copilot" | "copilot-cli" => match event_type {
+                // assistant.message 里 content 为空的是工具调用轮，直接跳过。
+                "user.message" | "assistant.message" => string_at(&value, &["/data/content"])
+                    .filter(|text| !text.trim().is_empty())
+                    .and_then(clean_preview_text)
+                    .map(|text| {
+                        let role = if event_type == "user.message" {
+                            "user"
+                        } else {
+                            "assistant"
+                        };
+                        (role, text)
+                    }),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some((role, text)) = entry else {
+            continue;
+        };
+        if text.trim().is_empty() {
+            continue;
+        }
+        let text: String = text.chars().take(SUGGESTION_TURN_CHAR_BUDGET).collect();
+        if !id.is_empty() {
+            last_event_id = id.to_string();
+        }
+        all.push((role.to_string(), text.trim().to_string()));
+    }
+    if all.is_empty() {
+        return None;
+    }
+    // 指纹要能被「生成后重算」复现，所以用文件长度 + 最后一条事件 id，
+    // 而不是消息正文（正文可能被 clean_preview_text 归一化）。
+    let fingerprint = format!("{provider}:{file_len}:{last_event_id}");
+    let mut tail: Vec<(String, String)> = all
+        .iter()
+        .rev()
+        .take(SUGGESTION_MAX_TURNS)
+        .cloned()
+        .collect();
+    if !tail.iter().any(|(role, _)| role == "user") {
+        if let Some(last_user) = all.iter().rev().find(|(role, _)| role == "user").cloned() {
+            if tail.len() >= SUGGESTION_MAX_TURNS {
+                tail.pop();
+            }
+            tail.push(last_user);
+        }
+    }
+    tail.reverse();
+    Some(SuggestionContext {
+        workspace_path,
+        turns: tail,
+        question: None,
+        fingerprint,
+    })
+}
+
+/// 跨引擎生成：用 Codex 的 `codex exec` 给任意 agent 的会话想一句话。
+/// 会话本身仍是建议的归属方（provider 记源 agent），只是「谁在想」换成了 Codex。
+fn generate_cross_agent_codex_suggestion(
+    session_id: &str,
+    avoid: Option<&str>,
+    options: &SuggestionEngineOptions,
+) -> Option<SessionSuggestion> {
+    let started = Instant::now();
+    let provider = session_provider_key(session_id).to_string();
+    let hint = options.transcript_path.as_deref();
+    let context = match provider.as_str() {
+        // 这几个已有各自更完整的抽取器，优先复用（sqlite / 专用 JSONL）。
+        "zcode" => zcode_suggestion_context(session_id),
+        "workbuddy" => workbuddy_suggestion_context(session_id),
+        _ => cross_agent_suggestion_context(session_id, hint),
+    }
+    .or_else(|| {
+        eprintln!("suggestion generator: 无法读取 {session_id} 的转写，跨引擎生成跳过");
+        None
+    })?;
+    let prompt = build_suggestion_prompt(&context, avoid);
+    let engine_label = (
+        options.model.as_deref().unwrap_or("default"),
+        options.effort.as_deref().unwrap_or("default"),
+    );
+    codex_exec_suggestion(
+        session_id,
+        &prompt,
+        options,
+        &provider,
+        "cross_codex",
+        &context,
+        engine_label,
+        started,
+        || match provider.as_str() {
+            "zcode" => zcode_suggestion_context(session_id).map(|fresh| fresh.fingerprint),
+            "workbuddy" => workbuddy_suggestion_context(session_id).map(|fresh| fresh.fingerprint),
+            _ => cross_agent_suggestion_context(session_id, hint).map(|fresh| fresh.fingerprint),
+        },
+    )
+}
+
+/// `codex exec` 单轮生成的公共执行段。codex / workbuddy / 跨引擎三条路径共用，
+/// 各自的差别只在上下文从哪来、以及防陈旧时怎么重算指纹。
+#[allow(clippy::too_many_arguments)]
+fn codex_exec_suggestion(
+    session_id: &str,
+    prompt: &str,
+    options: &SuggestionEngineOptions,
+    provider_label: &str,
+    trigger: &str,
+    context: &SuggestionContext,
+    engine_label: (&str, &str),
+    started: Instant,
+    fresh_fingerprint: impl FnOnce() -> Option<String>,
+) -> Option<SessionSuggestion> {
+    if prompt.len() > 4_000 {
+        // 官方 MAX_PROMPT_BYTES = 4000，超了直接放弃而不是截断。
+        eprintln!("suggestion generator: prompt 超过 4000 字节，跳过");
+        suggestion_audit(session_id, provider_label, "prompt_too_long", 0, trigger, Some(engine_label));
+        return None;
+    }
+    let cli = codex_cli_path()?;
+    let node = which_node()?;
+    let scratch = suggestion_scratch_dir()?;
+    // 每个会话一个输出文件，避免并发生成互相覆盖。
+    let key = codex_session_key(session_id)
+        .or_else(|| session_id.split([':', '/']).next_back())
+        .unwrap_or("unknown");
+    let output_file = scratch.join(format!("codex-suggestion-{key}.txt"));
+    let _ = std::fs::remove_file(&output_file);
+    let args = codex_exec_args(
+        &cli.to_string_lossy(),
+        &path_to_string(&scratch),
+        &path_to_string(&output_file),
+        options,
+    );
+    let mut command = std::process::Command::new(&node);
+    command.args(&args).current_dir(&scratch);
+    let timeout_secs = options.timeout_secs.unwrap_or(CODEX_SUGGESTION_TIMEOUT_SECS);
+    let stdout = match run_child_with_timeout_stdin(
+        &mut command,
+        timeout_secs,
+        &format!("Codex 建议生成超时（{timeout_secs} 秒），已中止"),
+        prompt,
+    ) {
+        Ok(stdout) => stdout,
+        Err(error) => {
+            eprintln!("suggestion generator: {error}");
+            suggestion_audit(session_id, provider_label, "engine_failed", started.elapsed().as_millis() as u64, trigger, Some(engine_label));
+            let _ = std::fs::remove_file(&output_file);
+            return None;
+        }
+    };
+    // 优先读 -o 落盘的最终文本，兜底从事件流取 agent_message。
+    let raw = std::fs::read_to_string(&output_file)
+        .ok()
+        .filter(|text| !text.trim().is_empty())
+        .or_else(|| parse_codex_agent_message(&stdout));
+    let _ = std::fs::remove_file(&output_file);
+    let text = raw.and_then(|body| parse_suggestion_response(&body, SUGGESTION_MAX_CHARS));
+    let Some(text) = text else {
+        eprintln!(
+            "suggestion generator: 输出解析失败，stdout 尾部 200 字：{}",
+            stdout.chars().rev().take(200).collect::<String>()
+        );
+        suggestion_audit(session_id, provider_label, "parse_failed", started.elapsed().as_millis() as u64, trigger, Some(engine_label));
+        return None;
+    };
+    // 防陈旧：对齐官方 thread_sample 的「sample source changed」复核。
+    // 生成期间源会话又前进了，这条建议就作废，避免把旧建议展示成新建议。
+    match fresh_fingerprint() {
+        Some(fresh) if fresh != context.fingerprint => {
+            eprintln!("suggestion generator: 源会话已前进，丢弃陈旧建议 {session_id}");
+            suggestion_audit(session_id, provider_label, "stale", started.elapsed().as_millis() as u64, trigger, Some(engine_label));
+            return None;
+        }
+        None => {
+            suggestion_audit(session_id, provider_label, "stale", started.elapsed().as_millis() as u64, trigger, Some(engine_label));
+            return None;
+        }
+        _ => {}
+    }
+    suggestion_audit(session_id, provider_label, "generated", started.elapsed().as_millis() as u64, trigger, Some(engine_label));
+    // provider 记源会话所属 agent，而不是实际执行生成的引擎：
+    // WorkBuddy / 跨引擎会话复用 codex exec 生成，卡片仍要挂回原来的 agent 上。
+    Some(SessionSuggestion {
+        session_id: session_id.to_string(),
+        provider: provider_label.to_string(),
+        text,
+        question: None,
+        options: None,
+        fingerprint: context.fingerprint.clone(),
+        engine_label: Some(if trigger == "cross_codex" {
+            "codex/cross".to_string()
+        } else {
+            "codex/exec".to_string()
+        }),
+        created_at_ms: current_time_ms(),
+    })
 }
 
 /// 组装 codex exec 的参数。抽成纯函数便于单测锁住必需 flag。
@@ -16595,6 +16967,7 @@ fn codex_sample_attempt(
         question: None,
         options: None,
         fingerprint: context.fingerprint,
+        engine_label: Some("codex/sample".to_string()),
         created_at_ms: current_time_ms(),
     })
 }
@@ -16652,95 +17025,24 @@ fn generate_with_codex_engine(
         SuggestionSource::Workbuddy => workbuddy_suggestion_context(session_id)?,
     };
     let prompt = build_suggestion_prompt(&context, avoid);
-    if prompt.len() > 4_000 {
-        // 官方 MAX_PROMPT_BYTES = 4000，超了直接放弃而不是截断。
-        eprintln!("suggestion generator: prompt 超过 4000 字节，跳过");
-        suggestion_audit(session_id, provider_label, "prompt_too_long", 0, "live", Some(engine_label));
-        return None;
-    }
-    let cli = codex_cli_path()?;
-    let node = which_node()?;
-    let scratch = suggestion_scratch_dir()?;
-    // 每个会话一个输出文件，避免并发生成互相覆盖。
-    let key = codex_session_key(session_id)
-        .or_else(|| session_id.split([':', '/']).next_back())
-        .unwrap_or("unknown");
-    let output_file = scratch.join(format!("codex-suggestion-{key}.txt"));
-    let _ = std::fs::remove_file(&output_file);
-    let args = codex_exec_args(
-        &cli.to_string_lossy(),
-        &path_to_string(&scratch),
-        &path_to_string(&output_file),
-        options,
-    );
-    let mut command = std::process::Command::new(&node);
-    command.args(&args).current_dir(&scratch);
-    let timeout_secs = options.timeout_secs.unwrap_or(CODEX_SUGGESTION_TIMEOUT_SECS);
-    let stdout = match run_child_with_timeout_stdin(
-        &mut command,
-        timeout_secs,
-        &format!("Codex 建议生成超时（{timeout_secs} 秒），已中止"),
+    codex_exec_suggestion(
+        session_id,
         &prompt,
-    ) {
-        Ok(stdout) => stdout,
-        Err(error) => {
-            eprintln!("suggestion generator: {error}");
-            suggestion_audit(session_id, provider_label, "engine_failed", started.elapsed().as_millis() as u64, "live", Some(engine_label));
-            let _ = std::fs::remove_file(&output_file);
-            return None;
-        }
-    };
-    // 优先读 -o 落盘的最终文本，兜底从事件流取 agent_message。
-    let raw = std::fs::read_to_string(&output_file)
-        .ok()
-        .filter(|text| !text.trim().is_empty())
-        .or_else(|| parse_codex_agent_message(&stdout));
-    let _ = std::fs::remove_file(&output_file);
-    let text = raw.and_then(|body| parse_suggestion_response(&body, SUGGESTION_MAX_CHARS));
-    let Some(text) = text else {
-        eprintln!(
-            "suggestion generator: 输出解析失败，stdout 尾部 200 字：{}",
-            stdout.chars().rev().take(200).collect::<String>()
-        );
-        suggestion_audit(session_id, provider_label, "parse_failed", started.elapsed().as_millis() as u64, "live", Some(engine_label));
-        return None;
-    };
-    // 防陈旧：对齐官方 thread_sample 的「sample source changed」复核。
-    // 生成期间源会话又前进了，这条建议就作废，避免把旧建议展示成新建议。
-    let fresh_fingerprint = match source {
-        SuggestionSource::Codex => codex_suggestion_context(session_id).map(|(fresh, _)| fresh.fingerprint),
-        SuggestionSource::Workbuddy => workbuddy_suggestion_context(session_id).map(|fresh| fresh.fingerprint),
-    };
-    match fresh_fingerprint {
-        Some(fresh) if fresh != context.fingerprint => {
-            eprintln!("suggestion generator: 源会话已前进，丢弃陈旧建议 {session_id}");
-            suggestion_audit(session_id, provider_label, "stale", started.elapsed().as_millis() as u64, "live", Some(engine_label));
-            return None;
-        }
-        None => {
-            suggestion_audit(session_id, provider_label, "stale", started.elapsed().as_millis() as u64, "live", Some(engine_label));
-            return None;
-        }
-        _ => {}
-    }
-    suggestion_audit(session_id, provider_label, "generated", started.elapsed().as_millis() as u64, "live", Some(engine_label));
-    // provider 记源会话所属 agent，而不是实际执行生成的引擎：
-    // WorkBuddy 会话当前复用 codex exec 生成，卡片仍要挂回 workbuddy 上。
-    let provider = session_id
-        .split([':', '/'])
-        .next()
-        .filter(|value| !value.is_empty())
-        .unwrap_or("codex")
-        .to_string();
-    Some(SessionSuggestion {
-        session_id: session_id.to_string(),
-        provider,
-        text,
-        question: None,
-        options: None,
-        fingerprint: context.fingerprint,
-        created_at_ms: current_time_ms(),
-    })
+        options,
+        provider_label,
+        "live",
+        &context,
+        engine_label,
+        started,
+        || match source {
+            SuggestionSource::Codex => {
+                codex_suggestion_context(session_id).map(|(fresh, _)| fresh.fingerprint)
+            }
+            SuggestionSource::Workbuddy => {
+                workbuddy_suggestion_context(session_id).map(|fresh| fresh.fingerprint)
+            }
+        },
+    )
 }
 
 /// Codex CLI 路径（npm 全局安装的 @openai/codex）。
@@ -17079,8 +17381,28 @@ fn set_zcode_auto_answer(id: String, enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// 界面上点「丢弃建议」：只清本地状态，不动会话本身。
 #[tauri::command]
-fn regenerate_suggestion(app: tauri::AppHandle, id: String) -> Result<(), String> {
+fn dismiss_suggestion(id: String) {
+    if let Ok(mut runtime) = suggestion_runtime().lock() {
+        runtime.current.remove(&id);
+        runtime.regen_counts.remove(&id);
+        runtime.last_avoid.remove(&id);
+    }
+}
+
+#[tauri::command]
+fn regenerate_suggestion(
+    app: tauri::AppHandle,
+    id: String,
+    via: Option<String>,
+    session_path: Option<String>,
+) -> Result<(), String> {
+    let via = match via.as_deref() {
+        None => SuggestionVia::Session,
+        Some(raw) => SuggestionVia::parse(raw)
+            .ok_or_else(|| format!("未知引擎归属 {raw}，可选 session / codex"))?,
+    };
     let avoid = {
         let Ok(mut runtime) = suggestion_runtime().lock() else {
             return Err("建议状态不可用".to_string());
@@ -17092,7 +17414,12 @@ fn regenerate_suggestion(app: tauri::AppHandle, id: String) -> Result<(), String
         runtime.in_flight.insert(id.clone());
         avoid
     };
-    spawn_suggestion_generation(app, id, avoid);
+    let options = SuggestionEngineOptions {
+        via,
+        transcript_path: session_path,
+        ..SuggestionEngineOptions::default()
+    };
+    spawn_suggestion_generation_with(app, id, avoid, options);
     Ok(())
 }
 
@@ -22446,6 +22773,7 @@ mod tests {
             question: None,
             options: None,
             fingerprint: "msg-9".to_string(),
+            engine_label: Some("zcode".to_string()),
             created_at_ms: 1,
         };
         assert!(suggestion_fingerprint_valid(&suggestion, "msg-9"));
@@ -22594,8 +22922,8 @@ mod tests {
         let options = SuggestionEngineOptions {
             model: Some("gpt-6.1-sol".to_string()),
             effort: Some("high".to_string()),
-            timeout_secs: None,
             engine: SuggestionEngine::Exec,
+            ..SuggestionEngineOptions::default()
         };
         let args = codex_exec_args("codex.js", "scratch", "out.txt", &options);
         let model_at = args.iter().position(|arg| arg == "-m").expect("缺少 -m");
@@ -22607,9 +22935,8 @@ mod tests {
         // 空值不生成半截参数。
         let blanks = SuggestionEngineOptions {
             model: Some("  ".to_string()),
-            effort: None,
-            timeout_secs: None,
             engine: SuggestionEngine::Exec,
+            ..SuggestionEngineOptions::default()
         };
         let args = codex_exec_args("codex.js", "scratch", "out.txt", &blanks);
         assert!(!args.iter().any(|arg| arg == "-m" || arg.starts_with("model_reasoning_effort=")));
@@ -22713,6 +23040,81 @@ mod tests {
         assert_eq!(sample["disableMcp"], true);
         // 收尾必须归档副本，否则每次预测都往会话列表里多塞一条。
         assert_eq!(rpc.calls[3].1["threadId"], "fork-1");
+    }
+
+    #[test]
+    fn cross_agent_context_reads_claude_and_copilot_tails() {
+        let dir = std::env::temp_dir().join(format!("aw-cross-context-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let claude = dir.join("claude.jsonl");
+        let claude_rows = [
+            serde_json::json!({"type":"user","uuid":"u1","cwd":"C:/work","message":{"role":"user","content":"帮我看看构建"}}),
+            serde_json::json!({"type":"assistant","uuid":"a1","message":{"role":"assistant","content":[{"type":"text","text":"构建失败在 link 阶段"}]}}),
+            // isMeta 的注入轮不能混进上下文，也不能推进指纹。
+            serde_json::json!({"type":"user","uuid":"u2","isMeta":true,"message":{"content":"<system-reminder>noise</system-reminder>"}}),
+        ];
+        std::fs::write(
+            &claude,
+            claude_rows
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n",
+        )
+        .expect("write claude fixture");
+        let context = cross_agent_suggestion_context("claude:deadbeef", claude.to_str())
+            .expect("claude context");
+        assert_eq!(context.turns.len(), 2, "注入轮必须被过滤");
+        assert_eq!(context.turns[0].0, "user");
+        assert_eq!(context.turns[1].0, "assistant");
+        assert!(context.fingerprint.starts_with("claude:"));
+        assert!(context.fingerprint.ends_with(":a1"));
+
+        let copilot = dir.join("events.jsonl");
+        let copilot_rows = [
+            serde_json::json!({"type":"session.start","id":"s1","data":{"selectedModel":"gpt"}}),
+            serde_json::json!({"type":"user.message","id":"m1","data":{"content":"继续查 link 错误"}}),
+            // content 为空的是工具调用轮，不能占一个 assistant 轮次。
+            serde_json::json!({"type":"assistant.message","id":"m2","data":{"content":"","toolRequests":[]}}),
+            serde_json::json!({"type":"assistant.message","id":"m3","data":{"content":"已定位到 LNK1104"}}),
+        ];
+        std::fs::write(
+            &copilot,
+            copilot_rows
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n",
+        )
+        .expect("write copilot fixture");
+        let context = cross_agent_suggestion_context("copilot:deadbeef", copilot.to_str())
+            .expect("copilot context");
+        assert_eq!(context.turns.len(), 2);
+        assert_eq!(context.turns[0].0, "user");
+        assert_eq!(context.turns[1].0, "assistant");
+        assert!(context.turns[1].1.contains("LNK1104"));
+        assert!(context.fingerprint.ends_with(":m3"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn suggestion_via_only_parses_supported_engines() {
+        assert_eq!(SuggestionVia::parse("codex"), Some(SuggestionVia::Codex));
+        assert_eq!(SuggestionVia::parse("session"), Some(SuggestionVia::Session));
+        assert_eq!(SuggestionVia::parse("auto"), Some(SuggestionVia::Session));
+        assert_eq!(SuggestionVia::parse("zcode"), None);
+        assert_eq!(SuggestionVia::Codex.label(), "codex");
+        assert_eq!(session_provider_key("codex://threads/abc"), "codex");
+        assert_eq!(session_provider_key("copilot-cli:abc"), "copilot-cli");
+        // opencode 没有可读的 JSONL 转写，跨引擎必须明确失败而不是 hang 住。
+        let options = SuggestionEngineOptions {
+            via: SuggestionVia::Codex,
+            ..SuggestionEngineOptions::default()
+        };
+        assert!(generate_suggestion_for_session_with("opencode:missing", None, &options).is_none());
     }
 
     #[test]

@@ -57,6 +57,8 @@ fn main() {
                 effort,
                 timeout,
                 engine,
+                via,
+                session_path,
             } => {
                 // 采样首选复用常驻 app-server（省冷启动）。CLI 默认关着它，这里按需开、
                 // 用完即收；即便进程被提前结束，job object 也会带走子进程。
@@ -68,6 +70,8 @@ fn main() {
                     effort.as_deref(),
                     timeout,
                     engine.as_deref(),
+                    via.as_deref(),
+                    session_path.as_deref(),
                 );
                 agentwatcher_lib::shutdown_codex_app_server();
             }
