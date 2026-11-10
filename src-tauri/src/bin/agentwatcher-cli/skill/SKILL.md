@@ -52,7 +52,9 @@ version: 2
    - 采样默认用 `service_tier=priority`（与官方预测同档，更快但费率更高）。想退回默认档就设环境变量 `AGENTWATCHER_SERVICE_TIER=default`。
    - 采样通道会为每次生成 fork 一份只读副本并在结束后归档，不会留在会话列表里；它要求该会话存在且至少有 1 轮对话。
 3. 返回 `data` 形如 `{ "sessionId", "provider", "text", "question", "options", "fingerprint", "engineLabel", "createdAtMs" }`。`text` 就是那条建议，最多 120 字；`engineLabel` 标出实际生成引擎（`codex/sample` / `codex/exec` / `codex/cross` / `zcode` / `opencode/run`）。
-4. 建议只生成文本，**不会自动发送**。发不发由用户决定；本命令没有发送能力。
+4. 建议只生成文本，**这个命令不会自动发送**。发不发由用户决定；本命令没有发送能力。
+   - 但桌面端有「自动回复」开关（会话卡片右键「自动回复此会话」）：开启后，该会话从 `running`/`waiting` 转 `idle` 时，AgentWatcher 会自动用**会话自己的 agent** 生成一条建议并发回会话。护栏：每小时 6 次、会话冷却 2 分钟、连续两次同回复熔断（需用户手动发过一条才解除）。审计写在 `%TEMP%\AgentWatcher\auto-replies\audit.jsonl`。仅 `codex` / `zcode` / `opencode` 支持（要有发送通道），默认全关。
+   - 这与 ZCode 的「自动作答」不同：自动作答只在 AskUserQuestion 的结构化选项里挑一个，自动回复是把生成的原文发回会话。
 
 失败码：
 

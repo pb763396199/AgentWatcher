@@ -2,6 +2,15 @@
 
 ## 未发布
 
+- 新增「自动回复」：会话停止工作后，程序自动生成一条回复并发回会话。
+  - 与 ZCode 的「自动作答」是两件独立的事——自动作答只在 AskUserQuestion 的结构化选项里挑一个（限 ZCode），自动回复是把生成的建议原文发回会话，适用于所有有发送通道的 agent。
+  - 开关按会话（卡片右键「自动回复此会话」，`set_auto_reply` / `get_auto_reply`），只有用户显式开启的会话才生效，默认全关。
+  - 触发条件是「会话真的停过工」：`running` 或 `waiting` 转 `idle`。冷启动首见的 idle 不算——那不是刚干完活，是程序刚开机。
+  - 链路：扫描识别状态转换 → 后台线程用**会话自己的 agent** 生成建议（不跨引擎，回复风格不能跑偏）→ 复核指纹仍然新鲜（会话可能又前进了）→ 按 provider 路由到 codex / zcode / opencode 的发送通道 → 审计写 `%TEMP%\AgentWatcher\auto-replies\audit.jsonl`（含引擎、原文、结果）。
+  - 护栏与自动作答同构：每小时 6 次、会话冷却 2 分钟、连续两次同回复熔断且需用户手动发过一条才解除。冷却未满不算拒绝，而是延后到点再发，避免用户刚开开关就错过窗口。
+  - provider 覆盖 `codex / zcode / opencode`：workbuddy 能生成建议但没有发送通道，claude/copilot 两者都没有。因此状态跟踪扩展到所有支持发送的 provider，但「建议的自动生成」仍然只对 zcode/codex 生效，避免对全部 opencode 会话刷模型。
+- 补齐此前遗漏入库的文件：三份工作流文档（ZCode app-server 发送通道、ZCode 会话 AI 建议回复与自动作答、AgentWatcher 支持 WorkBuddy Provider）、`docs/insights` 下的 ChatGPT 桌面端 imagegen 生图进度条逆向报告。
+- 清理未跟踪文件：`.gitignore` 排除 `.workbuddy/`（agent 私有记忆）与 `.aes-workflow/`（嵌套 git worktree 副本，二者都不是项目源码）；删除 `src-tauri/src/bin/agentwatcher_dev_launcher.rs`——这是 7 月的旧副本，Cargo 自动发现机制把它当成 bin target 一直在编译，但无人引用，现行版本是已跟踪的 `tools/agentwatcher-dev-launcher.rs`。
 - OpenCode 补齐三条链路：跟随会话生成、跨引擎生成、发送回复。此前只有「能扫到会话、能导出接续上下文」，建议与发送两个能力对 OpenCode 一律关闭——理由是「会话存在 sqlite 里，没有可读的 JSONL 转写」。这个结论是错的：`message` + `part` 两张表本来就能还原完整对话，handoff 导出的 `read_opencode_transcript_messages` 早就在读同一份数据。
   - 上下文抽取 `opencode_suggestion_context`：从 `~/.local/share/opencode/opencode.db` 读 `message` + `part`，只取 `type == "text"` 的部件（滤掉 tool / reasoning / step-*，否则工具调用噪声会把用户意图带偏），取尾部 4 轮并保证至少含一条 user 轮。OpenCode 的 agent 会连发几十条 assistant 消息，用户的原始意图早被挤出尾部窗口，因此额外用 `json_extract(data,'$.role')` 单独捞最近一条 user 轮补进来。
   - 跟随会话生成 `generate_opencode_suggestion`：走 `opencode run --format json --dir <scratch>`。`--dir` 指向空 scratch 目录，避免模型在原工作区里动文件；**不能用 `--session/--fork`**，那会往真实会话写消息。解析器 `parse_opencode_run_output` 先试 JSON 信封、再拼事件流里的 text 部件、最后兜底宽松取行。
