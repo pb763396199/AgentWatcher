@@ -21,6 +21,10 @@ vscode-agentwatcher-bridge/*.vsix
 .agentwatcher/
 .tmp/
 .plugin-worktrees/
+# 嵌套 git worktree（aes-workflow 的工作区副本），绝不能入库
+.aes-workflow/
+# agent 私有记忆与运行态，不属于项目源码
+.workbuddy/
 
 # ZCode agent session artifacts (plans written into the workspace)
 .zcode/

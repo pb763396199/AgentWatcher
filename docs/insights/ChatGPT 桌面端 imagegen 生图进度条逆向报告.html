@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChatGPT 桌面端 imagegen 生图进度条逆向报告</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1a1f28; --muted:#5b6472; --border:#e2e6ec; --code-bg:#f5f7fa;
+    --accent:#0b6bcb; --accent-soft:#eaf2fb; --ok:#1a7f4e; --warn:#9a6700; --pre-border:#d7dde6;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#14181f; --fg:#dfe4ec; --muted:#98a2b3; --border:#2c333f; --code-bg:#1b2029;
+      --accent:#6ab0f3; --accent-soft:#1b2a3d; --ok:#5cd39a; --warn:#e0b34c; --pre-border:#2c333f;
+    }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:0 20px 64px; background:var(--bg); color:var(--fg);
+    font-family:"Segoe UI","Microsoft YaHei",-apple-system,BlinkMacSystemFont,sans-serif;
+    font-size:15px; line-height:1.75;
+  }
+  .page{max-width:960px;margin:0 auto}
+  header{padding:40px 0 8px;border-bottom:2px solid var(--border);margin-bottom:28px}
+  h1{font-size:26px;margin:0 0 10px;line-height:1.35}
+  .meta{color:var(--muted);font-size:13.5px;display:flex;flex-wrap:wrap;gap:6px 22px}
+  .meta b{color:var(--fg);font-weight:500}
+  h2{font-size:19px;margin:44px 0 14px;padding-left:10px;border-left:4px solid var(--accent)}
+  h3{font-size:16px;margin:22px 0 8px}
+  p{margin:8px 0}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}
+  th,td{border:1px solid var(--border);padding:7px 11px;text-align:left;vertical-align:top}
+  th{background:var(--code-bg);font-weight:600;white-space:nowrap}
+  code{font-family:Consolas,"Cascadia Mono",monospace;font-size:13px;background:var(--code-bg);
+       padding:1px 5px;border-radius:4px;word-break:break-all}
+  pre{background:var(--code-bg);border:1px solid var(--pre-border);border-radius:8px;
+      padding:14px 16px;overflow-x:auto;line-height:1.65}
+  pre code{background:none;padding:0;font-size:13px;word-break:normal;white-space:pre-wrap}
+  .flow{list-style:none;margin:14px 0;padding:0}
+  .flow li{position:relative;padding:6px 0 6px 34px}
+  .flow li::before{
+    content:"↓";position:absolute;left:8px;top:2px;color:var(--muted);font-size:15px;
+  }
+  .flow li:first-child::before{content:"①"} .flow li:nth-child(2)::before{content:"②"}
+  .flow li:nth-child(3)::before{content:"③"} .flow li:nth-child(4)::before{content:"④"}
+  .flow li:nth-child(5)::before{content:"⑤"} .flow li:nth-child(6)::before{content:"⑥"}
+  .flow li:nth-child(7)::before{content:"⑦"} .flow li:nth-child(8)::before{content:"⑧"}
+  .tldr{
+    border:1px solid var(--accent);border-radius:10px;background:var(--accent-soft);
+    padding:16px 20px;margin:26px 0;
+  }
+  .tldr h2{margin:0 0 10px;border:none;padding:0;font-size:17px}
+  .tag{display:inline-block;font-size:12px;padding:1px 8px;border-radius:10px;
+       border:1px solid var(--border);color:var(--muted);margin-right:6px;white-space:nowrap}
+  .ok{color:var(--ok);font-weight:600} .warn{color:var(--warn);font-weight:600}
+  .kpi{display:flex;flex-wrap:wrap;gap:12px;margin:14px 0}
+  .kpi .card{flex:1 1 200px;border:1px solid var(--border);border-radius:10px;padding:12px 16px;background:var(--code-bg)}
+  .kpi .num{font-size:24px;font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums}
+  .kpi .lbl{font-size:13px;color:var(--muted)}
+  blockquote{margin:12px 0;padding:8px 16px;border-left:4px solid var(--border);color:var(--muted)}
+  .footnote{color:var(--muted);font-size:13px;border-top:1px solid var(--border);margin-top:44px;padding-top:14px}
+</style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <h1>ChatGPT 桌面端 imagegen 生图进度条逆向报告</h1>
+  <div class="meta">
+    <span>研究对象：<b>ChatGPT 桌面版（Windows，owl shell）26.1029.7803.0</b></span>
+    <span>逆向日期：<b>2026-11-05</b></span>
+    <span>方法：<b>app.asar 解包 + 当前版本二进制逐字验证</b></span>
+  </div>
+</header>
+
+<div class="tldr">
+  <h2>结论（TL;DR）</h2>
+  <p><b>进度条是“假”的——纯客户端按墙钟耗时模拟，服务器从头到尾不下发任何进度信号。</b>
+  归一化时间 <code>t = 已耗时ms / 45000</code>，经一组控制点分段线性插值：
+  <b>0s→3%、4.5s→25%、24.75s→58%、38.25s→88%、45s→90%</b>；超过 45 秒后按
+  <code>90 + 10·(1 − e^(−1.5·(t−1)))</code> 渐近逼近，<b>99% 封顶、永不显示 100%</b>，
+  真图到达时占位组件（连同徽章）直接卸载换图。起点时间戳也不来自服务器：客户端第一次观察到
+  <code>src == null</code> 的 pending 生图条目时自己记下 <code>Date.now()</code>。</p>
+</div>
+
+<h2>1. 研究对象与取证方法</h2>
+
+<h3>1.1 定位安装包</h3>
+<p>
+微软商店版 ChatGPT 桌面端的入口是
+<code>%LOCALAPPDATA%\Microsoft\WindowsApps\chatgpt-desktop.exe</code>，它是指向
+<code>C:\Program Files\WindowsApps\OpenAI.Codex_26.1029.7803.0_x64__2p2nqsd0c76g0\app\ChatGPT.exe</code>
+的 AppX 别名。<span class="tag">注意</span>包名叫 <code>OpenAI.Codex</code>，但它就是 ChatGPT 桌面端（内部代号 <b>owl</b>），
+<code>resources\owl-electron-app.json</code> 写明构建来源为内部仓
+<code>codex-apps\electron</code>、runtime 为 <code>owl</code>。
+</p>
+
+<h3>1.2 应用结构</h3>
+<table>
+  <tr><th>路径</th><th>内容</th></tr>
+  <tr><td><code>resources\app.asar</code></td><td>720 MB。主进程代码在 <code>.vite\build\</code>（Electron 主进程，无生图 IPC）；<code>webview\</code> 是与 chatgpt.com 同源的完整 React 前端（本地打包，不依赖线上加载）</td></tr>
+  <tr><td><code>webview\assets\*</code></td><td>~16000 个混淆 JS/CSS 分块（rolldown-vite 构建；新版中另有一份 webpack 打包副本，逻辑一致）</td></tr>
+  <tr><td><code>resources\codex*、skills\、plugins\</code></td><td>随包分发的 Codex 组件与内置技能（<code>skills</code> 里只有 <code>hatch-pet</code>、<code>onboard-new-user</code>，<b>没有</b> imagegen 技能）</td></tr>
+</table>
+
+<h3>1.3 取证与验证</h3>
+<ul>
+  <li>解包样本：<code>F:\AiProject\AgentWatcher\.tmp\chatgpt-asar\</code>（10-29 版本抽取，结构同代）</li>
+  <li>当前版本验证：对 11-04 更新的 <code>26.1029.7803.0</code> asar 做<b>二进制直接 grep</b>，
+      进度曲线控制点 <code>[[0,3],[.1,25],[.55,58],[.85,88],[1,90]]</code>、
+      <code>e/45e3</code>、渐近公式 <code>Math.floor(90+10*(1-Math.exp(-1.5*(t-1))))</code>、
+      <code>setInterval(·,500)</code>+<code>visibilitychange</code> 模式、
+      <code>generationStartedAtMs</code>（11 处）、<code>image_gen_task_id</code>、<code>image_gen_multi_stream</code> —— <b>全部逐字命中</b>，两版本逻辑一致。</li>
+</ul>
+
+<h2>2. 桌面端 imagegen 怎么运作（完整链路）</h2>
+
+<p>桌面壳（Electron 主进程）<b>完全不参与</b>生图：主进程 bundle 里搜不到任何生图 IPC，
+生图是 <code>webview</code> 里的 React 应用直接对 chatgpt.com 后端（backend-api）发起的 SSE 会话流。链路如下：</p>
+
+<ol class="flow">
+  <li><b>请求侧</b>：用户要图时，前端给会话请求追加 <code>system_hints: ["picture_v2"]</code>（函数 <code>T6</code>：只要触发图片意图就补这个 hint），并带上 <code>dalle: { from_client: { operation } }</code> 消息元数据标记本次操作（生成/编辑）。</li>
+  <li><b>服务端流式返回</b>：模型先产出一条 <code>recipient</code> 为图片工具的 assistant 消息。工具名匹配器 <code>PF/Plr/Flr</code> 认三个名字：<code>image_gen</code>、<code>image_gen.text2im</code> 和混淆代号 <code>t2uay3k(.sj1i4kz)</code>（text2im = text-to-image 的内部叫法）。</li>
+  <li><b>进行中标记</b>：这条消息的 <code>metadata</code> 携带旗标：<code>image_gen_task_id</code>（异步任务 id）、<code>image_gen_async</code>、<code>image_gen_multi_stream</code>（多图并流）、<code>ui_card_shimmer</code>（占位微光卡）。命中任意一个，客户端就映射出一条 runtime 条目：<code>{ id: image_gen_task_id ?? 消息id, type: "generated-image", src: null, status: "in_progress" }</code>。</li>
+  <li><b>成品回填</b>：生成完成后，服务端补一条 tool 消息，<code>content_type: "multimodal_text"</code>，内容 part 是 <code>image_asset_pointer</code>（含 <code>asset_pointer</code>、宽高、<code>generation_id</code>）。聚合层把它挂成附件 <code>kind: "media_generation"、generation_type: "image_gen"</code>。<b>至此才有 src，状态翻成 completed。</b></li>
+  <li><b>关键否定证据</b>：整个 webview bundle 中<b>不存在</b> <code>partial_image / partialImage / progressive_image</code> 等字段，也不存在 <code>estimatedSeconds / etaSeconds / timeRemaining</code> 等服务端 ETA 字段 —— <b>对话通道的生图过程对客户端是个黑盒：没有中间图，没有百分比，没有预计时间。</b></li>
+  <li><b>渲染侧</b>：会话转录把 <code>generated-image</code> 条目聚成 <code>generated-images</code> 组；<code>pendingPlaceholderCount</code> 统计 <code>src==null && status=="in_progress"</code> 的占位数（函数 <code>Y</code>），连同 <code>pendingImageIds</code> 一起传给图片网格 <code>generated-image-gallery</code>；已完成的渲染真图，pending 的渲染 <b>ImageLoadingState</b>（动画占位）。</li>
+</ol>
+
+<div class="kpi">
+  <div class="card"><div class="num">45 s</div><div class="lbl">进度曲线的参考生成时长（归一化分母）</div></div>
+  <div class="card"><div class="num">500 ms</div><div class="lbl">进度徽章重算间隔（setInterval）</div></div>
+  <div class="card"><div class="num">99 %</div><div class="lbl">进度显示上限（渐近逼近、永不 100%）</div></div>
+  <div class="card"><div class="num">0</div><div class="lbl">服务端下发的进度事件/部分图数量</div></div>
+</div>
+
+<h2>3. 进度条深度解析（核心代码）</h2>
+
+<h3>3.1 组件链</h3>
+<table>
+  <tr><th>分块文件（webview\assets\）</th><th>职责</th></tr>
+  <tr><td><code>image-loading-progress-badge-*.js</code></td><td><b>进度徽章本体</b>：右下角圆形百分比气泡 + 时间模拟曲线 + 500ms 轮询</td></tr>
+  <tr><td><code>image-loading-state-*.js</code></td><td><b>加载占位</b>：Canvas 点阵微光动画（+可选模糊预览层），内嵌进度徽章；aria 标签 “Generating image...”</td></tr>
+  <tr><td><code>local-image-generation-progress-*.js</code></td><td><b>起点时间戳登记</b>：atom 副作用——首次发现 pending 图时记 <code>Date.now()</code></td></tr>
+  <tr><td><code>generated-image-gallery-*.js</code></td><td>会话内图片网格，负责把 <code>pendingImageIds → generationStartedAtMs</code> 接进占位组件</td></tr>
+  <tr><td><code>app-initial-*.js</code>（大包）</td><td>消息→runtime 条目状态机、旗标 schema、<code>Map&lt;会话, Map&lt;图id, 起始ms&gt;&gt;</code> atom（<code>oLn</code> 写入 / <code>sLn</code> 存储）</td></tr>
+</table>
+
+<h3>3.2 起点时间戳：客户端自己记表</h3>
+<p>当渲染层第一次观察到某会话里存在 <code>src == null</code> 的生图条目时，atom 副作用调用登记函数（反混淆后）：</p>
+<pre><code>// app-initial：登记“生成开始时间”，Map&lt;conversationId, Map&lt;imageId, startedAtMs&gt;&gt;
+function recordGenerationStart(store, conversationId, imageIds, now /* Date.now() */) {
+  store.set(startedAtMapAtom, conversationId, (prev) => {
+    const next = new Map(prev);
+    let changed = false;
+    for (const id of imageIds) {
+      const old = next.get(id);
+      if (old == null || now &lt; old) {   // ← 保留【最早】时间戳（重挂载/刷新不重置进度）
+        next.set(id, now);
+        changed = true;
+      }
+    }
+    return changed ? next : prev;   // 引用不变 → 不触发多余渲染
+  });
+}</code></pre>
+<p>网格组件随后按 <code>generationStartedAtMs = startedAtMap.get(pendingImageIds[i])</code> 逐个传给占位组件。注意：这个时间<b>晚于或等于</b>服务端真实开工时间（取决于用户何时打开界面），因此进度百分比本身连“从请求发出的耗时”都未必准确——它衡量的是“占位组件被观察到之后的耗时”。</p>
+
+<h3>3.3 进度曲线：分段线性 + 指数渐近（逐行反混淆）</h3>
+<pre><code>// image-loading-progress-badge：进度计算（纯函数，输入=已耗时毫秒）
+const CONTROL_POINTS = [
+  // [归一化时间 t(=elapsed/45000), 进度%]
+  [0.00,  3],   // 0 s     →  3%
+  [0.10, 25],   // 4.5 s   → 25%
+  [0.55, 58],   // 24.75 s → 58%
+  [0.85, 88],   // 38.25 s → 88%
+  [1.00, 90],   // 45 s    → 90%
+];
+
+function computeProgress(elapsedMs) {
+  const t = Math.max(0, elapsedMs / 45_000);
+  for (let i = 1; i &lt; CONTROL_POINTS.length; i++) {
+    const [t0, p0] = CONTROL_POINTS[i - 1];
+    const [t1, p1] = CONTROL_POINTS[i];
+    if (t &lt;= t1) {
+      const k = (t - t0) / (t1 - t0);          // 段内插值比例
+      return Math.floor(p0 + k * (p1 - p0));   // 分段线性
+    }
+  }
+  // 超过 45 s：指数渐近逼近 99，永不触顶
+  return Math.min(99, Math.floor(90 + 10 * (1 - Math.exp(-1.5 * (t - 1)))));
+}</code></pre>
+
+<table>
+  <tr><th>真实耗时</th><th>显示进度</th><th>说明</th></tr>
+  <tr><td>0 s</td><td>3 %</td><td>起步即给 3%，避免 0% 的“死机感”</td></tr>
+  <tr><td>4.5 s</td><td>25 %</td><td>前 10% 时间冲到 25%——感知性能“前快”</td></tr>
+  <tr><td>24.75 s</td><td>58 %</td><td>中段匀速爬坡</td></tr>
+  <tr><td>38.25 s</td><td>88 %</td><td>接近参考时长时已到 88%</td></tr>
+  <tr><td>45 s</td><td>90 %</td><td>分段线性结束，切换渐近段</td></tr>
+  <tr><td>60 s</td><td>93 %</td><td rowspan="4"><code>90+10·(1−e^(−1.5(t−1)))</code>，约 2 分钟后触及 99% 封顶。<b>任何时刻都不会显示 100%</b>——100% 只属于“真图已到达”</td></tr>
+  <tr><td>75 s</td><td>96 %</td></tr>
+  <tr><td>90 s</td><td>97 %</td></tr>
+  <tr><td>≥ ~117 s</td><td>99 %（封顶）</td></tr>
+</table>
+
+<h3>3.4 徽章组件：500ms 轮询 + 可见性门控（反混淆）</h3>
+<pre><code>function ImageGenerationProgressBadge({ generationStartedAtMs, isActive = true }) {
+  const [progress, setProgress] = useState(() =&gt; computeProgress(0)); // 初始 3%
+  const hostRef = useRef(null);
+
+  useLayoutEffect(() =&gt; {
+    const tick = () =&gt; {
+      const p = computeProgress(Date.now() - generationStartedAtMs); // 每次按墙钟重算
+      setProgress(p);
+      if (p === 99) clearInterval(timer);                            // 99% 后停止轮询
+      return p;
+    };
+    const onVisibility = () =&gt; {          // 页面隐藏→停表；可见→立即重算+恢复轮询
+      clearInterval(timer);
+      if (activeRef.current &amp;&amp; !document.hidden &amp;&amp; tick() &lt; 99)
+        timer = setInterval(tick, 500);
+    };
+
+    tick();
+    if (!isActive) return;
+    document.addEventListener('visibilitychange', onVisibility);
+    const unobserve = onIntersect(hostRef.current, (visible) =&gt; {   // 滚出视口→停表
+      activeRef.current = visible; onVisibility();
+    });
+    return () =&gt; { unobserve?.(); document.removeEventListener(...); clearInterval(timer); };
+  }, [generationStartedAtMs, isActive]);
+
+  return (
+    &lt;span ref={hostRef} className="... absolute end-3.5 bottom-3.5 ... rounded-full
+                                   bg-surface-card/80 tabular-nums backdrop-blur-md"&gt;
+      &lt;PercentFormat value={progress / 100} style="percent" /&gt;
+    &lt;/span&gt;
+  );
+}</code></pre>
+<p>要点：</p>
+<ul>
+  <li><b>无累计漂移</b>：每次都用 <code>Date.now() - start</code> 现算，interval 停多久都不影响正确性——后台标签页回来时进度会“瞬间跳到”当前真实值。</li>
+  <li><b>三重门控</b>：窗口不可见（<code>visibilitychange</code>）、占位滚出视口（IntersectionObserver，<code>isAnimating</code>）、以及到 99% 后自动停表，避免空转耗电。</li>
+  <li>徽章用 <code>tabular-nums</code> 等宽数字，数字跳动不抖布局。</li>
+</ul>
+
+<h3>3.5 视觉层：Canvas 点阵“微光场”动画</h3>
+<p>占位卡（<code>image-loading-state</code>）除徽章外的动效是一个手写 Canvas 动画：满铺圆点阵（默认间距 12 px，半径约为间距 ×0.16×N），<b>两个</b>缓动游走的径向影响场（时长 3.6–6.3 s、ease-in-out cubic/bezier 插值）叠加决定每个点的透明度，形成“两团微光在点阵上游走”的效果。工程细节：</p>
+<ul>
+  <li>requestAnimationFrame 节流到 <b>~30 fps</b>（帧间隔 &lt; 33.33 ms 直接跳过）；</li>
+  <li>支持 <code>prefers-reduced-motion</code>（降级为静态点阵 + CSS pulse）；</li>
+  <li>ResizeObserver 重算点阵；离屏时取消 rAF；</li>
+  <li>可选 <code>previewSrc</code> 层：<code>&lt;img scale-125 blur-3xl opacity-70&gt;</code> 的模糊底图——<b>对话内 pending 阶段没有这个层</b>（服务器不推部分图），它只用于已完成图的 blur-up 渐显场景。</li>
+</ul>
+
+<h3>3.6 边界与失败路径</h3>
+<ul>
+  <li><b>取消/失败</b>：turn 变 <code>cancelled</code> 或条目带 <code>failure</code> 时占位直接消失；用量超限（<code>failure.type == "usageLimitExceeded" &amp;&amp; limitId == "image_gen"</code>）有专门的限流墓碑 UI。</li>
+  <li><b>多图（grid）</b>：<code>image_gen_multi_stream</code> 表示一次出多张，每张各自一个 pending 条目、各自的起点时间戳和徽章。</li>
+  <li><b>Create Later（排程生图）</b>：另一套异步任务卡，状态机为 <code>queued → in_progress → succeeded/failed</code>（标题 “Creating your image / GIF”），与本文的即时生成占位是不同组件。</li>
+</ul>
+
+<h2>4. 对照组 A：公开 API 其实有“真进度”（但产品没用）</h2>
+<p>OpenAI <b>公开</b>的 Responses API / Images API 支持生图流式部分图（官方文档 <i>Image generation → Streaming</i>）：</p>
+<ul>
+  <li>工具参数 <code>partial_images: 0–3</code>：请求 0~3 张渐进中间图；</li>
+  <li>SSE 事件 <code>response.image_generation_call.partial_image</code>（Images API 为 <code>image_generation.partial_image</code>），载荷是 Base64 中间图 + <code>partial_image_index</code>；</li>
+  <li>文档明确：“请求的张数可能收不满，如果成品出得更快”。</li>
+</ul>
+<p>两个值得注意的推论：</p>
+<ol>
+  <li>即便是公开 API，<b>也没有数值百分比字段</b>——进度只能由 <code>partial_image_index / 请求数</code> 推。真正“看起来像进度条”的东西，本质是渐进式图片本身。</li>
+  <li>ChatGPT 桌面端/网页端的<b>对话通道没有使用</b>这套部分图机制（客户端代码零引用）。所以产品 UI 才只能做时间模拟——不是“没接好”，是通道里压根没有这个信号。</li>
+</ol>
+
+<h2>5. 对照组 B：你给的 SKILL.md（Codex imagegen）是另一条通道</h2>
+<p><code>~/.codex/skills/.system/imagegen/SKILL.md</code> 描述的是 <b>Codex（CLI/Agent 环境）</b>的生图能力，与 ChatGPT 桌面端对话生图<b>互不相干</b>：</p>
+<table>
+  <tr><th></th><th>ChatGPT 桌面端（本报告）</th><th>Codex imagegen skill</th></tr>
+  <tr><td>默认通道</td><td>chatgpt.com 会话后端（SSE），无需 API key</td><td>Codex 内置 <code>image_gen</code> 工具（宿主代调，产物直接落地）</td></tr>
+  <tr><td>回退通道</td><td>—</td><td><code>scripts/image_gen.py</code> CLI → Images API（<code>gpt-image-2</code>，需 <code>OPENAI_API_KEY</code>）</td></tr>
+  <tr><td>进度反馈</td><td>客户端时间模拟（本报告核心）</td><td>skill 文档中无进度概念；走 CLI/API 时是否流式取决于调用参数</td></tr>
+  <tr><td>与桌面壳关系</td><td>webview ↔ 后端，壳不参与</td><td>桌面壳仅带 Codex 功能开关（主进程 bundle 中 <code>features.image_generation: false</code> 的默认配置表），无生图 IPC</td></tr>
+</table>
+<p>桌面包内 <code>resources\skills\</code> 只捆绑 <code>hatch-pet</code>、<code>onboard-new-user</code> 两个技能；imagegen skill 是 Codex 在用户目录（<code>~/.codex/skills/.system</code>）自装的系统技能。</p>
+
+<h2>6. 证据清单（可复核）</h2>
+<table>
+  <tr><th>证据</th><th>位置（webview\assets\）</th><th>当前版 asar 验证</th></tr>
+  <tr><td>进度曲线控制点 <code>[[0,3],[.1,25],[.55,58],[.85,88],[1,90]]</code></td><td><code>image-loading-progress-badge-4785570a5321.js</code></td><td class="ok">逐字命中（3 处打包副本）</td></tr>
+  <tr><td>归一化 <code>Math.max(0,e/45e3)</code></td><td>同上</td><td class="ok">命中</td></tr>
+  <tr><td>渐近段 <code>Math.floor(90+10*(1-Math.exp(-1.5*(t-1))))</code> + <code>Math.min(99,…)</code></td><td>同上</td><td class="ok">逐字命中（webpack 副本 ghCJ 块）</td></tr>
+  <tr><td><code>setInterval(·,500)</code> + <code>visibilitychange</code> 恢复模式</td><td>同上</td><td class="ok">命中（4 处同构）</td></tr>
+  <tr><td>起点登记 <code>oLn</code>（Map 保留最早时间戳）</td><td><code>app-initial-*.js</code></td><td class="ok"><code>generationStartedAtMs</code> 11 处命中</td></tr>
+  <tr><td>pending 判定 <code>src==null &amp;&amp; status=='in_progress'</code>（函数 <code>dl</code>/<code>Y</code>）</td><td><code>local-conversation-turn-*.js</code>、<code>generated-image-output-visibility-*.js</code></td><td class="ok">逻辑一致</td></tr>
+  <tr><td>旗标 schema <code>image_gen_task_id / image_gen_async / image_gen_multi_stream / ui_card_shimmer</code></td><td><code>app-initial-*.js</code></td><td class="ok">全部命中</td></tr>
+  <tr><td>工具名匹配 <code>image_gen / image_gen.text2im / t2uay3k(.sj1i4kz)</code></td><td><code>app-initial-*.js</code>（<code>PF/Plr/Flr</code>）</td><td class="ok">命中</td></tr>
+  <tr><td><b>否定证据</b>：无 <code>partial_image* / progressive_image / estimatedSeconds / etaSeconds</code></td><td>全 webview 检索为空</td><td class="ok">当前版同样为空</td></tr>
+  <tr><td>Canvas 点阵动画参数（间距 12、30fps 节流、双径向场、reduced-motion）</td><td><code>image-loading-state-4c3e2e1b2dd5.js</code></td><td class="ok">逻辑一致</td></tr>
+</table>
+
+<h2>7. 工程启示：如何复用这条曲线</h2>
+<p>如果你的工具（如 AgentWatcher）需要给不可观测进度的长任务配进度条，这套设计值得照抄：</p>
+<pre><code>// 可直接复用的伪进度（TypeScript）
+export function simulatedProgress(elapsedMs: number): number {
+  const t = Math.max(0, elapsedMs) / 45_000;
+  const pts: [number, number][] = [[0,3],[.1,25],[.55,58],[.85,88],[1,90]];
+  for (let i = 1; i &lt; pts.length; i++) {
+    const [t0,p0] = pts[i-1], [t1,p1] = pts[i];
+    if (t &lt;= t1) return Math.floor(p0 + (t-t0)/(t1-t0)*(p1-p0));
+  }
+  return Math.min(99, Math.floor(90 + 10*(1 - Math.exp(-1.5*(t-1)))));
+}
+// 用法：start = Date.now()；每 500ms：p = simulatedProgress(Date.now()-start)；
+// 真实结果到达 → 卸载进度条（永远不要等它走到 100）。</code></pre>
+<ol class="flow">
+  <li>起步非零 + 前段陡升：4.5 秒给到 25%，用户立刻有“在动”的感知；</li>
+  <li>参考时长处（45 s）只到 90%：给慢任务留缓冲；</li>
+  <li>渐近逼近 + 99% 封顶：避免“卡在 100% 却没结果”或“提前 100%”，这两个都比慢更伤信任；</li>
+  <li>每帧用 <code>Date.now()-start</code> 现算而非累加：挂起/恢复零漂移；</li>
+  <li>不可见即停表，可见即重算：省电且不需要精确计时器。</li>
+</ol>
+
+<div class="footnote">
+  逆向样本：ChatGPT 桌面版 26.1029.7803.0（MSIX <code>OpenAI.Codex_26.1029.7803.0_x64__2p2nqsd0c76g0</code>），
+  解包目录 <code>.tmp/chatgpt-asar</code>（10-29 抽取）+ 当前 asar 二进制复核（11-05）。
+  本报告仅用于技术研究；混淆标识（<code>t2uay3k</code> 等）为产品内部代号，随版本可能变化。
+  对照文档：OpenAI 官方 Image generation guide（Streaming 小节）。
+</div>
+
+</div>
+</body>
+</html>
