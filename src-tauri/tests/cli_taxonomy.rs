@@ -5,7 +5,10 @@
 mod cli;
 
 use clap::{CommandFactory, Parser};
-use cli::{Cli, Commands, HandoffAction, OutputFormat, SessionAction, SkillAction, SuggestAction};
+use cli::{
+    Cli, Commands, HandoffAction, ImagegenAction, OutputFormat, SessionAction, SkillAction,
+    SuggestAction,
+};
 
 fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
     Cli::try_parse_from(std::iter::once("agentwatcher-cli").chain(args.iter().copied()))
@@ -240,6 +243,63 @@ fn doc_command_paths() -> Vec<(String, Option<String>)> {
         paths.push((verb.to_string(), sub));
     }
     paths
+}
+
+#[test]
+fn imagegen_generate_parses_prompt_and_options() {
+    // prompt 必填：不给就拒绝。
+    assert!(parse(&["imagegen", "generate"]).is_err());
+    let parsed = parse(&["imagegen", "generate", "a red circle on white background"])
+        .expect("imagegen generate parses bare prompt");
+    let Commands::Imagegen {
+        action:
+            ImagegenAction::Generate {
+                prompt,
+                out,
+                timeout,
+            },
+    } = parsed.command
+    else {
+        panic!("expected imagegen generate");
+    };
+    assert_eq!(prompt, "a red circle on white background");
+    assert!(out.is_none());
+    assert!(timeout.is_none());
+
+    let parsed = parse(&[
+        "imagegen",
+        "generate",
+        "hero image",
+        "--out",
+        r"F:\assets\hero.png",
+        "--timeout",
+        "120",
+    ])
+    .expect("--out/--timeout parse");
+    let Commands::Imagegen {
+        action: ImagegenAction::Generate { out, timeout, .. },
+    } = parsed.command
+    else {
+        panic!("expected imagegen generate");
+    };
+    assert_eq!(out.as_deref(), Some(r"F:\assets\hero.png"));
+    assert_eq!(timeout, Some(120));
+}
+
+#[test]
+fn imagegen_help_lists_command_without_model_flag() {
+    // 帮助文本必须能发现 imagegen（供宿主 agent 自助发现命令面）；
+    // 同时命令面不提供 --model（生图模型由 Codex 云端自动选择，版本不绑定）。
+    let help = Cli::command().render_help().to_string();
+    assert!(help.contains("imagegen"), "顶层帮助应列出 imagegen：{help}");
+    let imagegen_help = Cli::command()
+        .find_subcommand("imagegen")
+        .expect("imagegen subcommand exists")
+        .clone()
+        .render_help()
+        .to_string();
+    assert!(imagegen_help.contains("generate"));
+    assert!(!imagegen_help.contains("--model"), "生图命令面不得暴露 --model：{imagegen_help}");
 }
 
 #[test]

@@ -95,6 +95,25 @@ fn json_handoff_export_unknown_id_fails_in_envelope() {
 }
 
 #[test]
+fn json_imagegen_empty_prompt_fails_in_envelope() {
+    // 失败路径也走信封（AC-004 可自动化的稳定子集：参数错误）。
+    // codex 缺失 / 未登录 / 超时依赖本机环境，归人工验收清单。
+    let (envelope, stderr, code) = run_cli(&["--format", "json", "imagegen", "generate", "   "]);
+    assert_eq!(code, Some(1), "invalid prompt must exit 1");
+    let object = envelope
+        .as_object()
+        .unwrap_or_else(|| panic!("stdout must be a single JSON object, got: {envelope}"));
+    for key in ["command", "ok", "data", "error", "messages"] {
+        assert!(object.contains_key(key), "envelope must have {key}");
+    }
+    assert_eq!(object["command"], "imagegen generate");
+    assert_eq!(object["ok"], false);
+    assert_eq!(object["error"]["code"], "invalid_argument");
+    assert!(object["data"].is_null());
+    assert!(stderr.is_empty(), "json 模式分类日志不落 stderr：{stderr}");
+}
+
+#[test]
 fn human_session_list_does_not_emit_envelope() {
     let output = Command::new(env!("CARGO_BIN_EXE_agentwatcher-cli"))
         .args(["--format", "human", "session", "list"])

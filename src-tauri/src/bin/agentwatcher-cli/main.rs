@@ -5,7 +5,9 @@ mod scan_cache;
 mod skill;
 
 use clap::Parser;
-use cli::{Cli, Commands, HandoffAction, SessionAction, SkillAction, SuggestAction};
+use cli::{
+    Cli, Commands, HandoffAction, ImagegenAction, SessionAction, SkillAction, SuggestAction,
+};
 
 fn main() {
     // headless 无副作用：不拉起常驻 Codex app-server（扫描走本地会话文件），
@@ -76,6 +78,11 @@ fn main() {
                 agentwatcher_lib::shutdown_codex_app_server();
             }
             SuggestAction::Prompt { id } => commands::suggest_prompt(&id),
+        },
+        Commands::Imagegen { action } => match action {
+            ImagegenAction::Generate { prompt, out, timeout } => {
+                commands::imagegen_generate(&prompt, out.as_deref(), timeout)
+            }
         },
     }
 }

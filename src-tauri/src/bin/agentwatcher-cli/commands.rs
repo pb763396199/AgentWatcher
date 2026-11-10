@@ -4,8 +4,8 @@ use crate::output;
 use agentwatcher_lib::{
     generate_suggestion_for_session_with, lookup_session_full_history,
     prepare_handoff_source_context_blocking, scan_sessions_blocking, session_usage_detail,
-    suggestion_prompt_preview, AgentSession, HandoffSourceContextRequest, ScanOptions,
-    SuggestionEngine, SuggestionEngineOptions, SuggestionVia,
+    suggestion_prompt_preview, AgentSession, CodexImagegenError, HandoffSourceContextRequest,
+    ScanOptions, SuggestionEngine, SuggestionEngineOptions, SuggestionVia,
 };
 
 /// 列表只暴露卡片级元数据；最后输入/输出等预览文本一律不进 list。
@@ -460,6 +460,63 @@ pub fn suggest_generate(
             "generation_failed",
             "建议生成失败：可能是会话文件不存在、资格校验未通过、引擎超时或输出无法解析；stderr 里有分类日志".to_string(),
         ),
+    }
+}
+
+/// 经 Codex 原生通道生图：复用 lib 的 generate_image_via_codex（提示词双来源、
+/// 产物搬运都在 lib 侧），CLI 只做参数校验、错误码映射与信封收尾。
+pub fn imagegen_generate(prompt: &str, out: Option<&str>, timeout_secs: Option<u64>) {
+    let trimmed = prompt.trim();
+    if trimmed.is_empty() {
+        output::finish_failure(
+            "imagegen generate",
+            "invalid_argument",
+            "提示词为空：给一段非空的图片描述".to_string(),
+        );
+    }
+    let out_path = out.map(std::path::PathBuf::from);
+    match agentwatcher_lib::generate_image_via_codex(trimmed, out_path.as_deref(), timeout_secs) {
+        Ok(outcome) => {
+            let data = serde_json::json!({
+                "engine": "codex/imagegen",
+                "outputPath": outcome.output_path.to_string_lossy(),
+                "sourcePath": outcome.source_path.to_string_lossy(),
+                "promptSource": outcome.prompt_source,
+                "threadId": outcome.thread_id,
+                "elapsedMs": outcome.elapsed_ms,
+                "prompt": trimmed,
+            });
+            let human = format!(
+                "已生成：{}（引擎 codex/imagegen，模板 {}，耗时 {} ms）\n",
+                outcome.output_path.to_string_lossy(),
+                outcome.prompt_source,
+                outcome.elapsed_ms
+            );
+            output::finish_success("imagegen generate", data, Some(human));
+        }
+        Err(error) => {
+            let (code, message) = match &error {
+                CodexImagegenError::CodexUnavailable => (
+                    "codex_unavailable",
+                    "找不到 codex CLI（需要 %APPDATA%\\npm\\node_modules\\@openai\\codex）或 node；装好并登录 Codex 后重试".to_string(),
+                ),
+                CodexImagegenError::Timeout { secs } => (
+                    "codex_timeout",
+                    format!(
+                        "生图超时（{secs} 秒）：可用 --timeout 调大重试；若反复超时，先在终端跑一次 codex 确认登录态与网络（未登录有时表现为静默挂起而非立即报错）"
+                    ),
+                ),
+                CodexImagegenError::AuthFailed => (
+                    "codex_auth_failed",
+                    "Codex 未登录或登录态失效：先在终端跑一次 codex 登录".to_string(),
+                ),
+                CodexImagegenError::GenerationFailed { detail } => {
+                    eprintln!("imagegen: {detail}");
+                    ("generation_failed", "生图失败：可能是编排模型没调起 image_gen 工具、产物缺失或 Codex 服务端错误；stderr 有分类日志".to_string())
+                }
+            };
+            output::finish_failure("imagegen generate", code, message);
+        }
     }
 }
 

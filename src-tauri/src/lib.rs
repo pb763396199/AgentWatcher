@@ -17149,6 +17149,335 @@ fn codex_exec_args(
     args
 }
 
+// ============ 生图（imagegen）：codex exec 原生通道 ============
+// 编排模型读 skill、组提示词、调内置 image_gen 工具；生图在 Codex 云端执行，
+// 生图模型由云端自动选择——本模块不出现也不配置任何生图模型名（版本不绑定，2026-11-10 拍板）。
+// 实测（codex-cli 0.167.0，2026-11-10）：
+//   - read-only 沙箱下内置工具可用（工具在云端执行，本地无副作用）；
+//   - 事件流首条是 {"type":"thread.started","thread_id":"…"}；
+//   - 产物落 <CODEX_HOME>\generated_images\<thread_id>\exec-<uuid>.png；
+//   - 未登录态事件流出现 401 Unauthorized；
+//   - 编排模型自己会读 <CODEX_HOME>\skills\.system\imagegen\SKILL.md（在场时无需注入）。
+
+/// 内嵌固化副本：本机 2026-11-10 版 imagegen skill 的逐字节冻结。
+/// 系统侧 skill 在场时由 Codex 自读最新版；不在场时才把这份附进提示词。
+const EMBEDDED_IMAGEGEN_SKILL: &str = include_str!("imagegen_skill/SKILL.md");
+const IMAGEGEN_DEFAULT_TIMEOUT_SECS: u64 = 240;
+
+/// 提示词模板来源：系统 skill（Codex 自读）或内嵌固化副本（CLI 注入）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImagegenPromptSource {
+    SystemSkill,
+    Embedded,
+}
+
+impl ImagegenPromptSource {
+    pub fn label(&self) -> &'static str {
+        match self {
+            ImagegenPromptSource::SystemSkill => "system-skill",
+            ImagegenPromptSource::Embedded => "embedded",
+        }
+    }
+}
+
+/// 生图结果：output_path 是复制后的最终产物（generated_images 原件保留）。
+#[derive(Debug)]
+pub struct CodexImagegenOutcome {
+    pub output_path: PathBuf,
+    pub source_path: PathBuf,
+    pub prompt_source: &'static str,
+    pub thread_id: String,
+    pub elapsed_ms: u64,
+}
+
+#[derive(Debug)]
+pub enum CodexImagegenError {
+    CodexUnavailable,
+    Timeout { secs: u64 },
+    AuthFailed,
+    GenerationFailed { detail: String },
+}
+
+/// CODEX_HOME 优先，否则 %USERPROFILE%\.codex。产物目录定位与 codex 子进程的家的解析保持一致。
+fn codex_home_dir() -> PathBuf {
+    std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join(".codex")))
+        .unwrap_or_else(|| PathBuf::from(".codex"))
+}
+
+/// 系统侧 imagegen skill 的 SKILL.md；存在才返回 Some。
+fn system_imagegen_skill_path() -> Option<PathBuf> {
+    let path = codex_home_dir()
+        .join("skills")
+        .join(".system")
+        .join("imagegen")
+        .join("SKILL.md");
+    path.is_file().then_some(path)
+}
+
+/// 组装生图提示词。Embedded 来源时前置固化副本全文（系统 skill 缺失，Codex 无从自读）。
+pub fn build_imagegen_prompt(user_prompt: &str, source: ImagegenPromptSource) -> String {
+    let instruction = format!(
+        "Generate one image for the request below. Use the built-in `image_gen` tool (default built-in tool mode). \
+Keep the generated file at its default location; do not move, rename, convert or re-encode it. \
+When done, reply with exactly one line: the absolute path of the generated image file.\n\nRequest:\n{user_prompt}"
+    );
+    match source {
+        ImagegenPromptSource::SystemSkill => instruction,
+        ImagegenPromptSource::Embedded => {
+            format!("{EMBEDDED_IMAGEGEN_SKILL}\n\n---\n\n{instruction}")
+        }
+    }
+}
+
+/// 生图 exec 参数：对齐建议管线的 flag 集；沙箱 read-only（实测内置工具在 read-only 下可用）。
+/// 不传 -m、不传 effort：生图模型由云端选择，本函数不得出现模型覆盖项。
+fn imagegen_exec_args(cli: &str, scratch: &str) -> Vec<String> {
+    vec![
+        cli.to_string(),
+        "exec".to_string(),
+        "--json".to_string(),
+        "--ephemeral".to_string(),
+        "--skip-git-repo-check".to_string(),
+        "-s".to_string(),
+        "read-only".to_string(),
+        "-C".to_string(),
+        scratch.to_string(),
+        "-".to_string(),
+    ]
+}
+
+/// 从事件流提取 thread_id（{"type":"thread.started","thread_id":"…"}）。逐行宽容解析，坏行跳过。
+fn parse_codex_thread_id(stdout: &str) -> Option<String> {
+    for line in stdout.lines() {
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) == Some("thread.started") {
+            if let Some(id) = value.get("thread_id").and_then(Value::as_str) {
+                if !id.is_empty() {
+                    return Some(id.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 产物目录里 mtime 最新的 png（产物名形态 exec-<uuid>.png，放宽为 *.png 兜底）。
+fn pick_latest_image(dir: &Path) -> Option<PathBuf> {
+    let mut latest: Option<(std::time::SystemTime, PathBuf)> = None;
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        let is_png = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("png"));
+        if !is_png {
+            continue;
+        }
+        let Ok(modified) = entry.metadata().and_then(|meta| meta.modified()) else {
+            continue;
+        };
+        if latest
+            .as_ref()
+            .map_or(true, |(time, _)| modified > *time)
+        {
+            latest = Some((modified, path));
+        }
+    }
+    latest.map(|(_, path)| path)
+}
+
+/// 生图临时工作区：落在 %TEMP% 下（工作区黑名单本来就挡 %TEMP%，不产生卡片噪音）。
+fn imagegen_scratch_dir() -> Option<PathBuf> {
+    let dir = std::env::temp_dir().join("AgentWatcher").join("imagegen-scratch");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+/// codex exec 的生图专用 runner：复用超时/CREATENO_WINDOW 语义，但**不等进程退出就监视 stdout**。
+/// 原因（2026-11-10 实测）：未登录态 codex 收到 401 后会持续重连不退出，等退出才扫 stdout
+/// 会把登录失败误报成超时。这里用读线程增量攒 stdout，主循环一旦看到 401/Unauthorized
+/// 就 kill 子进程并返回登录失败。
+fn run_codex_exec_with_auth_watch(
+    command: &mut std::process::Command,
+    timeout_secs: u64,
+    timeout_message: &str,
+    prompt: &str,
+) -> Result<String, String> {
+    use std::io::{Read, Write};
+    use std::sync::{Arc, Mutex};
+
+    command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("无法启动子进程：{error}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(prompt.as_bytes())
+            .map_err(|error| format!("写入子进程 stdin 失败：{error}"))?;
+    }
+    let collected = Arc::new(Mutex::new(String::new()));
+    let writer = Arc::clone(&collected);
+    let stdout_handle = child.stdout.take();
+    let reader = std::thread::spawn(move || {
+        let Some(mut stream) = stdout_handle else { return };
+        // 分块增量追加：read_to_string 要等 EOF 才返回，中途监视看不到任何内容。
+        // 多字节字符跨块截断产生的替换符不影响 ASCII 特征串（401/Unauthorized）的判定。
+        let mut chunk = [0u8; 8192];
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => {
+                    let text = String::from_utf8_lossy(&chunk[..read]).into_owned();
+                    if let Ok(mut target) = writer.lock() {
+                        target.push_str(&text);
+                    }
+                }
+            }
+        }
+    });
+    // stderr 也纳入监视：实测（2026-11-10，codex-cli 0.167.0）未登录态的
+    // {"type":"error","message":"Reconnecting... 401 Unauthorized..."} 走 stderr，不在 stdout。
+    let stderr_writer = Arc::clone(&collected);
+    let stderr_handle = child.stderr.take();
+    let stderr_reader = std::thread::spawn(move || {
+        let Some(mut stream) = stderr_handle else { return };
+        let mut chunk = [0u8; 8192];
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => {
+                    let text = String::from_utf8_lossy(&chunk[..read]).into_owned();
+                    if let Ok(mut target) = stderr_writer.lock() {
+                        target.push_str(&text);
+                    }
+                }
+            }
+        }
+    });
+    let saw_unauthorized = || {
+        collected
+            .lock()
+            .map(|buffer| buffer.contains("401") || buffer.to_lowercase().contains("unauthorized"))
+            .unwrap_or(false)
+    };
+    let deadline = Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    loop {
+        if saw_unauthorized() {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = reader.join();
+            return Err("__CODEX_AUTH_FAILED__".to_string());
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let _ = reader.join();
+                let _ = stderr_reader.join();
+                let output = Arc::try_unwrap(collected)
+                    .map(|mutex| mutex.into_inner().unwrap_or_default())
+                    .unwrap_or_default();
+                if status.success() {
+                    return Ok(output);
+                }
+                // stderr 已被监视线程接管，错误头改用合并输出的尾部（stdout+stderr 混排，
+                // 逐行 JSON 解析会跳过非事件行，不影响 thread_id 提取）。
+                let head: String = output.trim().chars().rev().take(200).collect::<String>().chars().rev().collect();
+                return Err(format!("子进程失败（退出码 {}）：{head}", status.code().unwrap_or(-1)));
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = reader.join();
+                    let _ = stderr_reader.join();
+                    return Err(timeout_message.to_string());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
+            Err(error) => return Err(format!("等待子进程失败：{error}")),
+        }
+    }
+}
+
+/// 经 codex exec 原生通道生图：组提示词 → 跑 exec → 事件流取 thread_id →
+/// 从 generated_images 取产物 → 复制到 out_path（默认 %TEMP%\AgentWatcher\imagegen\image-<thread前8>.png）。
+pub fn generate_image_via_codex(
+    user_prompt: &str,
+    out_path: Option<&Path>,
+    timeout_secs: Option<u64>,
+) -> Result<CodexImagegenOutcome, CodexImagegenError> {
+    let started = Instant::now();
+    let timeout = timeout_secs.unwrap_or(IMAGEGEN_DEFAULT_TIMEOUT_SECS);
+    let classify_spawn_error = |error: String| {
+        if error == "__CODEX_AUTH_FAILED__" || error.contains("401") || error.to_lowercase().contains("unauthorized") {
+            CodexImagegenError::AuthFailed
+        } else if error.contains("生图超时") {
+            CodexImagegenError::Timeout { secs: timeout }
+        } else {
+            CodexImagegenError::GenerationFailed { detail: error }
+        }
+    };
+    let cli = codex_cli_path().ok_or(CodexImagegenError::CodexUnavailable)?;
+    let node = which_node().ok_or(CodexImagegenError::CodexUnavailable)?;
+    let scratch = imagegen_scratch_dir().ok_or(CodexImagegenError::CodexUnavailable)?;
+    let source = if system_imagegen_skill_path().is_some() {
+        ImagegenPromptSource::SystemSkill
+    } else {
+        ImagegenPromptSource::Embedded
+    };
+    let prompt = build_imagegen_prompt(user_prompt, source);
+    let args = imagegen_exec_args(&cli.to_string_lossy(), &path_to_string(&scratch));
+    let mut command = std::process::Command::new(&node);
+    command.args(&args).current_dir(&scratch);
+    let stdout = run_codex_exec_with_auth_watch(
+        &mut command,
+        timeout,
+        &format!("Codex 生图超时（{timeout} 秒），已中止"),
+        &prompt,
+    )
+    .map_err(classify_spawn_error)?;
+    if stdout.contains("401") || stdout.to_lowercase().contains("unauthorized") {
+        return Err(CodexImagegenError::AuthFailed);
+    }
+    let thread_id = parse_codex_thread_id(&stdout).ok_or_else(|| CodexImagegenError::GenerationFailed {
+        detail: "事件流缺少 thread.started".to_string(),
+    })?;
+    let images_dir = codex_home_dir().join("generated_images").join(&thread_id);
+    let source_path = pick_latest_image(&images_dir).ok_or_else(|| CodexImagegenError::GenerationFailed {
+        detail: format!("产物目录没有图片：{}", images_dir.display()),
+    })?;
+    let output_path = match out_path {
+        Some(path) => path.to_path_buf(),
+        None => {
+            let stem: String = thread_id.chars().take(8).collect();
+            std::env::temp_dir()
+                .join("AgentWatcher")
+                .join("imagegen")
+                .join(format!("image-{stem}.png"))
+        }
+    };
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| CodexImagegenError::GenerationFailed { detail: format!("创建输出目录失败：{error}") })?;
+    }
+    std::fs::copy(&source_path, &output_path)
+        .map_err(|error| CodexImagegenError::GenerationFailed { detail: format!("复制产物失败：{error}") })?;
+    Ok(CodexImagegenOutcome {
+        output_path,
+        source_path,
+        prompt_source: source.label(),
+        thread_id,
+        elapsed_ms: started.elapsed().as_millis() as u64,
+    })
+}
+
 /// Codex 建议：从 JSONL 提取上下文 → v5 提示词 → codex exec 单轮生成 → 解析 → 防陈旧复核。
 /// 命令参数与解析口径 2026-11-09 修正（见逆向报告 §8）：
 /// prompt 走 stdin、-o 拿最终文本，JSONL agent_message 兜底；
@@ -23742,6 +24071,84 @@ mod tests {
         assert!(args.contains(&r"C:\Temp\out.txt".to_string()));
         // 回归：prompt 不再作为 argv 参数传递（改走 stdin）。
         assert!(!args.iter().any(|arg| arg.contains("预测") || arg.contains("suggestion")));
+    }
+
+    #[test]
+    fn imagegen_exec_args_flags_and_no_model_pinning() {
+        // AC-003 机器判定：生图参数不出现模型覆盖项（-m / model_reasoning_effort），
+        // 生图模型由 Codex 云端自动选择；同时锁必需 flag 与 read-only 沙箱。
+        let args = imagegen_exec_args("codex.js", r"C:\Temp\img-scratch");
+        assert_eq!(args[0], "codex.js");
+        assert_eq!(args[1], "exec");
+        for flag in [
+            "--json",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "-s",
+            "read-only",
+            "-C",
+            "-",
+        ] {
+            assert!(args.contains(&flag.to_string()), "缺少生图 exec 必需参数 {flag}");
+        }
+        assert_eq!(args.last().map(String::as_str), Some("-"));
+        assert!(args.contains(&r"C:\Temp\img-scratch".to_string()));
+        assert!(!args.contains(&"-m".to_string()), "生图参数不得包含 -m（模型不绑定）");
+        assert!(
+            !args.iter().any(|arg| arg.contains("model_reasoning_effort")),
+            "生图参数不得包含推理档覆盖"
+        );
+    }
+
+    #[test]
+    fn imagegen_prompt_sources() {
+        // SystemSkill：只有固定指令与用户提示词，不注入固化副本。
+        let system = build_imagegen_prompt("a red circle", ImagegenPromptSource::SystemSkill);
+        assert!(system.contains("a red circle"));
+        assert!(system.contains("image_gen"));
+        assert!(!system.contains("Image Generation Skill"), "系统 skill 在场时不得注入固化副本全文");
+        // Embedded：前置固化副本全文 + 指令。
+        let embedded = build_imagegen_prompt("a red circle", ImagegenPromptSource::Embedded);
+        assert!(embedded.contains("a red circle"));
+        assert!(embedded.contains("Image Generation Skill"), "固化副本必须完整注入");
+        assert!(embedded.contains("image_gen"));
+        // 固化副本是 2026-11-10 版的逐字节冻结，正文含 gpt-image 字样属于引用原文，不违反版本不绑定；
+        // 指令本身（非引用部分）不得出现模型名。
+        let instruction_only = system;
+        assert!(!instruction_only.contains("gpt-image"));
+    }
+
+    #[test]
+    fn imagegen_parse_codex_thread_id() {
+        let stream = concat!(
+            "{\"type\":\"thread.started\",\"thread_id\":\"01a1c37f-ca08-7572-bfdc-85a14be11d45\"}\n",
+            "2026-11-10T03:28:16Z ERROR rmcp::transport::worker: noise line\n",
+            "{\"type\":\"turn.started\"}\n",
+            "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_3\",\"type\":\"agent_message\"}}\n",
+        );
+        assert_eq!(
+            parse_codex_thread_id(stream).as_deref(),
+            Some("01a1c37f-ca08-7572-bfdc-85a14be11d45")
+        );
+        assert_eq!(parse_codex_thread_id(""), None);
+        assert_eq!(parse_codex_thread_id("{\"type\":\"turn.started\"}"), None);
+        assert_eq!(parse_codex_thread_id("not json at all"), None);
+    }
+
+    #[test]
+    fn imagegen_pick_latest_image_prefers_newest_mtime() {
+        let dir = std::env::temp_dir().join("AgentWatcher").join("test-pick-latest-image");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("建测试目录失败");
+        let older = dir.join("exec-old.png");
+        let newer = dir.join("exec-new.png");
+        std::fs::write(&older, b"old").expect("写旧文件失败");
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        std::fs::write(&newer, b"new").expect("写新文件失败");
+        std::fs::write(dir.join("notes.txt"), b"ignored").expect("写干扰文件失败");
+        assert_eq!(pick_latest_image(&dir).as_deref(), Some(newer.as_path()));
+        assert_eq!(pick_latest_image(&dir.join("nonexistent")), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

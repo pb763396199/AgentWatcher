@@ -2,7 +2,8 @@
 // 顶层按「副作用等级」分组，而不是按功能多少：
 //   session  只读查询
 //   handoff  写临时目录（导出交接文件）
-//   suggest  调外部模型、产生用量（唯一计费类别，宿主可单独收紧授权）
+//   suggest  调外部模型、产生用量（计费类别，宿主可单独收紧授权）
+//   imagegen 调外部模型生图、产生用量（与 suggest 同级计费类别）
 //   skill    写宿主技能目录（技能分发）
 // 同一动词在不同组里保持同一语义。
 
@@ -50,6 +51,26 @@ pub enum Commands {
     Suggest {
         #[command(subcommand)]
         action: SuggestAction,
+    },
+    /// 经 Codex 原生通道生成图片（所有 agent 通用；会真实调用模型、产生用量）
+    Imagegen {
+        #[command(subcommand)]
+        action: ImagegenAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ImagegenAction {
+    /// 生成一张图片并落到指定路径；生图模型由 Codex 云端自动选择，不随本命令版本绑定
+    Generate {
+        /// 图片提示词（建议按 imagegen skill 的结构化写法给全要素）
+        prompt: String,
+        /// 产物落盘路径；不给则落到 %TEMP%\AgentWatcher\imagegen\image-<id>.png
+        #[arg(long = "out")]
+        out: Option<String>,
+        /// 生图超时秒数（默认 240）
+        #[arg(long = "timeout")]
+        timeout: Option<u64>,
     },
 }
 
