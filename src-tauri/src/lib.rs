@@ -6335,6 +6335,8 @@ pub fn run() {
             send_codex_message,
             send_opencode_message,
             set_zcode_auto_answer,
+            set_auto_reply,
+            get_auto_reply,
             regenerate_suggestion,
             dismiss_suggestion,
             get_session_usage_detail,
@@ -15131,6 +15133,72 @@ const AUTO_ANSWER_WAIT_SECS: u64 = 20;
 /// 无头生成一轮的超时。实测 ZCode 一轮约 20-60 秒，给足三分钟。
 const ZCODE_GENERATE_TIMEOUT_SECS: u64 = 180;
 
+// ===================== 自动回复（会话停止工作后自动回一句） =====================
+
+/// 自动回复的护栏常量。与自动作答相互独立：自动作答只在 ZCode 的
+/// 结构化选项里挑一个，自动回复是把生成出来的建议原文发回会话。
+/// 每小时上限取 6，与自动作答同量级——这是「代替用户说话」，必须可预期。
+const AUTO_REPLY_HOURLY_LIMIT: u32 = 6;
+/// 自动回复的会话级冷却。生成一轮通常 10-60 秒，冷却给到 2 分钟，
+/// 避免会话在 idle 边缘抖动时反复生成、反复发消息。
+const AUTO_REPLY_COOLDOWN_MS: u64 = 2 * 60 * 1000;
+/// 自动回复要求会话真的「停过工」：running 或 waiting 转 idle 才算。
+/// 冷启动首见的 idle 不算——那不是「刚干完活」，是程序刚开机。
+fn auto_reply_trigger_for(prev_status: Option<&str>, cur_status: &str) -> bool {
+    if cur_status != "idle" {
+        return false;
+    }
+    matches!(prev_status, Some("running") | Some("waiting"))
+}
+
+/// 自动回复的发送判定（纯函数，便于单测）。
+/// 护栏与自动作答同构：每小时上限 + 会话冷却 + 熔断后需要用户手动发过一次。
+struct AutoReplyDecision {
+    allowed: bool,
+    /// 不允许时的原因，写进审计便于排查。
+    reason: String,
+    /// 冷却未满时还需等多久（毫秒）。None 表示无需等待。
+    wait_remaining_ms: Option<u64>,
+}
+
+fn auto_reply_decision(
+    now_ms: u64,
+    cooldown_ms: u64,
+    last_sent_ms: Option<u64>,
+    sent_times_last_hour: &[u64],
+    manual_sent_since_fuse: bool,
+    repeated_same_reply: bool,
+) -> AutoReplyDecision {
+    let denied = |reason: &str, wait: Option<u64>| AutoReplyDecision {
+        allowed: false,
+        reason: reason.to_string(),
+        wait_remaining_ms: wait,
+    };
+    let in_hour = sent_times_last_hour
+        .iter()
+        .filter(|&&at| now_ms.saturating_sub(at) < 3_600_000)
+        .count();
+    if in_hour as u32 >= AUTO_REPLY_HOURLY_LIMIT {
+        return denied("超过每小时预算", None);
+    }
+    if let Some(last) = last_sent_ms {
+        let elapsed = now_ms.saturating_sub(last);
+        if elapsed < cooldown_ms {
+            return denied("冷却未满", Some(cooldown_ms - elapsed));
+        }
+    }
+    // 连续两次发同样的内容视为程序在原地打转（模型没听进去），
+    // 熔断后需要用户手动发一条才恢复。
+    if repeated_same_reply && !manual_sent_since_fuse {
+        return denied("连续两次同回复，已熔断", None);
+    }
+    AutoReplyDecision {
+        allowed: true,
+        reason: "通过".to_string(),
+        wait_remaining_ms: None,
+    }
+}
+
 /// 一条挂在会话卡片上的建议。text 为给用户看的下一句；options 存在时
 /// 表示该会话有结构化待选问题，text 必须是其中一个选项的原文。
 #[derive(Debug, Clone, Serialize)]
@@ -15458,6 +15526,14 @@ struct SuggestionRuntime {
     auto_last_two: HashMap<String, Vec<String>>,
     /// 熔断后用户是否手动发过一条。
     manual_sent_since_fuse: HashMap<String, bool>,
+    /// 打开了「自动回复此会话」的会话（会话停止工作后自动生成并发送）。
+    auto_reply_sessions: HashSet<String>,
+    /// 自动回复的发送时间戳（每会话），用于冷却与每小时上限判定。
+    auto_reply_times: HashMap<String, Vec<u64>>,
+    /// 自动回复后是否需要用户手动发过一条才恢复（熔断复位）。
+    auto_reply_manual_since_fuse: HashMap<String, bool>,
+    /// 自动回复已派发的会话，避免同一次转 idle 重复派发。
+    auto_reply_dispatched: HashSet<String>,
 }
 
 static SUGGESTION_RUNTIME: OnceLock<Mutex<SuggestionRuntime>> = OnceLock::new();
@@ -15475,13 +15551,19 @@ fn suggestion_runtime() -> &'static Mutex<SuggestionRuntime> {
 fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSession]) {
     let now_ms = current_time_ms();
     let mut spawns: Vec<(String, Option<String>)> = Vec::new();
+    let mut auto_reply_spawns: Vec<String> = Vec::new();
+    // 冷却未满的会话：记下剩余等待，到点后再派发。
+    let mut auto_reply_delayed: Vec<(String, u64)> = Vec::new();
     {
         let Ok(mut runtime) = suggestion_runtime().lock() else {
             return;
         };
         let mut seen: HashSet<&str> = HashSet::new();
         for session in sessions {
-            if session.provider != "zcode" && session.provider != "codex" {
+            // 状态跟踪覆盖所有支持发送的 provider：自动回复要在 opencode 等
+            // 会话上识别「running/waiting → idle」这个转 idle 的瞬间。
+            // 但建议的自动生成（无脑刷模型）仍然只对 zcode/codex 生效。
+            if !auto_reply_supported_provider(&session.provider) {
                 continue;
             }
             seen.insert(session.id.as_str());
@@ -15495,6 +15577,56 @@ fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSessio
                 }
             } else {
                 runtime.waiting_since.remove(&session.id);
+            }
+
+            // ---- 自动回复：会话停下工作就替用户回一句 ----
+            // 与建议生成完全独立：只有用户显式开启该开关的会话才走这条路，
+            // 且触发条件是「确实干过活才停下」，不看建议管线的采样与冷却。
+            let auto_reply_on = runtime.auto_reply_sessions.contains(&session.id);
+            if auto_reply_on && auto_reply_trigger_for(prev.as_deref(), session.status.as_str()) {
+                if runtime.auto_reply_dispatched.contains(&session.id) {
+                    continue;
+                }
+                let times = runtime
+                    .auto_reply_times
+                    .get(&session.id)
+                    .cloned()
+                    .unwrap_or_default();
+                let last_sent = times.last().copied();
+                let decision = auto_reply_decision(
+                    now_ms,
+                    AUTO_REPLY_COOLDOWN_MS,
+                    last_sent,
+                    &times,
+                    runtime
+                        .auto_reply_manual_since_fuse
+                        .get(&session.id)
+                        .copied()
+                        .unwrap_or(false),
+                    false,
+                );
+                if !decision.allowed {
+                    // 冷却未满不算拒绝：记下剩余时间，等冷却到了再发。
+                    // 这样用户开了自动回复就不用盯着「刚好错过冷却窗口」。
+                    if let Some(remaining) = decision.wait_remaining_ms {
+                        auto_reply_delayed.push((session.id.clone(), remaining));
+                        runtime.auto_reply_dispatched.insert(session.id.clone());
+                    } else {
+                        eprintln!("auto reply: 跳过 {}（{}）", session.id, decision.reason);
+                    }
+                    continue;
+                }
+                runtime.auto_reply_dispatched.insert(session.id.clone());
+                auto_reply_spawns.push(session.id.clone());
+                continue;
+            }
+            if !auto_reply_on {
+                runtime.auto_reply_dispatched.remove(&session.id);
+            }
+
+            // ---- 建议生成：只在 zcode/codex 上自动触发 ----
+            if session.provider != "zcode" && session.provider != "codex" {
+                continue;
             }
             let Some(trigger) = suggestion_trigger_for(
                 prev.as_deref(),
@@ -15538,6 +15670,12 @@ fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSessio
     }
     for (session_id, avoid) in spawns {
         spawn_suggestion_generation(app.clone(), session_id, avoid);
+    }
+    for session_id in auto_reply_spawns {
+        spawn_auto_reply(app.clone(), session_id);
+    }
+    for (session_id, remaining_ms) in auto_reply_delayed {
+        spawn_auto_reply_delayed(app.clone(), session_id, remaining_ms);
     }
 }
 
@@ -16030,6 +16168,194 @@ fn maybe_auto_answer(app: &tauri::AppHandle, session_id: &str, suggestion: &Sess
 fn append_auto_answer_audit_line(line: &str) {
     let dir = std::env::temp_dir().join("AgentWatcher").join("auto-answers");
     append_audit_line_in_dir(&dir, line);
+}
+
+// ===================== 自动回复 =====================
+
+/// 哪些 provider 支持自动回复（既要能生成建议，也要有发送通道）。
+fn auto_reply_supported_provider(provider: &str) -> bool {
+    matches!(provider, "codex" | "zcode" | "opencode")
+}
+
+/// 自动回复的审计日志一行：JSON，追加写入 auto-replies/audit.jsonl。
+fn auto_reply_audit_line(
+    now_ms: u64,
+    session_id: &str,
+    provider: &str,
+    engine: &str,
+    text: &str,
+    outcome: &str,
+    reason: &str,
+) -> String {
+    serde_json::json!({
+        "atMs": now_ms,
+        "sessionId": session_id,
+        "provider": provider,
+        "engine": engine,
+        "text": text,
+        "outcome": outcome,
+        "reason": reason,
+    })
+    .to_string()
+}
+
+fn append_auto_reply_audit_line(line: &str) {
+    let dir = std::env::temp_dir().join("AgentWatcher").join("auto-replies");
+    append_audit_line_in_dir(&dir, line);
+}
+
+/// 按 provider 把一段文本发回会话。自动回复与界面手动发送走同一批通道，
+/// 保证「程序发的」和「用户发的」在对方 agent 眼里没有区别。
+fn auto_reply_send(session_id: &str, text: &str) -> Result<(), String> {
+    let provider = session_provider_key(session_id);
+    match provider {
+        "codex" => {
+            let key = codex_session_key(session_id)
+                .ok_or_else(|| "会话 ID 不是合法的 Codex UUID".to_string())?;
+            send_codex_message_blocking(key, text)
+        }
+        "zcode" => {
+            let key = session_id
+                .strip_prefix("zcode:")
+                .ok_or_else(|| "只支持 ZCode 会话的发送".to_string())?;
+            let workspace = zcode_suggestion_context(session_id)
+                .map(|context| context.workspace_path)
+                .filter(|directory| !directory.trim().is_empty())
+                .unwrap_or_default();
+            send_zcode_message_blocking(key, &workspace, text)
+        }
+        "opencode" => {
+            // 注意：send_opencode_message_blocking 收的是带前缀的完整 id，
+            // 它自己会剥前缀取 key。
+            if !session_id.starts_with("opencode:") {
+                return Err("只支持 OpenCode 会话的发送".to_string());
+            }
+            send_opencode_message_blocking(session_id, text)
+        }
+        other => Err(format!("{other} 暂不支持自动回复（没有发送通道）")),
+    }
+}
+
+/// 冷却未满时延后派发：睡到冷却结束再生成发送。
+/// 等待期间用户可能已经关掉开关或手动发了消息，醒来后要重新核对。
+fn spawn_auto_reply_delayed(app: tauri::AppHandle, session_id: String, remaining_ms: u64) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(remaining_ms));
+        let still_on = suggestion_runtime()
+            .lock()
+            .map(|runtime| runtime.auto_reply_sessions.contains(&session_id))
+            .unwrap_or(false);
+        if !still_on {
+            if let Ok(mut runtime) = suggestion_runtime().lock() {
+                runtime.auto_reply_dispatched.remove(&session_id);
+            }
+            return;
+        }
+        spawn_auto_reply(app, session_id);
+    });
+}
+
+/// 生成一条回复并发回会话。整个过程在后台线程跑，不阻塞扫描。
+///
+/// 触发时机由扫描管线决定（会话从 running/waiting 转 idle），
+/// 这里负责：生成建议 → 校验仍然新鲜 → 发送 → 记账与审计。
+fn spawn_auto_reply(app: tauri::AppHandle, session_id: String) {
+    std::thread::spawn(move || {
+        let now_ms = current_time_ms();
+        let provider = session_provider_key(&session_id).to_string();
+        // 自动回复跟随会话自己的 agent 生成（不跨引擎）：用户要的是
+        // 「用这个会话的脑子替我回一句」，跨引擎会让回复风格跑偏。
+        let options = SuggestionEngineOptions::default();
+        let suggestion = generate_suggestion_for_session_with(&session_id, None, &options);
+        let Some(suggestion) = suggestion else {
+            let audit = auto_reply_audit_line(
+                now_ms,
+                &session_id,
+                &provider,
+                "",
+                "",
+                "generation_failed",
+                "建议生成失败",
+            );
+            append_auto_reply_audit_line(&audit);
+            if let Ok(mut runtime) = suggestion_runtime().lock() {
+                runtime.auto_reply_dispatched.remove(&session_id);
+            }
+            return;
+        };
+        let engine = suggestion.engine_label.clone().unwrap_or_default();
+
+        // 发送前复核会话是否还是同一条建议对应的状态：生成期间会话可能
+        // 又前进了，这时发出去就是答非所问。
+        let stale = {
+            match provider.as_str() {
+                "codex" => match codex_suggestion_context(&session_id) {
+                    Some((context, _)) => {
+                        !suggestion_fingerprint_valid(&suggestion, &context.fingerprint)
+                    }
+                    None => true,
+                },
+                "zcode" => match zcode_suggestion_context(&session_id) {
+                    Some(context) => !suggestion_fingerprint_valid(&suggestion, &context.fingerprint),
+                    None => true,
+                },
+                "opencode" => match opencode_suggestion_context(&session_id) {
+                    Some(context) => !suggestion_fingerprint_valid(&suggestion, &context.fingerprint),
+                    None => true,
+                },
+                _ => false,
+            }
+        };
+        if stale {
+            let audit = auto_reply_audit_line(
+                now_ms,
+                &session_id,
+                &provider,
+                &engine,
+                &suggestion.text,
+                "stale",
+                "会话已前进，建议失效",
+            );
+            append_auto_reply_audit_line(&audit);
+            if let Ok(mut runtime) = suggestion_runtime().lock() {
+                runtime.auto_reply_dispatched.remove(&session_id);
+            }
+            return;
+        }
+
+        let outcome = match auto_reply_send(&session_id, &suggestion.text) {
+            Ok(()) => "sent",
+            Err(error) => {
+                eprintln!("auto reply send failed: {error}");
+                "failed"
+            }
+        };
+        let audit = auto_reply_audit_line(
+            now_ms,
+            &session_id,
+            &provider,
+            &engine,
+            &suggestion.text,
+            outcome,
+            outcome,
+        );
+        append_auto_reply_audit_line(&audit);
+
+        if let Ok(mut runtime) = suggestion_runtime().lock() {
+            // 派发标记只在下一次扫描确认状态变化时才清——发完这一轮，
+            // 会话会重新变成 running（对方 agent 开始处理我们的回复）。
+            let times = runtime
+                .auto_reply_times
+                .entry(session_id.clone())
+                .or_default();
+            times.push(now_ms);
+            times.retain(|at| now_ms.saturating_sub(*at) < 3_600_000);
+            runtime.auto_reply_manual_since_fuse.insert(session_id.clone(), false);
+            // 发送成功后清掉当前建议，避免界面把已发出的建议又显示成待发。
+            runtime.current.remove(&session_id);
+        }
+        let _ = app.emit(SESSIONS_CHANGED_EVENT, current_time_ms());
+    });
 }
 
 fn append_audit_line_in_dir(dir: &std::path::Path, line: &str) {
@@ -17763,6 +18089,9 @@ async fn send_opencode_message(
         }
         send_opencode_message_blocking(&id, &text)?;
         if let Ok(mut runtime) = suggestion_runtime().lock() {
+            // 用户手动发过一条：解除自动作答与自动回复的熔断。
+            runtime.manual_sent_since_fuse.insert(id.clone(), true);
+            runtime.auto_reply_manual_since_fuse.insert(id.clone(), true);
             runtime.current.remove(&id);
             runtime.regen_counts.remove(&id);
             runtime.last_avoid.remove(&id);
@@ -17811,6 +18140,9 @@ async fn send_codex_message(
         }
         send_codex_message_blocking(session_key, &text)?;
         if let Ok(mut runtime) = suggestion_runtime().lock() {
+            // 用户手动发过一条：解除自动作答与自动回复的熔断。
+            runtime.manual_sent_since_fuse.insert(id.clone(), true);
+            runtime.auto_reply_manual_since_fuse.insert(id.clone(), true);
             runtime.current.remove(&id);
             runtime.regen_counts.remove(&id);
             runtime.last_avoid.remove(&id);
@@ -17840,6 +18172,39 @@ fn set_zcode_auto_answer(id: String, enabled: bool) -> Result<(), String> {
         runtime.auto_enabled_sessions.remove(&id);
     }
     Ok(())
+}
+
+/// 开启/关闭某会话的自动回复：会话停止工作后自动生成一条回复并发回会话。
+/// 与 ZCode 的「自动作答」是两件事——自动作答只在结构化选项里挑一个，
+/// 自动回复是把生成的建议原文发回会话，适用所有有发送通道的 agent。
+#[tauri::command]
+fn set_auto_reply(id: String, enabled: bool) -> Result<(), String> {
+    let provider = session_provider_key(&id).to_string();
+    if !auto_reply_supported_provider(&provider) {
+        return Err(format!("{provider} 暂不支持自动回复（没有发送通道）"));
+    }
+    let Ok(mut runtime) = suggestion_runtime().lock() else {
+        return Err("建议状态不可用".to_string());
+    };
+    if enabled {
+        runtime.auto_reply_sessions.insert(id.clone());
+        runtime.auto_reply_dispatched.remove(&id);
+        runtime.auto_reply_times.remove(&id);
+        runtime.auto_reply_manual_since_fuse.remove(&id);
+    } else {
+        runtime.auto_reply_sessions.remove(&id);
+        runtime.auto_reply_dispatched.remove(&id);
+    }
+    Ok(())
+}
+
+/// 查询某会话是否开着自动回复（界面回显开关状态用）。
+#[tauri::command]
+fn get_auto_reply(id: String) -> bool {
+    suggestion_runtime()
+        .lock()
+        .map(|runtime| runtime.auto_reply_sessions.contains(&id))
+        .unwrap_or(false)
 }
 
 /// 界面上点「丢弃建议」：只清本地状态，不动会话本身。
@@ -18183,6 +18548,7 @@ fn send_zcode_message_fast(
     // 发送成功：用户手动动作解除熔断，并立刻让前端重扫让卡片状态流转。
     if let Ok(mut runtime) = suggestion_runtime().lock() {
         runtime.manual_sent_since_fuse.insert(id.clone(), true);
+        runtime.auto_reply_manual_since_fuse.insert(id.clone(), true);
         runtime.current.remove(&id);
         runtime.regen_counts.remove(&id);
         runtime.last_avoid.remove(&id);
@@ -23896,6 +24262,160 @@ mod tests {
         assert_eq!(audit["chosen"], "继续修");
         assert_eq!(audit["outcome"], "sent");
         assert!(audit["atMs"].as_u64() == Some(now));
+    }
+
+    /// 自动回复的触发判定：只有「确实干过活才停下」才算。
+    #[test]
+    fn auto_reply_triggers_only_after_working() {
+        // running → idle：干活干完了，触发。
+        assert!(auto_reply_trigger_for(Some("running"), "idle"));
+        // waiting → idle：等审批后停下，触发。
+        assert!(auto_reply_trigger_for(Some("waiting"), "idle"));
+        // idle → idle：本来就没在动，不触发。
+        assert!(!auto_reply_trigger_for(Some("idle"), "idle"));
+        // 首见 idle（冷启动）：没干过活，不触发。
+        assert!(!auto_reply_trigger_for(None, "idle"));
+        // 还在跑：不是「停止工作」。
+        assert!(!auto_reply_trigger_for(Some("running"), "running"));
+        // 转 waiting：还在等，不触发。
+        assert!(!auto_reply_trigger_for(Some("running"), "waiting"));
+    }
+
+    /// 自动回复的护栏：每小时预算、冷却、熔断。
+    #[test]
+    fn auto_reply_guardrails() {
+        // 时间基准要够大，才能表达「两小时前」这种相对时间。
+        let now = 10_000_000_u64;
+
+        // 全部满足：放行。
+        let ok = auto_reply_decision(now, AUTO_REPLY_COOLDOWN_MS, None, &[], false, false);
+        assert!(ok.allowed);
+        assert_eq!(ok.wait_remaining_ms, None);
+
+        // 每小时第 7 次：预算拦下。
+        let spent: Vec<u64> = (0..6).map(|i| now - i * 60_000).collect();
+        let budget = auto_reply_decision(now, AUTO_REPLY_COOLDOWN_MS, None, &spent, false, false);
+        assert!(!budget.allowed);
+        assert!(budget.reason.contains("预算"));
+
+        // 预算窗口只看最近一小时：两小时前的记录不算数。
+        let old: Vec<u64> = vec![now - 7_200_000];
+        let stale_budget = auto_reply_decision(now, AUTO_REPLY_COOLDOWN_MS, None, &old, false, false);
+        assert!(stale_budget.allowed);
+
+        // 冷却未满：不放行，但给出剩余等待时间（延后派发而不是直接丢弃）。
+        let cooling = auto_reply_decision(
+            now,
+            AUTO_REPLY_COOLDOWN_MS,
+            Some(now - 30_000),
+            &[],
+            false,
+            false,
+        );
+        assert!(!cooling.allowed);
+        assert!(cooling.reason.contains("冷却"));
+        assert_eq!(cooling.wait_remaining_ms, Some(AUTO_REPLY_COOLDOWN_MS - 30_000));
+
+        // 冷却满：放行。
+        let cooled = auto_reply_decision(
+            now,
+            AUTO_REPLY_COOLDOWN_MS,
+            Some(now - AUTO_REPLY_COOLDOWN_MS),
+            &[],
+            false,
+            false,
+        );
+        assert!(cooled.allowed);
+
+        // 连续两次同回复且用户没手动发过：熔断。
+        let fused = auto_reply_decision(now, AUTO_REPLY_COOLDOWN_MS, None, &[], false, true);
+        assert!(!fused.allowed);
+        assert!(fused.reason.contains("熔断"));
+
+        // 熔断后用户手动发过一条：解除。
+        let unfused = auto_reply_decision(now, AUTO_REPLY_COOLDOWN_MS, None, &[], true, true);
+        assert!(unfused.allowed);
+    }
+
+    /// 自动回复只对有发送通道的 provider 开放。
+    #[test]
+    fn auto_reply_supports_only_providers_with_send_channel() {
+        assert!(auto_reply_supported_provider("codex"));
+        assert!(auto_reply_supported_provider("zcode"));
+        assert!(auto_reply_supported_provider("opencode"));
+        // workbuddy 能生成建议但没有发送通道，claude/copilot 两者都没有。
+        assert!(!auto_reply_supported_provider("workbuddy"));
+        assert!(!auto_reply_supported_provider("claude"));
+        assert!(!auto_reply_supported_provider("copilot"));
+    }
+
+    /// 自动回复的审计行：字段齐全，能看出发的是什么、结果如何。
+    #[test]
+    fn auto_reply_audit_line_has_fields() {
+        let now = 1_000_000_u64;
+        let line = auto_reply_audit_line(
+            now,
+            "opencode:ses-1",
+            "opencode",
+            "opencode/run",
+            "我来补一下测试",
+            "sent",
+            "sent",
+        );
+        let audit: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(audit["sessionId"], "opencode:ses-1");
+        assert_eq!(audit["provider"], "opencode");
+        assert_eq!(audit["engine"], "opencode/run");
+        assert_eq!(audit["text"], "我来补一下测试");
+        assert_eq!(audit["outcome"], "sent");
+        assert_eq!(audit["atMs"].as_u64(), Some(now));
+    }
+
+    /// 自动回复的端到端发送：往真实 OpenCode 会话发一条消息，确认它真的落进会话。
+    /// 需要本机装有可用的 opencode（server 或 CLI），默认不跑：
+    /// `cargo test --lib auto_reply_send_reaches_real_opencode -- --ignored --nocapture`
+    #[test]
+    #[ignore = "需要本机可用的 opencode 环境"]
+    fn auto_reply_send_reaches_real_opencode() {
+        // 找一个 scratch 目录下的会话，避免污染用户的真实工作会话。
+        let db_path = opencode_db_path().expect("opencode db");
+        let connection = open_readonly_sqlite(&db_path, ZCODE_SQLITE_BUSY_TIMEOUT_MS)
+            .expect("open opencode db");
+        let session_key: String = connection
+            .query_row(
+                "select id from session where directory like '%AgentWatcher%' order by time_updated desc limit 1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("存在 scratch 会话");
+        let session_id = format!("opencode:{session_key}");
+        let marker = format!("auto-reply-e2e-{}", current_time_ms());
+
+        auto_reply_send(&session_id, &marker).expect("自动回复发送应成功");
+
+        // prompt_async 是异步的：发出去就返回 204，消息由 server 稍后落库。
+        // 这里轮询等它出现，而不是发完立刻查。查询只按 marker 匹配，
+        // 不限定会话——落库发生在另一个连接上，会话归属以 server 为准。
+        let mut landed = false;
+        for _ in 0..30 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let Some(connection) = open_readonly_sqlite(&db_path, ZCODE_SQLITE_BUSY_TIMEOUT_MS)
+            else {
+                continue;
+            };
+            let count: i64 = connection
+                .query_row(
+                    "select count(*) from part where data like '%' || ?1 || '%'",
+                    rusqlite::params![marker],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            if count > 0 {
+                landed = true;
+                break;
+            }
+        }
+        assert!(landed, "发送的消息应落进 opencode 会话");
     }
 
     #[test]
