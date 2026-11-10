@@ -6333,6 +6333,7 @@ pub fn run() {
             scan_sessions,
             send_zcode_message,
             send_codex_message,
+            send_opencode_message,
             set_zcode_auto_answer,
             regenerate_suggestion,
             dismiss_suggestion,
@@ -9670,6 +9671,18 @@ fn find_opencode_cli_path() -> Option<String> {
                 .join("bin")
                 .join("opencode.exe"),
         ));
+    }
+    // npm 全局装的 opencode 常常因为跳过 postinstall 而损坏（bin 是占位脚本），
+    // 而独立前缀目录下的安装是完整的。这类旁路目录一并探测。
+    if let Some(user_profile) = env::var_os("USERPROFILE") {
+        let profile_root = PathBuf::from(user_profile);
+        for relative in [
+            ".workbuddy/binaries/opencode/node_modules/opencode-ai/bin/opencode.exe",
+            ".local/bin/opencode",
+            ".opencode/bin/opencode",
+        ] {
+            candidates.push(path_to_string(&profile_root.join(relative)));
+        }
     }
     candidates.extend(
         ["opencode.exe", "opencode.cmd", "opencode.ps1", "opencode"]
@@ -15559,6 +15572,8 @@ pub fn generate_suggestion_for_session_with(
         generate_zcode_suggestion(session_id, avoid)
     } else if session_id.starts_with("workbuddy:") {
         generate_workbuddy_suggestion(session_id, avoid, options)
+    } else if session_id.starts_with("opencode:") {
+        generate_opencode_suggestion(session_id, avoid, options)
     } else {
         eprintln!("suggestion generator: 未接线的 agent，跳过 {session_id}");
         None
@@ -15596,8 +15611,16 @@ pub fn suggestion_prompt_preview(session_id: &str) -> Result<SuggestionPreview, 
             return Err("找不到该 WorkBuddy 会话的转录，或没有可用的对话正文".to_string());
         };
         (context, "workbuddy")
+    } else if session_id.starts_with("opencode:") {
+        let Some(context) = opencode_suggestion_context(session_id) else {
+            return Err("找不到该 OpenCode 会话的 message/part 记录，或没有可用的对话正文".to_string());
+        };
+        (context, "opencode")
     } else {
-        return Err("未接线的 agent：只支持 codex / zcode / workbuddy 会话的建议".to_string());
+        let Some(context) = cross_agent_suggestion_context(session_id, None) else {
+            return Err("无法读取该会话的转写；支持 codex / zcode / workbuddy / opencode / claude / copilot".to_string());
+        };
+        (context, session_provider_key(session_id))
     };
     let prompt = build_suggestion_prompt(&context, None);
     Ok(SuggestionPreview {
@@ -16232,9 +16255,190 @@ fn cross_agent_transcript_path(
                 .join("events.jsonl");
             path.is_file().then_some(path)
         }
-        // opencode 用 sqlite，没有可直接尾读的转写；等有需求再接。
+        // opencode 用 sqlite；下面有专门的 message+part 抽取器，不走 JSONL。
+        "opencode" => None,
         _ => None,
     }
+}
+
+/// OpenCode 的会话存在 sqlite（`~/.local/share/opencode/opencode.db`），不是 JSONL。
+/// 但 `message` + `part` 两张表本来就能还原完整对话——handoff 导出的
+/// `read_opencode_transcript_messages` 用的就是同一份数据，所以「读不了」只是
+/// 通用 JSONL reader 不适用，不是这个 agent 没有上下文。
+fn opencode_suggestion_context(session_id: &str) -> Option<SuggestionContext> {
+    let db_path = opencode_db_path()?;
+    if !db_path.exists() {
+        return None;
+    }
+    let connection = open_readonly_sqlite(&db_path, ZCODE_SQLITE_BUSY_TIMEOUT_MS)?;
+    opencode_suggestion_context_from_db(&connection, session_id)
+}
+
+fn opencode_suggestion_context_from_db(
+    connection: &Connection,
+    session_id: &str,
+) -> Option<SuggestionContext> {
+    // 窗口开大些：OpenCode 的 agent 会连发几十条 assistant 消息，
+    // 窗口太窄会整窗都是工具轮，看不到用户在问什么。
+    const MESSAGE_LOOKBACK: i64 = 200;
+    let key = session_id.strip_prefix("opencode:")?;
+    let workspace_path = connection
+        .query_row(
+            "select directory from session where id = ?1 limit 1",
+            rusqlite::params![key],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .unwrap_or_default();
+
+    let mut statement = connection
+        .prepare(
+            "select id, data from message where session_id = ?1 \
+             order by time_created desc, time_updated desc, id desc limit ?2",
+        )
+        .ok()?;
+    let rows = statement
+        .query_map(rusqlite::params![key, MESSAGE_LOOKBACK], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .ok()?;
+    let mut messages: Vec<(String, String)> = rows.filter_map(Result::ok).collect();
+    messages.reverse(); // 组装提示词要时间升序
+    if messages.is_empty() {
+        return None;
+    }
+
+    let mut parts_by_message: HashMap<String, Vec<String>> = HashMap::new();
+    let mut part_statement = connection
+        .prepare(
+            "select message_id, data from part where session_id = ?1 \
+             and message_id in ( \
+                 select id from message where session_id = ?1 \
+                 order by time_created desc, time_updated desc, id desc limit ?2 \
+             ) order by time_created asc, time_updated asc, id asc",
+        )
+        .ok()?;
+    let part_rows = part_statement
+        .query_map(rusqlite::params![key, MESSAGE_LOOKBACK], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .ok()?;
+    for (message_id, data) in part_rows.filter_map(Result::ok) {
+        let Ok(value) = serde_json::from_str::<Value>(&data) else {
+            continue;
+        };
+        // 只取 text 部件：tool / reasoning / step-* 混进来会把用户意图带偏。
+        if string_at(&value, &["/type"]) != Some("text") {
+            continue;
+        }
+        if let Some(text) = string_at(&value, &["/text"]) {
+            parts_by_message
+                .entry(message_id)
+                .or_default()
+                .push(text.to_string());
+        }
+    }
+
+    let mut all: Vec<(String, String)> = Vec::new();
+    for (id, data) in &messages {
+        let Ok(value) = serde_json::from_str::<Value>(data) else {
+            continue;
+        };
+        let role = string_at(&value, &["/role"]).unwrap_or("");
+        if role != "user" && role != "assistant" {
+            continue;
+        }
+        let text = parts_by_message
+            .get(id)
+            .map(|parts| parts.join("\n"))
+            .unwrap_or_default();
+        if text.trim().is_empty() {
+            continue;
+        }
+        let text: String = text.chars().take(SUGGESTION_TURN_CHAR_BUDGET).collect();
+        all.push((role.to_string(), text.trim().to_string()));
+    }
+    if all.is_empty() {
+        return None;
+    }
+    // 会话前进会新增 message，指纹随之改变，旧建议自动作废。
+    let last_id = messages.last()?.0.clone();
+    let fingerprint = format!("opencode:{last_id}:{}", messages.len());
+    let mut tail: Vec<(String, String)> = all
+        .iter()
+        .rev()
+        .take(SUGGESTION_MAX_TURNS)
+        .cloned()
+        .collect();
+    if !tail.iter().any(|(role, _)| role == "user") {
+        // 尾部窗口可能整窗都是 assistant（OpenCode 的 agent 会连续发几十条工具轮），
+        // 用户的原始意图早被挤出窗口。这时单独去捞最近一条 user 轮补进来——
+        // 没有用户意图就无从预测「下一句」。
+        let last_user = all
+            .iter()
+            .rev()
+            .find(|(role, _)| role == "user")
+            .cloned()
+            .or_else(|| opencode_latest_user_turn(connection, key));
+        if let Some(last_user) = last_user {
+            if tail.len() >= SUGGESTION_MAX_TURNS {
+                tail.pop();
+            }
+            tail.push(last_user);
+        }
+    }
+    tail.reverse();
+    Some(SuggestionContext {
+        workspace_path,
+        turns: tail,
+        question: None,
+        fingerprint,
+    })
+}
+
+/// 单独捞一条最近的 user 轮正文。OpenCode 的 agent 会连发几十条 assistant 消息，
+/// 用户的原始意图被挤出尾部窗口；没有这条就无从预测用户的下一句。
+fn opencode_latest_user_turn(connection: &Connection, session_key: &str) -> Option<(String, String)> {
+    // role 存在 message.data 的 JSON 里，用 json_extract 直接筛，避免把整窗读回内存。
+    let message_id: String = connection
+        .query_row(
+            "select id from message where session_id = ?1 \
+             and json_extract(data, '$.role') = 'user' \
+             order by time_created desc, time_updated desc, id desc limit 1",
+            rusqlite::params![session_key],
+            |row| row.get(0),
+        )
+        .ok()?;
+    let mut statement = connection
+        .prepare(
+            "select data from part where message_id = ?1 order by time_created asc, time_updated asc, id asc",
+        )
+        .ok()?;
+    let rows = statement
+        .query_map(rusqlite::params![message_id], |row| {
+            Ok(row.get::<_, String>(0)?)
+        })
+        .ok()?;
+    let mut text = String::new();
+    for data in rows.filter_map(Result::ok) {
+        let Ok(value) = serde_json::from_str::<Value>(&data) else {
+            continue;
+        };
+        if string_at(&value, &["/type"]) != Some("text") {
+            continue;
+        }
+        if let Some(part) = string_at(&value, &["/text"]) {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(part);
+        }
+    }
+    if text.trim().is_empty() {
+        return None;
+    }
+    let text: String = text.chars().take(SUGGESTION_TURN_CHAR_BUDGET).collect();
+    Some(("user".to_string(), text.trim().to_string()))
 }
 
 /// 任意 provider 的尾部轮次抽取，供「用 Codex 生成」这条跨引擎路径使用。
@@ -16340,13 +16544,14 @@ fn generate_cross_agent_codex_suggestion(
     let started = Instant::now();
     let provider = session_provider_key(session_id).to_string();
     let hint = options.transcript_path.as_deref();
-    let context = match provider.as_str() {
+    let context_for = |id: &str| match provider.as_str() {
         // 这几个已有各自更完整的抽取器，优先复用（sqlite / 专用 JSONL）。
-        "zcode" => zcode_suggestion_context(session_id),
-        "workbuddy" => workbuddy_suggestion_context(session_id),
-        _ => cross_agent_suggestion_context(session_id, hint),
-    }
-    .or_else(|| {
+        "zcode" => zcode_suggestion_context(id),
+        "workbuddy" => workbuddy_suggestion_context(id),
+        "opencode" => opencode_suggestion_context(id),
+        _ => cross_agent_suggestion_context(id, hint),
+    };
+    let context = context_for(session_id).or_else(|| {
         eprintln!("suggestion generator: 无法读取 {session_id} 的转写，跨引擎生成跳过");
         None
     })?;
@@ -16364,12 +16569,122 @@ fn generate_cross_agent_codex_suggestion(
         &context,
         engine_label,
         started,
-        || match provider.as_str() {
-            "zcode" => zcode_suggestion_context(session_id).map(|fresh| fresh.fingerprint),
-            "workbuddy" => workbuddy_suggestion_context(session_id).map(|fresh| fresh.fingerprint),
-            _ => cross_agent_suggestion_context(session_id, hint).map(|fresh| fresh.fingerprint),
-        },
+        || context_for(session_id).map(|fresh| fresh.fingerprint),
     )
+}
+
+/// `opencode run --format json` 吐的是事件流；这里把 text 部件收集起来，
+/// 再走和 sample 一样的宽松解析（去围栏 / 前缀 / 引号，取首个非空行）。
+fn parse_opencode_run_output(body: &str, max_chars: usize) -> Option<String> {
+    if let Some(text) = parse_suggestion_response(body, max_chars) {
+        return Some(text);
+    }
+    let mut collected = String::new();
+    for line in body.lines() {
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+        let text = value
+            .get("text")
+            .and_then(Value::as_str)
+            .or_else(|| value.pointer("/part/text").and_then(Value::as_str));
+        if let Some(text) = text {
+            collected.push_str(text);
+        }
+    }
+    if !collected.trim().is_empty() {
+        // 收集到的正文本身可能就是那行 JSON 信封（提示词要求模型输出
+        // `{"suggestion": ...}`），所以要先按信封解，再退到宽松取行。
+        if let Some(text) = parse_suggestion_response(&collected, max_chars) {
+            return Some(text);
+        }
+        if let Some(text) = parse_sample_suggestion(&collected, max_chars) {
+            return Some(text);
+        }
+    }
+    parse_sample_suggestion(body, max_chars)
+}
+
+/// 跟随会话生成：用 OpenCode 自己的 CLI 与模型跑一轮。
+/// 上下文从 sqlite 抽出来拼进 prompt，`--dir` 指到空的 scratch 目录，
+/// 避免模型在原工作区里动文件；`--session/--fork` 会往真实会话里写消息，不能用。
+fn generate_opencode_suggestion(
+    session_id: &str,
+    avoid: Option<&str>,
+    options: &SuggestionEngineOptions,
+) -> Option<SessionSuggestion> {
+    let started = Instant::now();
+    let context = opencode_suggestion_context(session_id)?;
+    let prompt = build_suggestion_prompt(&context, avoid);
+    if prompt.len() > 4_000 {
+        suggestion_audit(session_id, "opencode", "prompt_too_long", 0, "live", None);
+        return None;
+    }
+    let cli = find_opencode_cli_path().or_else(|| {
+        eprintln!(
+            "suggestion generator: 未找到可用的 opencode CLI，跟随会话生成跳过；\
+             常见原因是 npm 安装时跳过了 postinstall（bin/opencode.exe 成了占位脚本）——\
+             修法：cd %APPDATA%/npm/node_modules/opencode-ai && node postinstall.mjs"
+        );
+        None
+    })?;
+    let scratch = suggestion_scratch_dir()?;
+    let timeout_secs = options.timeout_secs.unwrap_or(CODEX_SUGGESTION_TIMEOUT_SECS);
+    let mut command = std::process::Command::new(&cli);
+    command.args([
+        "run",
+        "--dir",
+        &path_to_string(&scratch),
+        "--title",
+        "AgentWatcher Suggestion",
+        "--format",
+        "json",
+        "--",
+        &prompt,
+    ]);
+    let stdout = match run_child_with_timeout_stdin(
+        &mut command,
+        timeout_secs,
+        "OpenCode 建议生成超时，已中止",
+        "",
+    ) {
+        Ok(stdout) => stdout,
+        Err(error) => {
+            eprintln!("suggestion generator: {error}");
+            suggestion_audit(
+                session_id,
+                "opencode",
+                "engine_failed",
+                started.elapsed().as_millis() as u64,
+                "live",
+                None,
+            );
+            return None;
+        }
+    };
+    let text = parse_opencode_run_output(&stdout, SUGGESTION_MAX_CHARS).or_else(|| {
+        eprintln!("suggestion generator: opencode 输出解析失败：{}", stdout.chars().take(200).collect::<String>());
+        suggestion_audit(session_id, "opencode", "parse_failed", started.elapsed().as_millis() as u64, "live", None);
+        None
+    })?;
+    match opencode_suggestion_context(session_id).map(|fresh| fresh.fingerprint) {
+        Some(fresh) if fresh == context.fingerprint => {}
+        _ => {
+            suggestion_audit(session_id, "opencode", "stale", started.elapsed().as_millis() as u64, "live", None);
+            return None;
+        }
+    }
+    suggestion_audit(session_id, "opencode", "generated", started.elapsed().as_millis() as u64, "live", None);
+    Some(SessionSuggestion {
+        session_id: session_id.to_string(),
+        provider: "opencode".to_string(),
+        text,
+        question: None,
+        options: None,
+        fingerprint: context.fingerprint,
+        engine_label: Some("opencode/run".to_string()),
+        created_at_ms: current_time_ms(),
+    })
 }
 
 /// `codex exec` 单轮生成的公共执行段。codex / workbuddy / 跨引擎三条路径共用，
@@ -17047,13 +17362,38 @@ fn generate_with_codex_engine(
 
 /// Codex CLI 路径（npm 全局安装的 @openai/codex）。
 fn codex_cli_path() -> Option<PathBuf> {
-    let npm_root = std::env::var("APPDATA")
-        .ok()
-        .map(|appdata| PathBuf::from(appdata).join("npm").join("node_modules").join("@openai").join("codex").join("bin").join("codex.js"))?;
-    if npm_root.exists() {
-        return Some(npm_root);
+    // npm 的全局前缀不唯一：装 npm 本体的那个 prefix、WorkBuddy 自带的 node
+    // prefix、以及用户自定义 prefix 都可能是 codex 的落点。只认第一个命中的。
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        candidates.push(
+            PathBuf::from(appdata)
+                .join("npm")
+                .join("node_modules")
+                .join("@openai")
+                .join("codex")
+                .join("bin")
+                .join("codex.js"),
+        );
     }
-    None
+    // WorkBuddy 自带的 node 运行时，其 npm 全局根就在这里。
+    if let Some(home) = std::env::var_os("USERPROFILE") {
+        let binaries = PathBuf::from(home).join(".workbuddy").join("binaries").join("node").join("versions");
+        if let Ok(entries) = std::fs::read_dir(&binaries) {
+            for entry in entries.flatten() {
+                candidates.push(
+                    entry
+                        .path()
+                        .join("node_modules")
+                        .join("@openai")
+                        .join("codex")
+                        .join("bin")
+                        .join("codex.js"),
+                );
+            }
+        }
+    }
+    candidates.into_iter().find(|path| path.exists())
 }
 
 /// Codex 会话的 JSONL 文件路径。按 `sessions/YYYY/MM/DD` 日期分区倒序找，命中即返回。
@@ -17312,6 +17652,127 @@ fn which_node() -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn opencode_session_directory(session_key: &str) -> Option<String> {
+    let db_path = opencode_db_path()?;
+    let connection = open_readonly_sqlite(&db_path, ZCODE_SQLITE_BUSY_TIMEOUT_MS)?;
+    connection
+        .query_row(
+            "select directory from session where id = ?1 limit 1",
+            rusqlite::params![session_key],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+}
+
+/// 运行中的 opencode TUI / 桌面端自带本地 HTTP server；找不到再退回 CLI。
+fn opencode_running_server_port() -> Option<u16> {
+    let mut candidates = discover_opencode_web_server_ports();
+    candidates.extend(4096..=4100); // `opencode serve` 的默认端口段
+    candidates
+        .into_iter()
+        .find(|port| probe_opencode_web_server(*port))
+}
+
+/// 最小 HTTP POST：只连 127.0.0.1 的明文 server，不引第三方 HTTP 客户端。
+fn opencode_http_post_json(port: u16, path: &str, body: &Value) -> Result<(), String> {
+    let payload = body.to_string();
+    let addr: std::net::SocketAddr = format!("127.0.0.1:{port}")
+        .parse()
+        .map_err(|error| format!("opencode server 地址无效：{error}"))?;
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(500))
+        .map_err(|error| format!("无法连接 opencode server：{error}"))?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+        payload.as_bytes().len()
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|error| format!("写入 opencode server 失败：{error}"))?;
+    let mut buffer = [0u8; 2048];
+    let read_len = stream
+        .read(&mut buffer)
+        .map_err(|error| format!("读取 opencode server 响应失败：{error}"))?;
+    let head = String::from_utf8_lossy(&buffer[..read_len]);
+    let code = head.split_whitespace().nth(1).unwrap_or("");
+    if code.starts_with('2') {
+        Ok(())
+    } else {
+        Err(format!("opencode server 返回 {code}"))
+    }
+}
+
+/// 发送一条用户消息进已有的 OpenCode 会话。
+/// 优先走运行中的 server 的 `prompt_async`（204 立即返回，不等模型跑完），
+/// 没 server 时用官方 CLI 的 `run --session <id>` 兜底。
+fn send_opencode_message_blocking(id: &str, text: &str) -> Result<(), String> {
+    let key = id
+        .strip_prefix("opencode:")
+        .ok_or_else(|| "只支持 OpenCode 会话的发送".to_string())?;
+    if text.trim().is_empty() {
+        return Err("发送内容为空".to_string());
+    }
+    let body = serde_json::json!({ "parts": [{ "type": "text", "text": text }] });
+    let mut server_error = "未发现运行中的 opencode server".to_string();
+    if let Some(port) = opencode_running_server_port() {
+        match opencode_http_post_json(port, &format!("/session/{key}/prompt_async"), &body) {
+            Ok(()) => return Ok(()),
+            Err(error) => server_error = error,
+        }
+    }
+    let Some(cli) = find_opencode_cli_path() else {
+        return Err(format!(
+            "无法发送：{server_error}，且本机没有可用的 opencode CLI（npm 包 postinstall 未完成时 bin 是占位脚本）"
+        ));
+    };
+    let cwd = opencode_session_directory(key)
+        .unwrap_or_else(|| path_to_string(&std::env::temp_dir()));
+    let mut command = std::process::Command::new(&cli);
+    command.args(["run", "--session", key, "--dir", &cwd, "--", text]);
+    run_child_with_timeout_stdin(&mut command, 300, "OpenCode 发送超时（300 秒），已中止", "")
+        .map(|_| ())
+        .map_err(|error| format!("{server_error}；CLI 兜底也失败：{error}"))
+}
+
+#[tauri::command]
+async fn send_opencode_message(
+    app: tauri::AppHandle,
+    id: String,
+    text: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let stale = {
+            let Ok(runtime) = suggestion_runtime().lock() else {
+                return Err("建议状态不可用".to_string());
+            };
+            match runtime.current.get(&id) {
+                Some(suggestion) => match opencode_suggestion_context(&id) {
+                    Some(context) => {
+                        !suggestion_fingerprint_valid(suggestion, &context.fingerprint)
+                    }
+                    None => true,
+                },
+                None => false,
+            }
+        };
+        if stale {
+            return Err("会话已前进，这条建议失效了，请等新建议".to_string());
+        }
+        send_opencode_message_blocking(&id, &text)?;
+        if let Ok(mut runtime) = suggestion_runtime().lock() {
+            runtime.current.remove(&id);
+            runtime.regen_counts.remove(&id);
+            runtime.last_avoid.remove(&id);
+        }
+        suggestion_audit(&id, "opencode", "accepted", 0, "live", None);
+        let _ = app.emit(SESSIONS_CHANGED_EVENT, current_time_ms());
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("send worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -23109,12 +23570,270 @@ mod tests {
         assert_eq!(SuggestionVia::Codex.label(), "codex");
         assert_eq!(session_provider_key("codex://threads/abc"), "codex");
         assert_eq!(session_provider_key("copilot-cli:abc"), "copilot-cli");
-        // opencode 没有可读的 JSONL 转写，跨引擎必须明确失败而不是 hang 住。
+        // opencode 的会话在 sqlite 里，跨引擎走专门的 message/part 抽取器；
+        // 读不到（会话不存在）时必须明确失败而不是 hang 住。
         let options = SuggestionEngineOptions {
             via: SuggestionVia::Codex,
             ..SuggestionEngineOptions::default()
         };
         assert!(generate_suggestion_for_session_with("opencode:missing", None, &options).is_none());
+    }
+
+    /// OpenCode 的 agent 会连发几十条 assistant 消息，用户的原始意图会被挤出尾部窗口。
+    /// 抽取器必须单独把最近一条 user 轮捞回来，否则提示词里全是工具轮、没法预测下一句。
+    #[test]
+    fn opencode_suggestion_context_recovers_user_turn_outside_window() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "create table session (id text primary key, directory text);
+                 create table message (id text primary key, session_id text, time_created integer, time_updated integer, data text);
+                 create table part (id text primary key, message_id text, session_id text, time_created integer, time_updated integer, data text);",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into session (id, directory) values ('ses_3', 'F:/workspace/demo')",
+                rusqlite::params![],
+            )
+            .unwrap();
+        // 第一条是唯一的 user 轮，后面 40 条全是 assistant（超过 SUGGESTION_MAX_TURNS）。
+        connection
+            .execute(
+                "insert into message (id, session_id, time_created, time_updated, data) values ('msg_user', 'ses_3', 1, 1, '{\"role\":\"user\"}')",
+                rusqlite::params![],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into part (id, message_id, session_id, time_created, time_updated, data) values ('prt_user', 'msg_user', 'ses_3', 1, 1, '{\"type\":\"text\",\"text\":\"把材质改成金属的\"}')",
+                rusqlite::params![],
+            )
+            .unwrap();
+        for index in 0..40_i64 {
+            let id = format!("msg_a{index}");
+            let part_id = format!("prt_a{index}");
+            connection
+                .execute(
+                    "insert into message (id, session_id, time_created, time_updated, data) values (?1, 'ses_3', ?2, ?2, '{\"role\":\"assistant\"}')",
+                    rusqlite::params![id, index + 2],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "insert into part (id, message_id, session_id, time_created, time_updated, data) values (?1, ?2, 'ses_3', 1, 1, ?3)",
+                    rusqlite::params![
+                        part_id,
+                        id,
+                        format!("{{\"type\":\"text\",\"text\":\"第 {index} 步的处理结果\"}}")
+                    ],
+                )
+                .unwrap();
+        }
+
+        let context = opencode_suggestion_context_from_db(&connection, "opencode:ses_3")
+            .expect("user turn must be recovered from outside the window");
+        assert!(
+            context.turns.iter().any(|(role, text)| role == "user" && text.contains("材质")),
+            "user 轮必须在提示词上下文里：{:?}",
+            context.turns
+        );
+        // 尾部仍是最近的几条 assistant，不能被 user 轮顶掉。
+        assert!(context.turns.len() <= SUGGESTION_MAX_TURNS + 1);
+    }
+
+    /// 发送通道打的是运行中 opencode server 的 `/session/<id>/prompt_async`。
+    /// 这里用一个最小的本地 HTTP server 验证：方法、路径、请求体、204 判定都对。
+    #[test]
+    fn opencode_http_post_json_sends_prompt_async_payload() {
+        use std::io::Read;
+        use std::sync::mpsc;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let port = listener.local_addr().expect("local addr").port();
+        let (tx, rx) = mpsc::channel::<String>();
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut buffer = [0u8; 4096];
+            let Ok(read_len) = stream.read(&mut buffer) else {
+                return;
+            };
+            let request = String::from_utf8_lossy(&buffer[..read_len]).to_string();
+            let _ = tx.send(request);
+            let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\n\r\n");
+        });
+
+        let body = serde_json::json!({ "parts": [{ "type": "text", "text": "你好" }] });
+        let result = opencode_http_post_json(port, "/session/ses_1/prompt_async", &body);
+        assert!(result.is_ok(), "204 应被当作成功：{result:?}");
+
+        let request = rx.recv_timeout(Duration::from_secs(5)).expect("收到请求");
+        assert!(request.starts_with("POST /session/ses_1/prompt_async HTTP/1.1"), "{request}");
+        assert!(request.contains("Content-Type: application/json"), "{request}");
+        assert!(request.contains("\"text\":\"你好\""), "{request}");
+    }
+
+    /// 服务端返回非 2xx 时必须报错，不能当成发送成功。
+    #[test]
+    fn opencode_http_post_json_rejects_non_2xx() {
+        use std::io::Read;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let port = listener.local_addr().expect("local addr").port();
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut buffer = [0u8; 2048];
+            let _ = stream.read(&mut buffer);
+            let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\n\r\n");
+        });
+
+        let body = serde_json::json!({ "parts": [] });
+        let error = opencode_http_post_json(port, "/session/ses_missing/prompt_async", &body)
+            .expect_err("404 必须报错");
+        assert!(error.contains("404"), "{error}");
+    }
+
+    /// `opencode run --format json` 吐的是事件流，解析器要能把 text 部件拼回来。
+    #[test]
+    fn parse_opencode_run_output_handles_event_stream() {
+        // 事件流：每行一个 JSON，text 分散在多个部件里。
+        let stream = concat!(
+            "{\"type\":\"text\",\"text\":\"可以直接改成这样：\"}\n",
+            "{\"type\":\"text\",\"text\":\"在构建函数里加一层缓存。\"}\n"
+        );
+        let text = parse_opencode_run_output(stream, 120).expect("event stream should parse");
+        assert!(text.contains("在构建函数里加一层缓存"));
+
+        // 纯文本输出：宽松解析兜底。
+        let plain = "这是建议的第一行\n这是第二行\n";
+        let text = parse_opencode_run_output(plain, 120).expect("plain text should parse");
+        assert!(text.contains("第一行"));
+
+        // 围栏包裹：去围栏后取首个非空行。
+        let fenced = "```\n围栏里的建议\n```\n";
+        let text = parse_opencode_run_output(fenced, 120).expect("fenced text should parse");
+        assert!(text.contains("围栏里的建议"));
+
+        // 事件流里收集到的正文本身是那行 JSON 信封——必须解出 suggestion 字段，
+        // 不能把整段 JSON 当建议文本返回。
+        let envelope = concat!(
+            "{\"type\":\"text\",\"text\":\"{\\\"suggestion\\\":\\\"这是一条真建议\\\"}\"}\n"
+        );
+        let text = parse_opencode_run_output(envelope, 120).expect("envelope should be unwrapped");
+        assert_eq!(text, "这是一条真建议");
+    }
+
+    /// OpenCode 的会话存在 sqlite 的 `message` + `part` 两张表里，
+    /// 没有 JSONL 转写——抽取器必须直接从库里还原尾部轮次。
+    #[test]
+    fn opencode_suggestion_context_reads_message_and_part_tables() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "create table session (id text primary key, directory text);
+                 create table message (id text primary key, session_id text, time_created integer, time_updated integer, data text);
+                 create table part (id text primary key, message_id text, session_id text, time_created integer, time_updated integer, data text);",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into session (id, directory) values (?1, ?2)",
+                rusqlite::params!["ses_1", "F:/workspace/demo"],
+            )
+            .unwrap();
+
+        let rows = [
+            ("msg_1", 100_i64, "user", "帮我看下这个函数"),
+            ("msg_2", 200_i64, "assistant", "好的，我先读一下"),
+            ("msg_3", 300_i64, "user", "顺便修掉报错"),
+        ];
+        for (id, ts, role, _) in rows {
+            connection
+                .execute(
+                    "insert into message (id, session_id, time_created, time_updated, data) values (?1, 'ses_1', ?2, ?2, ?3)",
+                    rusqlite::params![
+                        id,
+                        ts,
+                        format!("{{\"role\":\"{role}\"}}")
+                    ],
+                )
+                .unwrap();
+        }
+        // 每条消息一个 text 部件，另外塞一个 tool 部件和一个 reasoning 部件——
+        // 后两者必须被过滤掉，否则工具调用噪声会污染提示词。
+        let parts = [
+            ("prt_1", "msg_1", "text", "帮我看下这个函数"),
+            ("prt_2", "msg_2", "text", "好的，我先读一下"),
+            ("prt_3", "msg_3", "text", "顺便修掉报错"),
+            ("prt_4", "msg_3", "tool", "{\"tool\":\"bash\"}"),
+            ("prt_5", "msg_2", "reasoning", "内部思考不该进提示词"),
+        ];
+        for (id, message_id, kind, body) in parts {
+            let data = if kind == "text" {
+                format!("{{\"type\":\"text\",\"text\":\"{body}\"}}")
+            } else {
+                format!("{{\"type\":\"{kind}\",\"text\":\"{body}\"}}")
+            };
+            connection
+                .execute(
+                    "insert into part (id, message_id, session_id, time_created, time_updated, data) values (?1, ?2, 'ses_1', 1, 1, ?3)",
+                    rusqlite::params![id, message_id, data],
+                )
+                .unwrap();
+        }
+
+        let context = opencode_suggestion_context_from_db(&connection, "opencode:ses_1")
+            .expect("opencode context should be extracted from sqlite");
+        assert_eq!(context.workspace_path, "F:/workspace/demo");
+        assert_eq!(
+            context.turns,
+            vec![
+                ("user".to_string(), "帮我看下这个函数".to_string()),
+                ("assistant".to_string(), "好的，我先读一下".to_string()),
+                ("user".to_string(), "顺便修掉报错".to_string()),
+            ]
+        );
+        assert!(context.fingerprint.starts_with("opencode:"));
+        // 消息前缀沿用 opencode 的自然键，不是通用 JSONL 路径。
+        assert!(!context.fingerprint.contains('\\'));
+    }
+
+    /// 会话里只有工具部件、没有正文时，抽取器必须返回 None 而不是空轮次。
+    #[test]
+    fn opencode_suggestion_context_returns_none_without_text_parts() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "create table session (id text primary key, directory text);
+                 create table message (id text primary key, session_id text, time_created integer, time_updated integer, data text);
+                 create table part (id text primary key, message_id text, session_id text, time_created integer, time_updated integer, data text);",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into session (id, directory) values ('ses_2', 'F:/workspace/demo')",
+                rusqlite::params![],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into message (id, session_id, time_created, time_updated, data) values ('msg_x', 'ses_2', 1, 1, '{\"role\":\"assistant\"}')",
+                rusqlite::params![],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into part (id, message_id, session_id, time_created, time_updated, data) values ('prt_x', 'msg_x', 'ses_2', 1, 1, '{\"type\":\"tool\"}')",
+                rusqlite::params![],
+            )
+            .unwrap();
+        assert!(opencode_suggestion_context_from_db(&connection, "opencode:ses_2").is_none());
+        // 不带 opencode 前缀的 id 不该被当成 opencode 会话。
+        assert!(opencode_suggestion_context_from_db(&connection, "ses_2").is_none());
     }
 
     #[test]

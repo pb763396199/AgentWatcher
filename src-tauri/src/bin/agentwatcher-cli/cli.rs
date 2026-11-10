@@ -57,7 +57,7 @@ pub enum Commands {
 pub enum SuggestAction {
     /// 生成建议并输出结构化结果；会真实调用该 agent 的模型
     Generate {
-        /// 会话 ID，支持 codex:<uuid>、codex://threads/<uuid>、zcode:<uuid>、workbuddy:<uuid>
+        /// 会话 ID，支持 codex:<uuid>、codex://threads/<uuid>、zcode:<id>、workbuddy:<id>、opencode:<id>
         id: String,
         /// 带着上一条建议要求避开，用于「换一个」
         #[arg(long = "avoid")]
@@ -83,7 +83,7 @@ pub enum SuggestAction {
     },
     /// 只组装上下文与提示词，不调用模型、不写盘，用于核对 v5 prompt
     Prompt {
-        /// 会话 ID，支持 codex:<uuid>、codex://threads/<uuid>、zcode:<uuid>、workbuddy:<uuid>
+        /// 会话 ID，支持 codex:<uuid>、codex://threads/<uuid>、zcode:<id>、workbuddy:<id>、opencode:<id>
         id: String,
     },
 }

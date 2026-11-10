@@ -44,14 +44,14 @@ version: 2
 ## 生成建议
 
 1. 先 `suggest prompt <id>` 看依据：返回 `prompt`（完整提示词）、`turns`（进上下文的角色序列）、`fingerprint`、`workspacePath`。这一步不花钱，怀疑建议跑偏时先看它。
-2. 再 `suggest generate <id>`。它会按会话所属 agent 选生成通道：Codex 会话优先走 app-server 的 `thread/sample`（直接继承真实会话历史，小会话更快），会话文件超过 1MB 或采样不可用时自动回落 `codex exec`；ZCode 走无头 `zcode.cjs`；WorkBuddy 复用 `codex exec` 但上下文取自它的转录。一次大约 5 到 15 秒。要指定模型或推理档就加 `--model gpt-6.1-sol --effort high`；不加则沿用本机 Codex 配置（当前是 `gpt-6.1-sol` / `medium`）。`high` 档本地实测约 30 秒以上，超过默认 45 秒上限时用 `--timeout 180` 放宽。
+2. 再 `suggest generate <id>`。它会按会话所属 agent 选生成通道：Codex 会话优先走 app-server 的 `thread/sample`（直接继承真实会话历史，小会话更快），会话文件超过 1MB 或采样不可用时自动回落 `codex exec`；ZCode 走无头 `zcode.cjs`；OpenCode 走 `opencode run`（上下文从它的 sqlite 会话库里读）；WorkBuddy 复用 `codex exec` 但上下文取自它的转录。一次大约 5 到 15 秒。要指定模型或推理档就加 `--model gpt-6.1-sol --effort high`；不加则沿用本机 Codex 配置（当前是 `gpt-6.1-sol` / `medium`）。`high` 档本地实测约 30 秒以上，超过默认 45 秒上限时用 `--timeout 180` 放宽。
    - `--engine sample` 强制走采样、忽略体积门控；长会话会把整段历史送进模型，30 万 token 的会话要 25 秒以上，一般不要用。**采样的模型与档位继承会话本身，`--model` / `--effort` 对它无效**；要指定档位请用 `--engine exec`。
    - `--engine exec` 强制走单轮 `codex exec`（只带最近 4 轮上下文），长会话或不希望产生 fork 副本时用。
-   - `--via codex` 是**跨引擎**：让 Codex 给非 Codex 会话出建议，用于 copilot / copilot-cli / claude 这类自身没接生成引擎的会话，也可让 ZCode / WorkBuddy 临时换脑。它会读该会话转写的尾部几轮拼成 prompt，再走 `codex exec`（永远不走 `thread/sample`，因为源会话不是 Codex thread）。建议仍标记为原会话的 provider，但 `engineLabel` 是 `codex/cross`。转写读不到就明确失败——opencode 的会话在 sqlite 里，暂不支持。
+   - `--via codex` 是**跨引擎**：让 Codex 给非 Codex 会话出建议，用于 copilot / copilot-cli / claude 这类自身没接生成引擎的会话，也可让 ZCode / WorkBuddy / OpenCode 临时换脑。它会读该会话的尾部几轮拼成 prompt，再走 `codex exec`（永远不走 `thread/sample`，因为源会话不是 Codex thread）。建议仍标记为原会话的 provider，但 `engineLabel` 是 `codex/cross`。转写读不到就明确失败——OpenCode 的会话在 sqlite 里，走专门的 `message` + `part` 抽取器，同样支持跨引擎。
    - `--session-path <路径>`：跨引擎时手动指定转写文件。后端会按会话 id 里的 uuid 自行找（`~/.claude/projects/*/<uuid>.jsonl`、`~/.copilot/session-state/<uuid>/events.jsonl`），找不到时再用这个参数兜底；界面会直接把扫描到的 sessionPath 带过来。
    - 采样默认用 `service_tier=priority`（与官方预测同档，更快但费率更高）。想退回默认档就设环境变量 `AGENTWATCHER_SERVICE_TIER=default`。
    - 采样通道会为每次生成 fork 一份只读副本并在结束后归档，不会留在会话列表里；它要求该会话存在且至少有 1 轮对话。
-3. 返回 `data` 形如 `{ "sessionId", "provider", "text", "question", "options", "fingerprint", "engineLabel", "createdAtMs" }`。`text` 就是那条建议，最多 120 字；`engineLabel` 标出实际生成引擎（`codex/sample` / `codex/exec` / `codex/cross` / `zcode`）。
+3. 返回 `data` 形如 `{ "sessionId", "provider", "text", "question", "options", "fingerprint", "engineLabel", "createdAtMs" }`。`text` 就是那条建议，最多 120 字；`engineLabel` 标出实际生成引擎（`codex/sample` / `codex/exec` / `codex/cross` / `zcode` / `opencode/run`）。
 4. 建议只生成文本，**不会自动发送**。发不发由用户决定；本命令没有发送能力。
 
 失败码：

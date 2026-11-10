@@ -18132,11 +18132,11 @@ function analyticsRememberSession(normalized) {
     }
 
     // 生成引擎与发送通道的适配表。跟随会话是默认路径；跨引擎只借 Codex 的脑力，
-    // 建议仍然挂回原会话、发回原 agent。opencode 的会话存在 sqlite 里，
-    // 目前没有可读的 JSONL 转写，所以不给它跨引擎入口。
-    const SUGGESTION_OWN_ENGINE_PROVIDERS = new Set(['codex', 'zcode', 'workbuddy']);
-    const SUGGESTION_CROSS_ENGINE_PROVIDERS = new Set(['zcode', 'workbuddy', 'claude', 'copilot', 'copilot-cli']);
-    const SUGGESTION_SEND_COMMANDS = { codex: 'send_codex_message', zcode: 'send_zcode_message' };
+    // 建议仍然挂回原会话、发回原 agent。OpenCode 的会话存在 sqlite 里，
+    // 后端有专门的 message/part 抽取器，所以三类入口它都有。
+    const SUGGESTION_OWN_ENGINE_PROVIDERS = new Set(['codex', 'zcode', 'workbuddy', 'opencode']);
+    const SUGGESTION_CROSS_ENGINE_PROVIDERS = new Set(['zcode', 'workbuddy', 'opencode', 'claude', 'copilot', 'copilot-cli']);
+    const SUGGESTION_SEND_COMMANDS = { codex: 'send_codex_message', zcode: 'send_zcode_message', opencode: 'send_opencode_message' };
 
     function suggestionSendCommand(sessionId) {
       return SUGGESTION_SEND_COMMANDS[String(sessionId || '').split(':')[0]] || null;

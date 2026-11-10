@@ -2,6 +2,15 @@
 
 ## 未发布
 
+- OpenCode 补齐三条链路：跟随会话生成、跨引擎生成、发送回复。此前只有「能扫到会话、能导出接续上下文」，建议与发送两个能力对 OpenCode 一律关闭——理由是「会话存在 sqlite 里，没有可读的 JSONL 转写」。这个结论是错的：`message` + `part` 两张表本来就能还原完整对话，handoff 导出的 `read_opencode_transcript_messages` 早就在读同一份数据。
+  - 上下文抽取 `opencode_suggestion_context`：从 `~/.local/share/opencode/opencode.db` 读 `message` + `part`，只取 `type == "text"` 的部件（滤掉 tool / reasoning / step-*，否则工具调用噪声会把用户意图带偏），取尾部 4 轮并保证至少含一条 user 轮。OpenCode 的 agent 会连发几十条 assistant 消息，用户的原始意图早被挤出尾部窗口，因此额外用 `json_extract(data,'$.role')` 单独捞最近一条 user 轮补进来。
+  - 跟随会话生成 `generate_opencode_suggestion`：走 `opencode run --format json --dir <scratch>`。`--dir` 指向空 scratch 目录，避免模型在原工作区里动文件；**不能用 `--session/--fork`**，那会往真实会话写消息。解析器 `parse_opencode_run_output` 先试 JSON 信封、再拼事件流里的 text 部件、最后兜底宽松取行。
+  - 跨引擎生成：`--via codex` 现在支持 OpenCode 源会话（此前因为读不到上下文而明确失败）。
+  - 发送 `send_opencode_message`：优先 POST 运行中 opencode server 的 `/session/<id>/prompt_async`（204 立即返回，不等模型跑完），无 server 时退回 CLI `opencode run --session <id>`。实测 server 端点返回 204、消息落进会话、模型正常应答。
+  - 前端：会话卡片右键对 OpenCode 开放「生成 AI 建议回复」与「用 Codex 生成」，发送按钮走 `send_opencode_message`。
+- 修 codex CLI 路径发现：`codex_cli_path()` 原来只认 `%APPDATA%\npm\node_modules\@openai\codex\bin\codex.js` 一个位置，但 npm 的全局前缀不唯一（装 npm 本体的 prefix、WorkBuddy 自带 node 的 prefix、用户自定义 prefix 都可能是落点）。现在 AppData 与 `~/.workbuddy/binaries/node/versions/*` 下的 prefix 全部探测，取第一个命中的。
+- 修 CLI 全历史扫描缓存的跨进程并发合并：`FileLock::acquire` 原来用 `open(...).ok()?`，而 Windows 上文件被独占锁定时再次 open 会直接返回「拒绝访问」，于是竞争进程把「打不开文件」误判成「等锁超时」而放弃合并、各自真实扫描一遍（`test_concurrent_full_history_scan_merges` 长期失败，counter 为 3~4 而非 1）。现在 open 失败与锁冲突一样按「锁被占」轮询重试，超过等待上限才降级为直接扫描。4 进程并发回归通过。
+- 修 opencode CLI 发现：npm 全局装的 `opencode-ai` 常因跳过 postinstall 而损坏（`bin/opencode.exe` 是占位脚本），且平台包二进制可能下载截断（PE 节表声明 88MB 而文件只有 62MB，Windows 报「不是有效的 Win32 应用程序」）。`find_opencode_cli_path` 增加旁路目录探测（`~/.workbuddy/binaries/opencode/...`、`~/.local/bin`、`~/.opencode/bin`），逐个候选实测 `--version` 才认；缺失时错误提示直接给出 postinstall 修法。
 - WorkBuddy playground 会话默认纳入卡片：`workbuddy_candidate_rows` 里 `is_playground` 从写死排除改为受第 4 个绑定参数控制（默认 true）；GUI 设置新增「WorkBuddy playground sessions」复选框（默认勾选），CLI `session list` 新增 `--exclude-playground` 回到旧视图，全历史扫描缓存键带上该开关。无工作区、软删、活跃窗口、路径黑名单、每源配额五层过滤不变；本机 11 条 playground 会话里 6 条有工作区可见，另外 5 条空工作区旧行仍排除。
 - 顺手删掉 `workbuddy_package_entries_use_session_path_as_raw_jsonl` 重复的 `#[test]` 标注：两个实例并发写同一临时文件会让全量测试偶发权限错误。
 - 同步文档口径：`skill/SKILL.md`（内嵌用法技能）、`README.md`、`AGENTS.md`；升级后重跑一次 `agentwatcher-cli skill install` 可刷新宿主里的技能副本。

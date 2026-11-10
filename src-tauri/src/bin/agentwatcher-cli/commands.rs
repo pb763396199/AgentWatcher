@@ -413,13 +413,14 @@ pub fn suggest_generate(
         || id.starts_with("codex:")
         || id.starts_with("codex://")
         || id.starts_with("zcode:")
-        || id.starts_with("workbuddy:");
+        || id.starts_with("workbuddy:")
+        || id.starts_with("opencode:");
     if !is_supported {
         output::finish_failure(
             "suggest generate",
             "unsupported_provider",
             format!(
-                "会话 {id} 的 agent 未接线，目前只支持 codex / zcode / workbuddy；其他 agent 可加 --via codex"
+                "会话 {id} 的 agent 未接线，目前只支持 codex / zcode / workbuddy / opencode；其他 agent 可加 --via codex"
             ),
         );
     }
