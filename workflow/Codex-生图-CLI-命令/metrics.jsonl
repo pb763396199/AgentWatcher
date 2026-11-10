@@ -1,0 +1,2 @@
+{"record":"span","phase":"implement","started_at":"2026-11-10T11:28:00+08:00","ended_at":"2026-11-10T11:28:01+08:00","input_tokens":0,"output_tokens":0,"cache_creation_tokens":0,"cache_read_tokens":0,"collector_version":"awf-0.1.0"}
+{"record":"span","phase":"implement","started_at":"2026-11-10T11:28:00+08:00","ended_at":"2026-11-10T12:10:00+08:00","input_tokens":0,"output_tokens":0,"cache_creation_tokens":0,"cache_read_tokens":0,"collector_version":"awf-0.1.0"}

@@ -1,0 +1,169 @@
+{
+  "schema_version": 1,
+  "protocol": "1.3.0",
+  "generated_at": "2026-11-10T04:22:01Z",
+  "generated_by": {
+    "tool_revision": "awf-0.1.0"
+  },
+  "work_item": {
+    "id": "wi_01M71Q3R0W0004MNNQHHS0ZSZ1",
+    "short_id": "mbvtfbzr",
+    "slug": "Codex-生图-CLI-命令",
+    "title": "Codex 生图 CLI 命令",
+    "kind": "feature",
+    "status": "in_review",
+    "branch": "feature/Codex-生图-CLI-命令",
+    "home_repository": "https://github.com/pb763396199/AgentWatcher.git",
+    "contract_digest": "sha256:08218fcaad2d9ec21a92a9335bb0cea91f075df699314c2971d7d17dfd158939",
+    "acceptance_ids": [
+      "AC-001",
+      "AC-002",
+      "AC-003",
+      "AC-004",
+      "AC-005"
+    ]
+  },
+  "artifacts": [
+    {
+      "artifact_id": "ar_1BQQSXZVDYWZFEVT2Q1EAEPP8Y",
+      "type": "change-note",
+      "path": "change-note.md",
+      "outcome": "complete",
+      "freshness": "stale-subject",
+      "stage": 45,
+      "depends_on": [
+        "ar_01M71QFY8X000C5SGDAPGSYSF9"
+      ]
+    },
+    {
+      "artifact_id": "ar_57XFQVZNZZ2X2BFDA8DX22QRGF",
+      "type": "delivery",
+      "path": "delivery.md",
+      "outcome": "ready_to_land",
+      "freshness": "fresh",
+      "stage": 80,
+      "depends_on": [
+        "ar_01M71TFMK90002TF44G3KGPK44",
+        "ar_0DP7HYTWKFKAGQ4YJ63QHKDKNR"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M71QRR9M000EGGH4EF73F7DT",
+      "type": "design",
+      "path": "design.md",
+      "outcome": "accepted",
+      "freshness": "fresh",
+      "stage": 20,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_15QZ5SZWH6YBJ6AKRSHHY9CTRN",
+      "type": "implementation",
+      "path": "implementation.md",
+      "outcome": "complete",
+      "freshness": "stale-subject",
+      "stage": 50,
+      "depends_on": [
+        "ar_1BQQSXZVDYWZFEVT2Q1EAEPP8Y"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M71TW7CW0005RGVDFHMPR2DY",
+      "type": "manual-test",
+      "path": "manual-test.md",
+      "outcome": "pending",
+      "freshness": "fresh",
+      "stage": 70,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_01M71QFY8X000C5SGDAPGSYSF9",
+      "type": "plan",
+      "path": "plan.md",
+      "outcome": "ready",
+      "freshness": "fresh",
+      "stage": 30,
+      "depends_on": [
+        "ar_01M71QRR9M000EGGH4EF73F7DT"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M71TFMK90002TF44G3KGPK44",
+      "type": "review",
+      "path": "reviews/code-review-v2.md",
+      "outcome": "approved",
+      "freshness": "fresh",
+      "stage": 60,
+      "depends_on": [
+        "ar_15QZ5SZWH6YBJ6AKRSHHY9CTRN",
+        "ar_2BNZFV5ZFQH5W3039QB8WCEE8A"
+      ]
+    },
+    {
+      "artifact_id": "ar_2BNZFV5ZFQH5W3039QB8WCEE8A",
+      "type": "review",
+      "path": "reviews/code-review.md",
+      "outcome": "superseded",
+      "freshness": "superseded",
+      "stage": 60,
+      "depends_on": [
+        "ar_15QZ5SZWH6YBJ6AKRSHHY9CTRN"
+      ]
+    },
+    {
+      "artifact_id": "ar_67YFVVYPZV0YMAPTGM6A9D13PZ",
+      "type": "summary",
+      "path": "summary.md",
+      "outcome": "complete",
+      "freshness": "stale-subject",
+      "stage": 55,
+      "depends_on": [
+        "ar_15QZ5SZWH6YBJ6AKRSHHY9CTRN"
+      ]
+    },
+    {
+      "artifact_id": "ar_0DP7HYTWKFKAGQ4YJ63QHKDKNR",
+      "type": "validation",
+      "path": "validation.md",
+      "outcome": "passed",
+      "freshness": "fresh",
+      "stage": 70,
+      "depends_on": [
+        "ar_15QZ5SZWH6YBJ6AKRSHHY9CTRN"
+      ]
+    }
+  ],
+  "wayfinder": null,
+  "manual_test": {
+    "passed": 0,
+    "open": 2,
+    "failed": 0
+  },
+  "stage": {
+    "reached": "delivery",
+    "reached_stage": 80,
+    "next_skill": "aes-retrospect",
+    "waiting_on": "human"
+  },
+  "next": "等人测：人工核对还有 2 条没测",
+  "computed_from": {
+    "documents": {
+      "change-note.md": "sha256:49302727333e6bc084b5bce970eb4b3767dd2d996526a036d951f9c5cf36035b",
+      "delivery.md": "sha256:54d693b6d803c8e4a5aafcf25ffa4d563b9b047bd3db47d40caf1b8d5d51afbc",
+      "design.md": "sha256:cbe02a9b300be23e0ce3a5fb8c0b148c167c9ea4a9697690f55e028d94367840",
+      "implementation.md": "sha256:b0c5d49a194b42af702d00585623a95d1bbadeb3655d80c069919636f2893009",
+      "manual-test.md": "sha256:c8058896d05dc670b1364ca7d09b8bea8287e6bd9d71d23d8f8e18c105fcefc8",
+      "plan.md": "sha256:cad5aeab1f93e37fb66bb7b0797f34fc8cb4d65a1b248c663141a12518e6ea52",
+      "reviews/code-review-v2.md": "sha256:5c988abf8bad8a8b2e6e16b4d23080cacadd9b6a1708111d30ed5a78b8b40b51",
+      "reviews/code-review.md": "sha256:76e45b9d9021ce8360ac9e7e1ca6efb0d0322601966d7b3cc2f3c4f87acfb28c",
+      "summary.md": "sha256:eddd1086b1b5b874ec77a989157899e365a446ce619291196360e336187ceb24",
+      "validation.md": "sha256:295b4d5f00a92b7af41d014205aeb0c22966f21019cdf0017c193f45167946ac",
+      "work-item.md": "sha256:3839555d80c13df16301e7fd66160c0c6d864e07650900a5b2b35820d38eb62a"
+    },
+    "change_set": {
+      "revision": "925e259e3cc47d929d471846cb8fcbe5c5d07167",
+      "tree": "bb7ffa1e07675883547c2317740e9db36821fccb",
+      "content_digest": "sha256:9404d3d863657b4615f4ee8a87ba560037a22d98a686458c759338b82ee39a53"
+    }
+  }
+}
