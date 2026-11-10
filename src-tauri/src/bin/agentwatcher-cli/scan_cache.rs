@@ -181,16 +181,26 @@ struct FileLock {
 
 impl FileLock {
     fn acquire(path: &PathBuf, wait: Duration) -> Option<FileLock> {
-        let file = fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(path)
-            .ok()?;
         let deadline = std::time::Instant::now() + wait;
         loop {
-            if try_lock(&file) {
-                return Some(FileLock { file: Some(file) });
+            // Windows 上文件被独占锁定时，再次 open 会直接返回「拒绝访问」。
+            // 那说明别人正持锁，不是错误——等一会儿重开即可。
+            let opened = fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(path);
+            match opened {
+                Ok(file) => {
+                    if try_lock(&file) {
+                        return Some(FileLock { file: Some(file) });
+                    }
+                    // 锁被别人占了但文件能开（同进程内多句柄场景）：轮询重试。
+                    drop(file);
+                }
+                Err(_) => {
+                    // 打不开（含「拒绝访问」）：同样按锁被占处理。
+                }
             }
             if std::time::Instant::now() >= deadline {
                 return None;
