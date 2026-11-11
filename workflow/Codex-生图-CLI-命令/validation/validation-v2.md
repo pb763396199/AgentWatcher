@@ -11,10 +11,10 @@ dependencies:
   work_item_contract_digest: sha256:08218fcaad2d9ec21a92a9335bb0cea91f075df699314c2971d7d17dfd158939
   artifacts:
     - artifact_id: ar_15QZ5SZWH6YBJ6AKRSHHY9CTRN
-      digest: sha256:a1a37475e7b3627e443c8aa934b962de533cb7387b502c029b0ad2f9c3ad2762
+      digest: sha256:3f833e4fde1bfab6461f52918f02666c2959e6ed59c739aebb482c8c186e9eef
       locator: implementation.md
     - artifact_id: ar_01M71TFMK90002TF44G3KGPK44
-      digest: sha256:d324f246239342a80477bd744552328e7befde2c956aa0fe9520fc3a8c2e48cb
+      digest: sha256:bfa635181574f7a479038e18209e3a0bd508605319d95bc4179bd8bc80511d3f
       locator: reviews/code-review-v2.md
   subject:
     kind: change_set
@@ -26,7 +26,7 @@ dependencies:
     content_digest: sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
     branch_or_pr: feature/Codex-生图-CLI-命令
     workflow_excluded: true
-outcome: "passed"
+outcome: "superseded"
 acceptance:
   - id: "AC-001"
     verdict: "passed"

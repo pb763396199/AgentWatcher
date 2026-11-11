@@ -23,7 +23,7 @@ dependencies:
     content_digest: "sha256:a5b50e6177ce55998b7c8d5feebb538d56961ad9bd5f9e8cfc8a89396bc4ff8d"
     branch_or_pr: "feature/Codex-生图-CLI-命令"
     workflow_excluded: true
-result: "complete"
+result: "superseded"
 ---
 # 修改说明
 

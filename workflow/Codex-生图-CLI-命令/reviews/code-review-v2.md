@@ -11,10 +11,10 @@ dependencies:
   work_item_contract_digest: sha256:08218fcaad2d9ec21a92a9335bb0cea91f075df699314c2971d7d17dfd158939
   artifacts:
     - artifact_id: "ar_15QZ5SZWH6YBJ6AKRSHHY9CTRN"
-      digest: sha256:a1a37475e7b3627e443c8aa934b962de533cb7387b502c029b0ad2f9c3ad2762
+      digest: sha256:3f833e4fde1bfab6461f52918f02666c2959e6ed59c739aebb482c8c186e9eef
       locator: "implementation.md"
     - artifact_id: "ar_2BNZFV5ZFQH5W3039QB8WCEE8A"
-      digest: sha256:071c5178a661e88e853a2f4d76035d4a44ccfeb0b72ed1841e22cf6fdbbd1448
+      digest: sha256:2519fd134b50684597599f527b5e8e3446be8c4faffaf32780a4433e1e24b0e5
       locator: "reviews/code-review.md"
   subject:
     kind: "change_set"
@@ -26,7 +26,7 @@ dependencies:
     content_digest: "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
     branch_or_pr: "feature/Codex-生图-CLI-命令"
     workflow_excluded: true
-verdict: "approved"
+verdict: "superseded"
 review_type: "code"
 reviewers: []
 ---

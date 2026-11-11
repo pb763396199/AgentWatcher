@@ -11,7 +11,7 @@ dependencies:
   work_item_contract_digest: sha256:08218fcaad2d9ec21a92a9335bb0cea91f075df699314c2971d7d17dfd158939
   artifacts:
     - artifact_id: "ar_1BQQSXZVDYWZFEVT2Q1EAEPP8Y"
-      digest: sha256:f4ff1ff44a0b81e89a60c6ccf782dae830f416457de6beceac8fede71984f7b4
+      digest: sha256:bffb80fc9bf3bd5ce2ebda57e02f3dcbe185062c76b8c9e1d350c76b5dfa416c
       locator: "change-note.md"
   subject:
     kind: "change_set"
@@ -23,7 +23,7 @@ dependencies:
     content_digest: "sha256:a5b50e6177ce55998b7c8d5feebb538d56961ad9bd5f9e8cfc8a89396bc4ff8d"
     branch_or_pr: "feature/Codex-生图-CLI-命令"
     workflow_excluded: true
-result: "complete"
+result: "superseded"
 ---
 # 实现回执
 

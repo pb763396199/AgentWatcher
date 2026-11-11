@@ -11,10 +11,10 @@ dependencies:
   work_item_contract_digest: sha256:08218fcaad2d9ec21a92a9335bb0cea91f075df699314c2971d7d17dfd158939
   artifacts:
     - artifact_id: "ar_01M71TFMK90002TF44G3KGPK44"
-      digest: "sha256:d324f246239342a80477bd744552328e7befde2c956aa0fe9520fc3a8c2e48cb"
+      digest: sha256:bfa635181574f7a479038e18209e3a0bd508605319d95bc4179bd8bc80511d3f
       locator: "reviews/code-review-v2.md"
     - artifact_id: "ar_0DP7HYTWKFKAGQ4YJ63QHKDKNR"
-      digest: sha256:b8e6d50c085d3657c8ab5400004f397d8e8be6e2e897452b46f647a95b7bebe4
+      digest: sha256:12b9c5662a19353efa4de70eca2a8def3052d1c161f2f5c080a87bb799a62dd0
       locator: "validation.md"
   subject:
     kind: "change_set"
@@ -26,7 +26,7 @@ dependencies:
     content_digest: "sha256:9404d3d863657b4615f4ee8a87ba560037a22d98a686458c759338b82ee39a53"
     branch_or_pr: "feature/Codex-生图-CLI-命令"
     workflow_excluded: true
-outcome: "ready_to_land"
+outcome: "superseded"
 ---
 # 交付
 

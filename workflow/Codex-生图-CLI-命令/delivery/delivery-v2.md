@@ -1,0 +1,47 @@
+---
+schema_version: "1"
+protocol: "1.3.0"
+artifact: "delivery"
+artifact_id: "ar_01M74A16NB0007BXB9K7551MJG"
+work_item_id: "wi_01M71Q3R0W0004MNNQHHS0ZSZ1"
+created_at: "2026-11-10T04:20:26Z"
+producer: "aes-finish"
+supersedes: "ar_57XFQVZNZZ2X2BFDA8DX22QRGF"
+dependencies:
+  work_item_contract_digest: sha256:08218fcaad2d9ec21a92a9335bb0cea91f075df699314c2971d7d17dfd158939
+  artifacts:
+    - artifact_id: "ar_01M71TFMK90002TF44G3KGPK44"
+      digest: sha256:bfa635181574f7a479038e18209e3a0bd508605319d95bc4179bd8bc80511d3f
+      locator: "reviews/code-review-v2.md"
+    - artifact_id: "ar_0DP7HYTWKFKAGQ4YJ63QHKDKNR"
+      digest: sha256:12b9c5662a19353efa4de70eca2a8def3052d1c161f2f5c080a87bb799a62dd0
+      locator: "validation.md"
+  subject:
+    kind: "change_set"
+    digest: null
+    repository: "https://github.com/pb763396199/AgentWatcher.git"
+    base_revision: "34600a6a84017e628673841d74ef71c744af8dbb"
+    revision: "6df0e00a848f20e9ce655a31fd85eef6ffdc1790"
+    tree: "660c9b8c488fa7b46a49e2f15c4cef725305baa9"
+    content_digest: "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    branch_or_pr: "feature/Codex-生图-CLI-命令"
+    workflow_excluded: true
+outcome: "ready_to_land"
+---
+# 交付
+
+## 要合入什么
+
+feature/Codex-生图-CLI-命令 上三个提交（c1d1b4a 代码 891 行、c0efe38 文档、925e259 评审修复）：agentwatcher-cli 新增 `imagegen generate` 子命令——经 codex exec 触发 Codex 内置 image_gen 工具生图，所有 agent 通用，生图模型由云端自动选择不随命令版本绑定，提示词双来源（系统 skill 优先、内嵌固化副本兜底）。
+
+## 证据
+
+评审 approved（reviews/code-review-v2.md，阻断项 R1 已修并复验）；验收五条全过（validation.md，锚定 925e259）；人工核对清单两条待测（manual-test.md，pending）——按协议人工项在准备阶段放行、关闭阶段闭合。
+
+## 怎么回滚
+
+命令面是纯新增子命令，不动既有命令；`git revert c1d1b4a c0efe38 925e259` 三连一次退净，无数据迁移无配置变更。
+
+## 能不能合入
+
+能。等你跑完 manual-test.md 两条（约五分钟），勾上之后走关闭：rebase 到 dev 最新、快进合入。
