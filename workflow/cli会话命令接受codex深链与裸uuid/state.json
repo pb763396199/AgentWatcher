@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "protocol": "1.3.0",
+  "generated_at": "2026-11-11T08:08:53Z",
+  "generated_by": {
+    "tool_revision": "awf-0.1.0"
+  },
+  "work_item": {
+    "id": "wi_7FY75QZZZZ3Z0YTX8PZVK8N0BN",
+    "short_id": "4hmwwkw0",
+    "slug": "cli会话命令接受codex深链与裸uuid",
+    "title": "cli会话命令接受codex深链与裸uuid",
+    "kind": "fix",
+    "status": "done",
+    "branch": "feature/cli会话命令接受codex深链与裸uuid",
+    "home_repository": "file://F:\\AiProject\\AgentWatcher",
+    "contract_digest": "sha256:ac9ef900a601c9ec2c7772f8a1df16791d2d07a04de86d850b7c7a89ea08446b",
+    "acceptance_ids": [
+      "AC-001",
+      "AC-002",
+      "AC-003",
+      "AC-004",
+      "AC-005"
+    ]
+  },
+  "artifacts": [
+    {
+      "artifact_id": "ar_0SZ7WSZSNXHXS9TJCQEG17RBM2",
+      "type": "change-note",
+      "path": "change-note.md",
+      "outcome": "complete",
+      "freshness": "fresh",
+      "stage": 45,
+      "depends_on": [
+        "ar_6QYZQVF0FAQG1TCGWGGYAB6GPD"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M74TBRPR00071AXCYFHBBAT9",
+      "type": "delivery",
+      "path": "delivery.md",
+      "outcome": "delivered",
+      "freshness": "fresh",
+      "stage": 80,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_3ZXZXSFVEY1GC0Q2EYPAT8ZJ19",
+      "type": "design",
+      "path": "design.md",
+      "outcome": "accepted",
+      "freshness": "fresh",
+      "stage": 20,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_4DY7MSFTTEHHVAVJYAKSSJKAA5",
+      "type": "implementation",
+      "path": "implementation.md",
+      "outcome": "complete",
+      "freshness": "fresh",
+      "stage": 50,
+      "depends_on": [
+        "ar_0SZ7WSZSNXHXS9TJCQEG17RBM2"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M74RXCJ7000CMXXZPHHJJ1W4",
+      "type": "manual-test",
+      "path": "manual-test.md",
+      "outcome": "passed",
+      "freshness": "fresh",
+      "stage": 70,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_6QYZQVF0FAQG1TCGWGGYAB6GPD",
+      "type": "plan",
+      "path": "plan.md",
+      "outcome": "ready",
+      "freshness": "fresh",
+      "stage": 30,
+      "depends_on": [
+        "ar_3ZXZXSFVEY1GC0Q2EYPAT8ZJ19"
+      ]
+    },
+    {
+      "artifact_id": "ar_7VPQPSF4ZZ9YH3H8TJZAZG0R6N",
+      "type": "review",
+      "path": "reviews/code-review.md",
+      "outcome": "approved",
+      "freshness": "fresh",
+      "stage": 60,
+      "depends_on": [
+        "ar_4DY7MSFTTEHHVAVJYAKSSJKAA5"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M74RT4N80006J2G3Z8QW1R8X",
+      "type": "summary",
+      "path": "summary.md",
+      "outcome": "complete",
+      "freshness": "fresh",
+      "stage": 55,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_43WFMXFCPFGV53TS26HFDEQ9P1",
+      "type": "validation",
+      "path": "validation.md",
+      "outcome": "passed",
+      "freshness": "fresh",
+      "stage": 70,
+      "depends_on": [
+        "ar_4DY7MSFTTEHHVAVJYAKSSJKAA5"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M74SQ1DS0006ZJJ5EC3NY56J",
+      "type": "summary",
+      "path": "work-item-summary.md",
+      "outcome": "complete",
+      "freshness": "fresh",
+      "stage": 55,
+      "depends_on": []
+    }
+  ],
+  "wayfinder": null,
+  "manual_test": {
+    "passed": 0,
+    "open": 0,
+    "failed": 0
+  },
+  "stage": {
+    "reached": "delivery",
+    "reached_stage": 80,
+    "next_skill": "aes-retrospect",
+    "waiting_on": null
+  },
+  "next": "已收口",
+  "computed_from": {
+    "documents": {
+      "change-note.md": "sha256:7f3e545684f1ff6cabbcf7ba022d5d9dc6a5048975c3ea3f74b38713e53869a3",
+      "delivery.md": "sha256:c0d76fe11429a2b20b71d148cb4bbde90f9c4500bf5d43b704c03c67360835b1",
+      "design.md": "sha256:8a645463fee6b8277b6bdbeb8f8ba14c2d73ed9927af6ecff801859ec3bddf76",
+      "implementation.md": "sha256:d24ef7fcfba1ca1c23cdaada3a9f07947e352329f32e46abdc2d5efa35d98f3e",
+      "manual-test.md": "sha256:2be6309bf904006a491e3471a3b572294b8de8028cbbbefeff271bbad2d813df",
+      "plan.md": "sha256:23436d63d8b17409bf0e6aa31bcb25f03d3786335a0a05b005a1b8d82694e342",
+      "reviews/code-review.md": "sha256:6b1469d3e96638ac3518515d0d445470b391c8754fb1a6ada1fd1104406ecb1a",
+      "summary.md": "sha256:69bbfa75a92ba2beb43a9541d9f637b993ad17d86cec9b09a015505000188850",
+      "validation.md": "sha256:52a28d846805c3f38812af0bc6408829a2739ec96775d75ae633a805272620cd",
+      "work-item-summary.md": "sha256:4f5ed739b032b5232cb9da15acee28561b9f059a918487b1aa6ace5e0c1bc9ba",
+      "work-item.md": "sha256:70163c032018aec666af3f24a6153ffa45b58c6b98b67f2c7a3ac441d9381b69"
+    },
+    "change_set": {
+      "revision": "f439e318bfd80077dfeeedda34a07f117b543b1f",
+      "tree": "cfdbc1ba4089b5a03c8161310fed3bf9b77e5a0c",
+      "content_digest": "sha256:a1cc9c749a48aa4803a82b0a7f1a7536a7bf39ecd29ab053fce681fa786dff9d"
+    }
+  }
+}
