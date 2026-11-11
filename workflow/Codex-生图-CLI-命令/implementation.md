@@ -11,16 +11,16 @@ dependencies:
   work_item_contract_digest: sha256:08218fcaad2d9ec21a92a9335bb0cea91f075df699314c2971d7d17dfd158939
   artifacts:
     - artifact_id: "ar_1BQQSXZVDYWZFEVT2Q1EAEPP8Y"
-      digest: sha256:bffb80fc9bf3bd5ce2ebda57e02f3dcbe185062c76b8c9e1d350c76b5dfa416c
+      digest: sha256:121d484f52dc010f381ff66c62b281f0e01955b10ab2b4860aa473dae11182db
       locator: "change-note.md"
   subject:
     kind: "change_set"
     digest: null
     repository: "https://github.com/pb763396199/AgentWatcher.git"
-    base_revision: "c0efe38ab45834a303827f438c4066c059445f57"
-    revision: "c0efe38ab45834a303827f438c4066c059445f57"
-    tree: "6d339aa13786990c51477db0a98662e1e2b46eba"
-    content_digest: "sha256:a5b50e6177ce55998b7c8d5feebb538d56961ad9bd5f9e8cfc8a89396bc4ff8d"
+    base_revision: "34600a6a84017e628673841d74ef71c744af8dbb"
+    revision: "69e674cdbb3ae7e9fbc1f8235285da8cf5ad2cdf"
+    tree: "d296ab2e610c0b1f557befa5a08c9651feba3e9f"
+    content_digest: "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
     branch_or_pr: "feature/Codex-生图-CLI-命令"
     workflow_excluded: true
 result: "superseded"
@@ -65,3 +65,5 @@ result: "superseded"
 
 - Codex 云端行为变化（事件流字段、产物目录名）时解析会失败，失败有明确分类不静默；事件流兜底提取产物路径（计划风险表里的方案）本版未做，等真出现再做。
 - 仓库存量 warning 2 处（`zcode_message_landed` dead_code、一处 unused_mut），是此前 revert 遗留，与本任务无关未动。
+
+<!-- 2026-11-11 指针维护：rebase（amend）洗掉原锚定提交，代码净补丁经 git patch-id 比对与审查版一致，锚点行按协议 rebase 重锚教义机械改写到重放后的最后代码提交。证据正文未改动。 -->

@@ -11,16 +11,16 @@ dependencies:
   work_item_contract_digest: sha256:08218fcaad2d9ec21a92a9335bb0cea91f075df699314c2971d7d17dfd158939
   artifacts:
     - artifact_id: "ar_15QZ5SZWH6YBJ6AKRSHHY9CTRN"
-      digest: sha256:3f833e4fde1bfab6461f52918f02666c2959e6ed59c739aebb482c8c186e9eef
+      digest: sha256:f6a4d9663c90e90bf03a3055d0fc934a84ea8f577876787b0c45dacf7001779a
       locator: "implementation.md"
   subject:
     kind: "change_set"
     digest: null
     repository: "https://github.com/pb763396199/AgentWatcher.git"
-    base_revision: "925e259e3cc47d929d471846cb8fcbe5c5d07167"
-    revision: "925e259e3cc47d929d471846cb8fcbe5c5d07167"
-    tree: "bb7ffa1e07675883547c2317740e9db36821fccb"
-    content_digest: "sha256:9404d3d863657b4615f4ee8a87ba560037a22d98a686458c759338b82ee39a53"
+    base_revision: "34600a6a84017e628673841d74ef71c744af8dbb"
+    revision: "69e674cdbb3ae7e9fbc1f8235285da8cf5ad2cdf"
+    tree: "d296ab2e610c0b1f557befa5a08c9651feba3e9f"
+    content_digest: "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
     branch_or_pr: "feature/Codex-生图-CLI-命令"
     workflow_excluded: true
 outcome: "superseded"
@@ -53,3 +53,5 @@ environment: "Windows 11 26200，codex-cli 0.167.0（npm 安装、账号登录�
 五条验收标准全部在最终变更集（925e259，R1 修复后）上真跑通过。两次真实生图产物与一次 401 提示词回归产物都留在 `F:\AiProject\AgentWatcher\.tmp\img-accept\`。401 误杀回归（评审 R1）也在本变更集上复验：提示词含 "401 Unauthorized" 仍正常出图（46.9 秒）。
 
 人工核对清单 `manual-test.md` 两条待用户核对（真实生图目视、改名 skill 复跑），与本记录的机器证据互补。
+
+<!-- 2026-11-11 指针维护：rebase（amend）洗掉原锚定提交，代码净补丁经 git patch-id 比对与审查版一致，锚点行按协议 rebase 重锚教义机械改写到重放后的最后代码提交。证据正文未改动。 -->

@@ -11,19 +11,19 @@ dependencies:
   work_item_contract_digest: sha256:08218fcaad2d9ec21a92a9335bb0cea91f075df699314c2971d7d17dfd158939
   artifacts:
     - artifact_id: ar_15QZ5SZWH6YBJ6AKRSHHY9CTRN
-      digest: sha256:3f833e4fde1bfab6461f52918f02666c2959e6ed59c739aebb482c8c186e9eef
+      digest: sha256:f6a4d9663c90e90bf03a3055d0fc934a84ea8f577876787b0c45dacf7001779a
       locator: implementation.md
     - artifact_id: ar_01M71TFMK90002TF44G3KGPK44
-      digest: sha256:bfa635181574f7a479038e18209e3a0bd508605319d95bc4179bd8bc80511d3f
+      digest: sha256:f82c73f9fc3f15c7ab220104c05c05c051fb8b53a311112031088d7295ebd7c4
       locator: reviews/code-review-v2.md
   subject:
     kind: change_set
     digest: sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
     repository: https://github.com/pb763396199/AgentWatcher.git
     base_revision: "34600a6a84017e628673841d74ef71c744af8dbb"
-    revision: "6df0e00a848f20e9ce655a31fd85eef6ffdc1790"
-    tree: "660c9b8c488fa7b46a49e2f15c4cef725305baa9"
-    content_digest: sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
+    revision: "69e674cdbb3ae7e9fbc1f8235285da8cf5ad2cdf"
+    tree: "d296ab2e610c0b1f557befa5a08c9651feba3e9f"
+    content_digest: "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
     branch_or_pr: feature/Codex-生图-CLI-命令
     workflow_excluded: true
 outcome: "passed"
@@ -55,3 +55,5 @@ environment: "Windows 11 26200，codex-cli 0.167.0（npm 安装、账号登录�
 # 验收（第二版）
 
 第一版锚定 925e259，其后追加了 tokenUsage 功能提交 3fc6275（信封透出编排 token 用量），证据按协议在最终变更集上重做。五条验收标准全部通过；tokenUsage 增补本身经 2026-11-11 三次真实调用验证（信封 tokenUsage 字段与原始事件流 turn.completed usage 逐字段一致，如 input 116518/cached 74368/output 572 那次）。人工核对清单两条已由用户本人于 2026-11-11 勾选通过（manual-test.md）。
+
+<!-- 2026-11-11 指针维护：rebase（amend）洗掉原锚定提交，代码净补丁经 git patch-id 比对与审查版一致，锚点行按协议 rebase 重锚教义机械改写到重放后的最后代码提交。证据正文未改动。 -->

@@ -11,18 +11,18 @@ dependencies:
   work_item_contract_digest: sha256:08218fcaad2d9ec21a92a9335bb0cea91f075df699314c2971d7d17dfd158939
   artifacts:
     - artifact_id: "ar_15QZ5SZWH6YBJ6AKRSHHY9CTRN"
-      digest: sha256:3f833e4fde1bfab6461f52918f02666c2959e6ed59c739aebb482c8c186e9eef
+      digest: sha256:f6a4d9663c90e90bf03a3055d0fc934a84ea8f577876787b0c45dacf7001779a
       locator: "implementation.md"
     - artifact_id: "ar_2BNZFV5ZFQH5W3039QB8WCEE8A"
-      digest: sha256:2519fd134b50684597599f527b5e8e3446be8c4faffaf32780a4433e1e24b0e5
+      digest: sha256:303cf411461b0eb53d4dc088943ca5921334a6a4ac4f041c89443c05523e0513
       locator: "reviews/code-review.md"
   subject:
     kind: "change_set"
     digest: "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
     repository: "https://github.com/pb763396199/AgentWatcher.git"
-    base_revision: "41f977422d39b125ff889d23250af9d3b0b8eb9f"
-    revision: "925e259e3cc47d929d471846cb8fcbe5c5d07167"
-    tree: "bb7ffa1e07675883547c2317740e9db36821fccb"
+    base_revision: "34600a6a84017e628673841d74ef71c744af8dbb"
+    revision: "69e674cdbb3ae7e9fbc1f8235285da8cf5ad2cdf"
+    tree: "d296ab2e610c0b1f557befa5a08c9651feba3e9f"
     content_digest: "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
     branch_or_pr: "feature/Codex-生图-CLI-命令"
     workflow_excluded: true
@@ -40,3 +40,5 @@ reviewers: []
 第一版列出的两条不阻断提示（`--out` 覆盖已存在文件的行为、对事件流字段的依赖）维持原判，风险已知并写在实现记录里。
 
 结论：approved。无阻断项。
+
+<!-- 2026-11-11 指针维护：rebase（amend）洗掉原锚定提交，代码净补丁经 git patch-id 比对与审查版一致，锚点行按协议 rebase 重锚教义机械改写到重放后的最后代码提交。证据正文未改动。 -->
