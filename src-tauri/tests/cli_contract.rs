@@ -95,6 +95,30 @@ fn json_handoff_export_unknown_id_fails_in_envelope() {
 }
 
 #[test]
+fn not_found_deep_link_and_bare_uuid_still_fail_cleanly() {
+    // 深链与裸 UUID 形态被归一化成 codex:<uuid> 后仍找不到：照样走信封报
+    // session_not_found、退出码 1，不因形态可解析而误判成功。全零 UUID 形状合法
+    // 但不会是真实会话，断言不依赖本机数据。
+    for id in [
+        "codex://threads/00000000-0000-4000-8000-000000000000",
+        "00000000-0000-4000-8000-000000000000",
+    ] {
+        let (envelope, _stderr, code) = run_cli(&["--format", "json", "session", "show", id]);
+        assert_eq!(code, Some(1), "not found must exit 1 for {id}");
+        let object = envelope
+            .as_object()
+            .unwrap_or_else(|| panic!("stdout must be a single JSON object, got: {envelope}"));
+        for key in ["command", "ok", "data", "error", "messages"] {
+            assert!(object.contains_key(key), "envelope must have {key}");
+        }
+        assert_eq!(envelope["command"], "session show");
+        assert_eq!(envelope["ok"], false);
+        assert_eq!(envelope["error"]["code"], "session_not_found");
+        assert!(envelope["data"].is_null());
+    }
+}
+
+#[test]
 fn json_imagegen_empty_prompt_fails_in_envelope() {
     // 失败路径也走信封（AC-004 可自动化的稳定子集：参数错误）。
     // codex 缺失 / 未登录 / 超时依赖本机环境，归人工验收清单。
@@ -226,7 +250,7 @@ fn skill_print_and_status_expose_doc_surface() {
     assert_eq!(envelope["command"], "skill print");
     let content = envelope["data"]["content"].as_str().expect("data.content is a string");
     assert!(content.contains("name: agentwatcher"), "doc has frontmatter");
-    assert!(content.contains("version: 2"), "doc carries a version");
+    assert!(content.contains("version: 3"), "doc carries a version");
     assert!(content.contains("suggest generate"), "doc teaches the suggest command");
     assert!(
         envelope["data"]["docBytes"].as_u64().unwrap_or(0) > 0,
@@ -237,7 +261,7 @@ fn skill_print_and_status_expose_doc_surface() {
     let (envelope, _stderr, code) = run_cli(&["--format", "json", "skill", "status"]);
     assert_eq!(code, Some(0));
     assert_eq!(envelope["command"], "skill status");
-    assert_eq!(envelope["data"]["docVersion"], "2");
+    assert_eq!(envelope["data"]["docVersion"], "3");
     let hosts = envelope["data"]["hosts"].as_array().expect("data.hosts is an array");
     assert!(!hosts.is_empty(), "至少有一个宿主候选");
     let valid_actions = ["none", "skill install", "skip"];

@@ -1,7 +1,7 @@
 ---
 name: agentwatcher
 description: 查询本机 AI 助手（VS Code Copilot、Copilot CLI、Claude Code、Codex、OpenCode、ZCode、WorkBuddy）的会话状态、用量与正文，导出接续上下文，并按会话所属 agent 生成下一条建议回复。用户问哪些会话在等人、在跑、闲着，要把会话接到新窗口，或想让人代拟下一句话时使用。
-version: 2
+version: 3
 ---
 
 # AgentWatcher 会话查询与建议
@@ -29,7 +29,7 @@ version: 2
 | `agentwatcher-cli skill list [--dir <路径>]` | 看各宿主技能目录的安装状态 |
 | `agentwatcher-cli skill install [--dir <路径>]` | 把这份技能装进宿主目录，重复执行即覆盖升级 |
 
-会话 ID 形如 `opencode:abc123`，从 `session list` 的输出里拿，跨次调用稳定。建议命令额外接受 Codex 的深链形态 `codex://threads/<uuid>`。
+会话 ID 形如 `opencode:abc123`，从 `session list` 的输出里拿，跨次调用稳定。所有按 ID 查询的命令（show / usage / handoff export / suggest）对 Codex 会话额外接受深链形态 `codex://threads/<uuid>` 与裸 UUID，会自动换算成 `codex:<uuid>`；裸 UUID 一律按 Codex 解释。
 
 `session list` 的 `data` 形如 `{ "sessions": [...], "total": <条数> }`。每个条目的时间有两份口径：`timeLabel` 是相对天数（如 `140d`，给人看的），`updatedMs` 是最后更新的毫秒时间戳（给程序用的）。要按日期范围搜会话（比如某个月），用 `updatedMs` 过滤，别拿 `timeLabel` 换算。
 

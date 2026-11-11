@@ -2,7 +2,7 @@
 
 use crate::output;
 use agentwatcher_lib::{
-    generate_suggestion_for_session_with, lookup_session_full_history,
+    codex_session_key, generate_suggestion_for_session_with, lookup_session_full_history,
     prepare_handoff_source_context_blocking, scan_sessions_blocking, session_usage_detail,
     suggestion_prompt_preview, AgentSession, CodexImagegenError, HandoffSourceContextRequest,
     ScanOptions, SuggestionEngine, SuggestionEngineOptions, SuggestionVia,
@@ -212,6 +212,28 @@ pub fn session_list(
     output::finish_success("session list", data, Some(human));
 }
 
+/// 把调用方顺手粘来的 Codex 会话 ID 归一化成 `codex:<uuid>`：
+/// `codex://threads/<uuid>`（Codex 桌面端的跳转深链）与裸 UUID（suggest 链路同口径）
+/// 都收敛，其余形态原样返回。session show / session usage / handoff export 共用，
+/// 让 find_session 与 session_usage_detail 两条解析路拿到同一规范形态。
+/// 裸 UUID 一律按 Codex 解释；不命中就照常 session_not_found，不做多 provider 猜测。
+/// 注意 codex_session_key 对「任何以 UUID 结尾的串」都放行（如别家应用的 URL），
+/// 这里先限定三种明确形态再交它做形状校验，不把无关串吸进 codex 命名空间。
+fn normalize_lookup_id(id: &str) -> String {
+    let trimmed = id.trim();
+    let codex_shaped = trimmed.starts_with("codex://threads/")
+        || trimmed.starts_with("codex:")
+        // 裸 UUID 不含 ':' 与 '/'；含任一的是别的 provider 或 URL，原样放行。
+        || (!trimmed.contains(':') && !trimmed.contains('/'));
+    if !codex_shaped {
+        return trimmed.to_string();
+    }
+    match codex_session_key(trimmed) {
+        Some(uuid) => format!("codex:{uuid}"),
+        None => trimmed.to_string(),
+    }
+}
+
 fn find_session(id: &str) -> Option<AgentSession> {
     let trimmed = id.trim();
     // id 形如 provider:key：先按该 provider 窄扫描。显式点名查询不该跟全量扫描
@@ -293,7 +315,8 @@ fn render_session_human(session: &AgentSession) -> String {
 }
 
 pub fn session_show(id: &str, content: bool) {
-    let Some(session) = find_session(id) else {
+    let lookup = normalize_lookup_id(id);
+    let Some(session) = find_session(&lookup) else {
         output::finish_failure(
             "session show",
             "session_not_found",
@@ -335,14 +358,15 @@ fn content_block_for(session: &AgentSession) -> serde_json::Value {
 }
 
 pub fn session_usage(id: &str) {
-    if find_session(id).is_none() {
+    let lookup = normalize_lookup_id(id);
+    if find_session(&lookup).is_none() {
         output::finish_failure(
             "session usage",
             "session_not_found",
             format!("找不到会话 {id}，先跑 session list 拿有效 ID"),
         );
     }
-    let detail = session_usage_detail(id.trim().to_string());
+    let detail = session_usage_detail(lookup);
     let value = serde_json::to_value(&detail).expect("usage detail always serializes");
     let mut human = String::new();
     for key in ["totalInputTokens", "totalOutputTokens", "userTurns", "toolCalls"] {
@@ -356,7 +380,8 @@ pub fn session_usage(id: &str) {
 }
 
 pub fn handoff_export(id: &str) {
-    let Some(session) = find_session(id) else {
+    let lookup = normalize_lookup_id(id);
+    let Some(session) = find_session(&lookup) else {
         output::finish_failure(
             "handoff export",
             "session_not_found",
@@ -537,5 +562,58 @@ pub fn suggest_prompt(id: &str) {
             output::finish_success("suggest prompt", data, Some(human));
         }
         Err(message) => output::finish_failure("suggest prompt", "preview_failed", message),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_lookup_id;
+
+    const UUID: &str = "01a1c945-78f0-7882-a2cb-6ae5539162eb";
+
+    #[test]
+    fn test_normalize_lookup_id_accepts_codex_forms() {
+        // 桌面端深链与 CLI 内部形态收敛到同一个规范 ID。
+        assert_eq!(
+            normalize_lookup_id(&format!("codex://threads/{UUID}")),
+            format!("codex:{UUID}")
+        );
+        // 已是规范形态时幂等，不改写。
+        assert_eq!(
+            normalize_lookup_id(&format!("codex:{UUID}")),
+            format!("codex:{UUID}")
+        );
+        // 前后空白剥掉。
+        assert_eq!(
+            normalize_lookup_id(&format!("  codex://threads/{UUID} \n")),
+            format!("codex:{UUID}")
+        );
+    }
+
+    #[test]
+    fn test_normalize_lookup_id_accepts_bare_uuid() {
+        // 裸 UUID 按 Codex 解释（与 suggest 链路同口径）。
+        assert_eq!(normalize_lookup_id(UUID), format!("codex:{UUID}"));
+    }
+
+    #[test]
+    fn test_normalize_lookup_id_passthrough_non_codex() {
+        // 其他 provider 的 provider:key 与非 UUID 形态原样通过，保持精确匹配语义。
+        for raw in [
+            "zcode:sess_44b48522-25d8-445c-892b-e6f2438da375",
+            "claude:01a1360f-7573-7ed0-b25b-35cddae9eeaf",
+            "opencode:ses_abc123",
+            "workbuddy:sess_x",
+            "codex:not-a-uuid",
+            "nosuch:000000000000",
+            "",
+        ] {
+            assert_eq!(normalize_lookup_id(raw), raw);
+        }
+        // 带其他前缀的串即使内含 UUID 片段也不归一化。
+        assert_eq!(
+            normalize_lookup_id("vscode://threads/01a1c945-78f0-7882-a2cb-6ae5539162eb"),
+            "vscode://threads/01a1c945-78f0-7882-a2cb-6ae5539162eb"
+        );
     }
 }

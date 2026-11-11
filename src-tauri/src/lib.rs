@@ -16381,7 +16381,8 @@ struct CodexSuggestionMeta {
 
 /// 从各种 ID 形态里抽出 Codex 会话 UUID：
 /// `codex:<uuid>`（CLI 内部 ID）、`codex://threads/<uuid>`（跳转深链）、裸 UUID 均可。
-fn codex_session_key(session_id: &str) -> Option<&str> {
+/// pub 供 CLI 的按 ID 查询命令做同一口径的归一化。
+pub fn codex_session_key(session_id: &str) -> Option<&str> {
     let raw = session_id
         .strip_prefix("codex://threads/")
         .or_else(|| session_id.strip_prefix("codex:"))
