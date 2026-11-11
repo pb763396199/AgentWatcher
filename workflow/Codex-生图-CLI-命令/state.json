@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "protocol": "1.3.0",
-  "generated_at": "2026-11-11T03:24:26Z",
+  "generated_at": "2026-11-11T03:31:34Z",
   "generated_by": {
     "tool_revision": "awf-0.1.0"
   },
@@ -11,7 +11,7 @@
     "slug": "Codex-生图-CLI-命令",
     "title": "Codex 生图 CLI 命令",
     "kind": "feature",
-    "status": "in_review",
+    "status": "done",
     "branch": "feature/Codex-生图-CLI-命令",
     "home_repository": "https://github.com/pb763396199/AgentWatcher.git",
     "contract_digest": "sha256:08218fcaad2d9ec21a92a9335bb0cea91f075df699314c2971d7d17dfd158939",
@@ -62,12 +62,23 @@
       "artifact_id": "ar_01M74A16NB0007BXB9K7551MJG",
       "type": "delivery",
       "path": "delivery/delivery-v2.md",
-      "outcome": "ready_to_land",
-      "freshness": "fresh",
+      "outcome": "superseded",
+      "freshness": "superseded",
       "stage": 80,
       "depends_on": [
         "ar_01M71TFMK90002TF44G3KGPK44",
         "ar_0DP7HYTWKFKAGQ4YJ63QHKDKNR"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M74AH4HZ00029DAZ4G4H3KX0",
+      "type": "delivery",
+      "path": "delivery/delivery-v3.md",
+      "outcome": "delivered",
+      "freshness": "stale-subject",
+      "stage": 80,
+      "depends_on": [
+        "ar_01M74A16SE0005HRYZMNP5J5F9"
       ]
     },
     {
@@ -206,7 +217,7 @@
       "type": "validation",
       "path": "validation/validation-v3.md",
       "outcome": "passed",
-      "freshness": "stale-subject",
+      "freshness": "fresh",
       "stage": 70,
       "depends_on": [
         "ar_15QZ5SZWH6YBJ6AKRSHHY9CTRN",
@@ -221,36 +232,37 @@
     "failed": 0
   },
   "stage": {
-    "reached": "delivery",
-    "reached_stage": 80,
-    "next_skill": "aes-retrospect",
+    "reached": "validation",
+    "reached_stage": 70,
+    "next_skill": "aes-finish",
     "waiting_on": null
   },
-  "next": "这些记录已经跟不上代码了，要重做：validation",
+  "next": "已收口",
   "computed_from": {
     "documents": {
       "change-note.md": "sha256:d399b5f921d3b41d903f85290080970113176526197b1e729d00ceee10154962",
-      "change-note/change-note-v2.md": "sha256:bec42604cbb3a8470affaa9d1516e150471e172915c6305796e6c8184bb1c040",
+      "change-note/change-note-v2.md": "sha256:dc8fa99e3d539c00299c7e70756dea9c7c7b6b1cc6a16ff1ad4bd25e9b15f0c7",
       "delivery.md": "sha256:9622d46316f055041aa7b8cdbb79ee6dbbf5c622f996f9bb706d2bcc5d031c29",
-      "delivery/delivery-v2.md": "sha256:af832b8ab31eb42e7dc711312fb41c8c0447b51010c5dcd46482a9d76ec0a052",
+      "delivery/delivery-v2.md": "sha256:9f215c58099dde1e4b41a738626843bfd97abeea0e3710f30584ed82b8bd6913",
+      "delivery/delivery-v3.md": "sha256:66226efaab4a8ef34d927b4666db75311d489322da4e54b838623614d44a175a",
       "design.md": "sha256:cbe02a9b300be23e0ce3a5fb8c0b148c167c9ea4a9697690f55e028d94367840",
       "implementation.md": "sha256:f727a53d44e99fed5e28405329114c01e5dcd76a4e58b3912c799bf8d202479f",
-      "implementation/implementation-v2.md": "sha256:c486d05b3d757d7da3d66daa6fae3ac260599c1513b6024215d2c5f66a8ceb1b",
+      "implementation/implementation-v2.md": "sha256:02840901f054989af6b7222dc3fa7680706d21229df7c8c8440f5cb967e4cee0",
       "manual-test.md": "sha256:a08211faf38d5308fa77c0a425e4d8841335e71c5782688578ae6772c8b2230f",
       "plan.md": "sha256:cad5aeab1f93e37fb66bb7b0797f34fc8cb4d65a1b248c663141a12518e6ea52",
       "reviews/code-review-v2.md": "sha256:7ffdbb6785113bf70e3198331ea0dcd22f3e44772b397267a0f5a2c466af896b",
-      "reviews/code-review-v3.md": "sha256:c1e4deb342d6104d8b748518b9d7432dcc202471b5be76bb225fcd7c8da246d7",
+      "reviews/code-review-v3.md": "sha256:164cfe89b199b64606cd7f042d7ad1d05c20faeaf4b4737f55a6c1bf029cd5b4",
       "reviews/code-review.md": "sha256:55e76a05155188fb48f6a17b74a539fae99531d655eb638b94b559a2fd11b3f1",
       "summary.md": "sha256:19220df5e6e347a1f547f596a0c71324e166556a39b8be405e0f58dcd9fde0ea",
-      "summary/summary-v2.md": "sha256:22706c9ca9fdc4487ec331bff67f3d260ce2d99aa7df99e7bf1c6eacb1b5949b",
+      "summary/summary-v2.md": "sha256:f5689363c4ab55fbea716d5671177df4b625d4de0fc0597c99c81648936a39f4",
       "validation.md": "sha256:0fb375dba719539ad6ef0894a36d35bb67ddfdf4378da081c653cc60f9c6bb9f",
       "validation/validation-v2.md": "sha256:67760b8a41e79072a479a8fc3046048304727af91e64ebf4ee18fe1d153146e9",
-      "validation/validation-v3.md": "sha256:b6e6fc625cae3c25a4226633da58a8faeccc4e68b2c878350aaf033a8184cde1",
-      "work-item.md": "sha256:3839555d80c13df16301e7fd66160c0c6d864e07650900a5b2b35820d38eb62a"
+      "validation/validation-v3.md": "sha256:93a4cadf472ffb3676cebfbd5181c2786ae1d264efacb82c296f718608e58174",
+      "work-item.md": "sha256:0632682b94d879a4d30ffa81158bd3f4327b3a7075d39e259fd8f6e3ef61dd79"
     },
     "change_set": {
-      "revision": "131f10fd9cf0ef7de4cf6f751acacdc161cef4d1",
-      "tree": "6132021b73b872929e004eaf8dfa1f577c110d4f",
+      "revision": "69e674cdbb3ae7e9fbc1f8235285da8cf5ad2cdf",
+      "tree": "d296ab2e610c0b1f557befa5a08c9651feba3e9f",
       "content_digest": "sha256:ca9afda5faeebc88433b9fd3c8dd9c42b6bb5f049004bbb9cf845c8b42280407"
     }
   }
