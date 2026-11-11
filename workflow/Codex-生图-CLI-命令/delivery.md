@@ -14,7 +14,7 @@ dependencies:
       digest: "sha256:d324f246239342a80477bd744552328e7befde2c956aa0fe9520fc3a8c2e48cb"
       locator: "reviews/code-review-v2.md"
     - artifact_id: "ar_0DP7HYTWKFKAGQ4YJ63QHKDKNR"
-      digest: "sha256:ec048aeae5e03b51d92605e6eece5b262ed26e81408a489015191783fcd74e26"
+      digest: sha256:b8e6d50c085d3657c8ab5400004f397d8e8be6e2e897452b46f647a95b7bebe4
       locator: "validation.md"
   subject:
     kind: "change_set"

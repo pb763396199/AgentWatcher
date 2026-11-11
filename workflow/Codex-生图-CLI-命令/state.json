@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "protocol": "1.3.0",
-  "generated_at": "2026-11-10T04:22:01Z",
+  "generated_at": "2026-11-11T03:09:00Z",
   "generated_by": {
     "tool_revision": "awf-0.1.0"
   },
@@ -40,7 +40,7 @@
       "type": "delivery",
       "path": "delivery.md",
       "outcome": "ready_to_land",
-      "freshness": "fresh",
+      "freshness": "stale-subject",
       "stage": 80,
       "depends_on": [
         "ar_01M71TFMK90002TF44G3KGPK44",
@@ -71,7 +71,7 @@
       "artifact_id": "ar_01M71TW7CW0005RGVDFHMPR2DY",
       "type": "manual-test",
       "path": "manual-test.md",
-      "outcome": "pending",
+      "outcome": "passed",
       "freshness": "fresh",
       "stage": 70,
       "depends_on": []
@@ -92,7 +92,7 @@
       "type": "review",
       "path": "reviews/code-review-v2.md",
       "outcome": "approved",
-      "freshness": "fresh",
+      "freshness": "stale-subject",
       "stage": 60,
       "depends_on": [
         "ar_15QZ5SZWH6YBJ6AKRSHHY9CTRN",
@@ -125,45 +125,58 @@
       "artifact_id": "ar_0DP7HYTWKFKAGQ4YJ63QHKDKNR",
       "type": "validation",
       "path": "validation.md",
+      "outcome": "superseded",
+      "freshness": "superseded",
+      "stage": 70,
+      "depends_on": [
+        "ar_15QZ5SZWH6YBJ6AKRSHHY9CTRN"
+      ]
+    },
+    {
+      "artifact_id": "ar_01M7493RPB000A2QT23S1SVD9J",
+      "type": "validation",
+      "path": "validation/validation-v2.md",
       "outcome": "passed",
       "freshness": "fresh",
       "stage": 70,
       "depends_on": [
-        "ar_15QZ5SZWH6YBJ6AKRSHHY9CTRN"
+        "ar_15QZ5SZWH6YBJ6AKRSHHY9CTRN",
+        "ar_01M71TFMK90002TF44G3KGPK44"
       ]
     }
   ],
   "wayfinder": null,
   "manual_test": {
-    "passed": 0,
-    "open": 2,
+    "passed": 2,
+    "open": 0,
     "failed": 0
   },
   "stage": {
-    "reached": "delivery",
-    "reached_stage": 80,
-    "next_skill": "aes-retrospect",
-    "waiting_on": "human"
+    "reached": "validation",
+    "reached_stage": 70,
+    "next_skill": "aes-finish",
+    "waiting_on": null
   },
-  "next": "等人测：人工核对还有 2 条没测",
+  "next": "这些记录已经跟不上代码了，要重做：change-note, delivery, implementation, review, summary",
   "computed_from": {
     "documents": {
       "change-note.md": "sha256:49302727333e6bc084b5bce970eb4b3767dd2d996526a036d951f9c5cf36035b",
-      "delivery.md": "sha256:54d693b6d803c8e4a5aafcf25ffa4d563b9b047bd3db47d40caf1b8d5d51afbc",
+      "delivery.md": "sha256:e9860eaea5a9727459628c945231c5506f78d41907d33898d1e03fe8d2985948",
       "design.md": "sha256:cbe02a9b300be23e0ce3a5fb8c0b148c167c9ea4a9697690f55e028d94367840",
       "implementation.md": "sha256:b0c5d49a194b42af702d00585623a95d1bbadeb3655d80c069919636f2893009",
-      "manual-test.md": "sha256:c8058896d05dc670b1364ca7d09b8bea8287e6bd9d71d23d8f8e18c105fcefc8",
+      "manual-test.md": "sha256:a08211faf38d5308fa77c0a425e4d8841335e71c5782688578ae6772c8b2230f",
       "plan.md": "sha256:cad5aeab1f93e37fb66bb7b0797f34fc8cb4d65a1b248c663141a12518e6ea52",
       "reviews/code-review-v2.md": "sha256:5c988abf8bad8a8b2e6e16b4d23080cacadd9b6a1708111d30ed5a78b8b40b51",
       "reviews/code-review.md": "sha256:76e45b9d9021ce8360ac9e7e1ca6efb0d0322601966d7b3cc2f3c4f87acfb28c",
       "summary.md": "sha256:eddd1086b1b5b874ec77a989157899e365a446ce619291196360e336187ceb24",
-      "validation.md": "sha256:295b4d5f00a92b7af41d014205aeb0c22966f21019cdf0017c193f45167946ac",
+      "validation.md": "sha256:65f578432c061a5285781a2f88eec9f1cb30b76c0d79b66097829c9b6ad2c962",
+      "validation/validation-v2.md": "sha256:eb5c92f8f9d13ed0a6c80c767cc659ea42ea12062e6e849832eaf45815c8a91c",
       "work-item.md": "sha256:3839555d80c13df16301e7fd66160c0c6d864e07650900a5b2b35820d38eb62a"
     },
     "change_set": {
-      "revision": "925e259e3cc47d929d471846cb8fcbe5c5d07167",
-      "tree": "bb7ffa1e07675883547c2317740e9db36821fccb",
-      "content_digest": "sha256:9404d3d863657b4615f4ee8a87ba560037a22d98a686458c759338b82ee39a53"
+      "revision": "3fc62758e87be57922fce1f0e58b96450d6e73b4",
+      "tree": "c3ed221076ebc37be33a65a553ac0bdfdd282a3b",
+      "content_digest": "sha256:cec1a30fc3b81edf7a201c59840beccfdd17ec705282ee45948c939bff8d6766"
     }
   }
 }

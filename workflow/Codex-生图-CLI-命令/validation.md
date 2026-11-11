@@ -23,7 +23,7 @@ dependencies:
     content_digest: "sha256:9404d3d863657b4615f4ee8a87ba560037a22d98a686458c759338b82ee39a53"
     branch_or_pr: "feature/Codex-生图-CLI-命令"
     workflow_excluded: true
-outcome: "passed"
+outcome: "superseded"
 acceptance:
   - id: "AC-001"
     verdict: "passed"
