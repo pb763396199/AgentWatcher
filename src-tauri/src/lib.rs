@@ -13903,6 +13903,16 @@ struct KillOnCloseJob {
     process_group_id: i32,
 }
 
+#[cfg(not(target_os = "windows"))]
+impl std::fmt::Debug for KillOnCloseJob {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("KillOnCloseJob")
+            .field(&self.process_group_id)
+            .finish()
+    }
+}
+
 #[cfg(target_os = "windows")]
 impl std::fmt::Debug for KillOnCloseJob {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -13990,7 +14000,7 @@ fn spawn_in_kill_on_close_job(mut command: Command) -> std::io::Result<(Child, K
     use std::os::unix::process::CommandExt;
     // 独立进程组：组长就是直接子进程，其后代默认继承同组。
     command.process_group(0);
-    let mut child = command.spawn()?;
+    let child = command.spawn()?;
     let process_group_id = child.id() as i32;
     Ok((child, KillOnCloseJob { process_group_id }))
 }
