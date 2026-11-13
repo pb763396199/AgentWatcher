@@ -12,6 +12,8 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 
 当前发布版本：v0.1.11。仓库使用 Tauri 2 作为桌面应用壳，前端入口 [ui/index.html](ui/index.html) 是唯一 UI 源文件。AgentWatcher 主仓库保持零插件可启动、构建和测试，外部插件通过独立 `*.awplugin` 描述文件发现和启用。
 
+**平台支持**：GUI 悬浮窗为 Windows 专属；`agentwatcher-cli`（AI/终端用的 headless 查询入口）已支持 macOS——在 macOS 上用 `cargo build --manifest-path src-tauri/Cargo.toml --no-default-features --bin agentwatcher-cli` 构建，session 列表/详情/用量/接续导出/技能分发等只读能力与 Windows 同口径（数据源按平台解析：VS Code 走 `~/Library/Application Support/Code`，`.codex` / `.claude` / `.local/share/opencode` 等家目录布局两平台一致）。
+
 ## 当前 UI 入口
 
 - Tauri 前端入口：[ui/index.html](ui/index.html)

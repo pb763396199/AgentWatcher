@@ -2,6 +2,13 @@
 
 ## 未发布
 
+- agentwatcher-cli 移植 macOS（第一步，GUI 仍为 Windows 专属）：
+  - Cargo 结构跨平台化：`winreg` / `windows-sys` / `junction` 移入 `cfg(windows)` 目标依赖，新增 Unix 侧 `libc`；Tauri GUI 壳挂到 `gui` feature（默认开启，Windows 发布链路不变）。macOS 用 `cargo build --manifest-path src-tauri/Cargo.toml --no-default-features --bin agentwatcher-cli` 构建 headless CLI，不要求 ui-dist 前端产物；`cargo check --no-default-features` 同时成为「CLI 永不依赖 GUI」的回归门。
+  - 数据源路径跨平台：`USERPROFILE` → `$HOME`、`APPDATA` → `~/Library/Application Support`（VS Code 用户数据、AgentWatcher 自身状态共用该根）；`.codex` / `.claude` / `.local/share/opencode` / `.zcode` / `.workbuddy` 相对布局各平台一致。Windows 侧路径解析优先级不变，返回值与历史版本逐字节一致。
+  - Unix 真实现替换桩：CLI 全历史扫描的跨进程缓存锁用 `flock(LOCK_EX|LOCK_NB)` 对齐 Windows `LockFileEx` 语义；app-server / codex exec 子进程树用独立进程组（`process_group(0)` + `kill(-pgid)`）对齐 Job Object kill-on-close；opencode server 端口探测用 `lsof` + `pgrep`（Windows 保持 `netstat.exe` + ToolHelp）。
+  - CLI 发现层补 macOS 候选：codex / opencode / node / VS Code code 的 `/opt/homebrew`、`/usr/local`、`~/.npm-global`、`/Applications/Visual Studio Code.app` 包内 bin，沿用「逐个 `--version` 实测才认」。
+  - OpenCode `session` 表 schema 容忍层：1.2.x → 1.19.x 陆续加的 `path` / `cost` / `tokens_*` 列按实际列集构造 SELECT，老库（或装了新版但尚未启动迁移的库）缺列用 NULL / 0 占位，扫描不再整体失败；sqlite 打开 / prepare / 行读取失败输出分类 stderr 日志（此前静默返回空列表无处排查）。
+  - 验证：Windows `cargo test` 全量（lib 177 + cli 分类 19 + 契约 13）与 `npm run test:tauri:smoke` 通过；macOS（arm64, 27.2）`cargo test --no-default-features` 全绿（lib 171 + CLI 40，另有 6 个 Windows 专属测试按平台门控），真实数据源冒烟覆盖 codex / opencode / workbuddy 的 list / show / usage / handoff export，flock 并发合并经时间戳实证生效。
 - 新增「自动回复」：会话停止工作后，程序自动生成一条回复并发回会话。
   - 与 ZCode 的「自动作答」是两件独立的事——自动作答只在 AskUserQuestion 的结构化选项里挑一个（限 ZCode），自动回复是把生成的建议原文发回会话，适用于所有有发送通道的 agent。
   - 开关按会话（卡片右键「自动回复此会话」，`set_auto_reply` / `get_auto_reply`），只有用户显式开启的会话才生效，默认全关。

@@ -29,6 +29,7 @@ AgentWatcher 是一个 Windows 桌面小工具，用 Tauri 2 写的。它盯着�
 - `npm run test:tauri:flow -- 任务面板` / `性能面板` / `接续面板` / `opencode-session` / `zcode-session` / `workbuddy-session` / `打包` —— 只跑指定真实交互流程。也接受英文别名 `agent-task`、`performance`、`handoff`、`opencode`、`zcode`、`workbuddy`（或 `wb`）、`package-session`。默认优先测当前 `npm run dev`；需要隔离临时窗口时才加 `--isolated-runtime`。
 - `npm run build` —— `tauri build`，跑 Rust + 打包。生成的 exe 在 `src-tauri/target/release/agentwatcher.exe`。
 - `cargo build --manifest-path src-tauri/Cargo.toml --bin agentwatcher-cli` —— 单独构建 AI 命令行二进制（见「AI 操作 CLI」一节）。
+- `cargo build --manifest-path src-tauri/Cargo.toml --no-default-features --bin agentwatcher-cli` —— headless 构建（macOS 等非 Windows 平台用这条）：`gui` feature 关掉后不编译 Tauri 壳、不要求 ui-dist 前端产物。`cargo check --no-default-features --bin agentwatcher-cli` 是「CLI 永不依赖 GUI」的回归门，动了 lib.rs 的 feature 门控或依赖划分必须跑。
 - `npm run generate:icons` —— 重新生成 `src-tauri/icons/icon.ico` 和 `icon-runtime-256.rgba`。**只能在 Windows 上跑**，里面调了 `pwsh` 用 .NET 的 `System.Drawing` 画 Segoe UI 字体。其他系统会报错。
 - `npm run package:exe` —— 完整发布流水线：编译、用 `rcedit` 把图标塞进 exe、增量构建并复制 `agentwatcher-cli.exe`、复制 `vscode-agentwatcher-bridge/`、用 `npx @vscode/vsce` 打 VSIX、最后输出 `artifacts/AgentWatcher/AgentWatcher.exe` + `agentwatcher-cli.exe` + `vscode-agentwatcher-bridge/agentwatcher-bridge-0.1.12.vsix`，再压成 `artifacts/AgentWatcher-v<版本>-windows-x64.zip`。跑这个前会先把老的 `artifacts/AgentWatcher-v*-windows-x64{,.zip}` 清掉。
 - Rust 单元测试：`cargo test --manifest-path src-tauri/Cargo.toml`（测试代码就在 `src-tauri/src/lib.rs` 文件最末尾，CLI 相关的还有 `src-tauri/tests/cli_taxonomy.rs` 和 `src-tauri/tests/cli_contract.rs`）。
@@ -72,7 +73,7 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 
 ## AI 操作 CLI（agentwatcher-cli）
 
-独立 headless 二进制（`src-tauri/src/bin/agentwatcher-cli/`），给 AI 助手和终端用的查询入口。不启动 GUI、不连 GUI 进程，直接复用 lib crate 的扫描逻辑读数据源。
+独立 headless 二进制（`src-tauri/src/bin/agentwatcher-cli/`），给 AI 助手和终端用的查询入口。不启动 GUI、不连 GUI 进程，直接复用 lib crate 的扫描逻辑读数据源。**跨平台**：Windows 默认构建即可；macOS / Linux 用 `--no-default-features` 构建（GUI 壳的 `gui` feature 不参与编译）。Unix 侧差异：跨进程缓存锁是 `flock`，子进程清理靠进程组 `kill(-pgid)`（Windows 是 Job Object），opencode server 端口探测走 `lsof`/`pgrep`（Windows 是 `netstat.exe`/ToolHelp 快照）；suggest 发送通道中 ZCode 依赖注册表反解，macOS 上返回明确错误。
 
 - 命令面三个大类：`session list`（元数据列表，筛选参数同 GUI）、`session show <id>`（详情，默认悬浮预览级）、`session usage <id>`（用量明细）、`handoff export <id>`（导出接续上下文，落盘同 GUI）、`skill install / list / status / print / remove`（用法技能分发，2026-09-16 补充拍板，2026-11-09 补 status / print）、`suggest generate <id> [--model <名>] [--effort <档>] [--timeout <秒>] [--engine auto|sample|exec] [--via session|codex] [--session-path <路径>]` / `suggest prompt <id>`（建议链路可观测入口，2026-11-09 补；codex / zcode / workbuddy / opencode 四种会话都接线，workbuddy 复用 codex exec 引擎，codex 小会话走 sample 引擎，opencode 走 `opencode run`）、`imagegen generate <提示词> [--out <路径>] [--timeout <秒>]`（2026-11-10 补：经 codex exec 触发内置 image_gen 工具生图，所有 agent 通用，无需 `OPENAI_API_KEY`；生图模型由 Codex 云端自动选择，命令面与实现不绑定任何 gpt-image 版本、无 `--model` 参数；提示词双来源——系统 `%USERPROFILE%\.codex\skills\.system\imagegen\SKILL.md`（尊重 `CODEX_HOME`）在场时由 Codex 自读最新版，缺失时注入 CLI 内嵌固化副本 `src-tauri/src/imagegen_skill/SKILL.md`；产物从 `%USERPROFILE%\.codex\generated_images\<thread_id>\` 复制到 `--out`（默认 `%TEMP%\AgentWatcher\imagegen\`），原件保留；信封透出编排 token 用量 tokenUsage；失败分类 `codex_unavailable` / `codex_timeout` / `codex_auth_failed` / `generation_failed`，未登录有时表现为静默挂起归超时）。会话 ID 是 `provider:自然键` 的确定性拼接，跨次调用稳定。所有按 ID 查询的命令（`session show` / `session usage` / `handoff export` / `suggest`）对 Codex 会话额外接受深链形态 `codex://threads/<uuid>` 与裸 UUID——CLI 命令入口经 `codex_session_key` 统一归一化成 `codex:<uuid>`（2026-11-11 修，此前深链/裸形态会被误报 `session_not_found`），裸 UUID 一律按 Codex 解释，不做多 provider 猜测。
 - `suggest` 与 GUI 走同一套生成逻辑（`generate_suggestion_for_session` 按 agent 路由）：`generate` 真实调用该会话所属 agent 的模型并输出 `SessionSuggestion`（`--avoid` 用于「换一个」）；`prompt` 只组装上下文与 v5 提示词，不调模型、不写盘，用来核对 prompt。ID 接受 `codex:<uuid>`、`codex://threads/<uuid>`、裸 uuid 与 `zcode:<id>`；未接线的 provider 返回 `unsupported_provider`，生成失败返回 `generation_failed`（stderr 有分类日志：文件缺失 / 资格校验 / 超时 / 输出无法解析）。`generate` 是**少数会真实产生模型用量的 CLI 命令**，其余命令只读本地数据。
@@ -95,9 +96,9 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 - 历史 ID `safe1`/`safe2`/`safe3`/`safe4`（完整字符串在 `LEGACY_BRIDGE_EXTENSION_IDS`）必须继续被检测和卸载，**不要新增任何 "safe" ID**。
 - App 标识符：`com.agentwatcher.desktop`。
 
-## Session 数据源（只在 Windows 下有效）
+## Session 数据源（GUI 仅 Windows；CLI 自 2026-11 起支持 macOS）
 
-扫描逻辑在 `session_watch_roots()` 和各 provider 的 `scan_*_sessions` 里（Copilot / Copilot CLI / Claude / Codex / OpenCode / ZCode / WorkBuddy）。
+扫描逻辑在 `session_watch_roots()` 和各 provider 的 `scan_*_sessions` 里（Copilot / Copilot CLI / Claude / Codex / OpenCode / ZCode / WorkBuddy）。路径经 `user_home()` / `app_data_root()` 两个平台助手解析：Windows 读 `USERPROFILE` / `APPDATA`（返回值与历史版本逐字节一致），macOS 落到 `$HOME` / `~/Library/Application Support`；家目录下 `.codex` / `.claude` / `.local/share/opencode` / `.zcode` / `.workbuddy` 的相对布局两平台一致（opencode 在 macOS 同样用 `~/.local/share/opencode`）。macOS 上 ZCode 一般不存在 → 扫描为空不算错。OpenCode 的 `session` 表 schema 随版本演进（1.2.x 无 `path`/`cost`/`tokens_*` 列），扫描与定向查找按 `pragma_table_info` 探测实际列集构造 SELECT，缺列用 NULL/0 占位（`opencode_session_scan_select`），不要把列名写死回 SQL。
 
 - Copilot Chat：`%APPDATA%\Code\User\workspaceStorage\*\chatSessions\*.jsonl`（也扫 `Code - Insiders`）。
 - Copilot 转录覆盖文件（用来判断 waiting/running 状态）：`<workspaceStorage>\<hash>\GitHub.copilot-chat\transcripts\<sessionId>.jsonl`。
