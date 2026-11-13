@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,8 +10,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
 const outputSvg = resolve(repoRoot, 'src-tauri', 'icons', 'icon-source.svg');
 const outputIco = resolve(repoRoot, 'src-tauri', 'icons', 'icon.ico');
+// macOS 打包（.app/icns）的源图：与 ico 同一 GDI+ 路径渲染，字体风格一致。
+const outputPng = resolve(repoRoot, 'src-tauri', 'icons', 'icon.png');
 const RUNTIME_ICON_SIZES = [256];
 const ICO_SIZES = [16, 20, 24, 30, 32, 36, 40, 48, 60, 64, 72, 80, 96, 128, 256];
+const PNG_SOURCE_SIZE = 1024;
 const SUPERSAMPLE = 8;
 const BASE_SIZE = 256;
 
@@ -147,6 +150,11 @@ foreach ($size in $sizes) {
   }
 
   [System.IO.File]::WriteAllBytes((Join-Path $OutputDir "rail-logo-$size.rgba"), $bytes)
+
+  if ($size -ge 512) {
+    # macOS app-icon source: save as PNG directly from GDI+ (large RGBA skips JS encoding).
+    $bitmap.Save((Join-Path $OutputDir "rail-logo-$size.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+  }
   $bitmap.Dispose()
 }
 `;
@@ -159,6 +167,7 @@ foreach ($size in $sizes) {
   try {
     for (const command of commands) {
       try {
+        const renderSizes = [...ICO_SIZES, PNG_SOURCE_SIZE];
         execFileSync(command, [
           '-NoProfile',
           '-ExecutionPolicy',
@@ -166,9 +175,11 @@ foreach ($size in $sizes) {
           '-File',
           scriptPath,
           tempDir,
-          ICO_SIZES.join(',')
+          renderSizes.join(',')
         ], { stdio: 'inherit' });
 
+        copyFileSync(join(tempDir, `rail-logo-${PNG_SOURCE_SIZE}.png`), outputPng);
+        console.log(`Generated ${outputPng}`);
         return ICO_SIZES.map((size) => {
           const rgba = readFileSync(join(tempDir, `rail-logo-${size}.rgba`));
           return {
