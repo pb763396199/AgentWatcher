@@ -2,6 +2,10 @@
 
 ## 未发布
 
+- 修 macOS 会话标题全是原始 prompt 的问题（两个叠加根因）：
+  - Mac 上没有独立 codex CLI，GUI/CLI 全走 rollout 文件扫描；文件扫描的注入过滤器只认 4 种旧形态，Codex 桌面端新版塞进 user 轮的 `<external_browser_tabs>`、`<codex_internal_context>`、`<skills_instructions>`、`<multi_agent_*>` 等命名空间注入块全部漏过、顶成了标题。过滤器名单按 2026-11 双端 rollout 实测频次扩充到 18 项（`CODEX_CONTEXT_INJECTION_PREFIXES`），标题/首条消息/最新预览共用同一过滤。
+  - 超长 prompt 兜底标题被 80 字硬截成半句话。新规则：超过 40 字符的标题在第一个不早于 12 字的句读（中英文标点，不含空格）处收口并剥掉尾部标点；无句读的长串（URL 等）保持原样。
+  - 单测覆盖：注入名单正/反例（真实用户贴的 `<html>`/`<class` 代码不误杀）与句读收口；lib 179 全绿，CLI 分类 19 + 契约 13 与真实 Tauri smoke 通过。
 - GUI（Tauri 桌面壳）移植 macOS：`cargo check --features gui` 在 macOS 零错误零警告，`npm run dev` 起真窗口，`tauri build` 产出未签名 `AgentWatcher.app` 与 aarch64 `.dmg`（本机侧载可用，未做签名/公证）。
   - 运行时等价：URL scheme 深链（vscode://、workbuddy://、codex thread）macOS 走 `open`（原 rundll32）；opencode-cli handoff 的可见终端走 osascript `tell application "Terminal" do script`；会话打包的文件剪贴板走 osascript `POSIX file`（Finder 可 Cmd+V，失败仍回退 reveal）。Windows 行为不变。
   - 透明无边框窗口在 macOS 启用 `macos-private-api`（tauri.conf.json `app.macOSPrivateApi` + Cargo feature 对齐声明）。
