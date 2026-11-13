@@ -13369,10 +13369,43 @@ fn json_kind(json_value: &Value) -> Option<i64> {
 fn title_candidate_from_text(title_text: &str) -> Option<String> {
     let clean_title = clean_label(title_text, 80);
     if is_meaningful_title(&clean_title) {
-        Some(clean_title)
+        Some(trim_title_at_punctuation(&clean_title))
     } else {
         None
     }
+}
+
+/// 长 prompt 兜底成标题时要么整段挂上卡片、要么被 clean_label 硬截成半句话。
+/// 统一规则：超过 40 字符的标题在第一个句读处收口（跳过早于 12 字的句读，避免
+/// 标题截得过短失义）；无句读的长串（URL 等）保持原样。
+fn trim_title_at_punctuation(title: &str) -> String {
+    let body = title.strip_suffix("...").unwrap_or(title);
+    if body.chars().count() <= 40 {
+        return title.to_string();
+    }
+    let mut cut = None;
+    for (index, title_char) in body.char_indices() {
+        let end = index + title_char.len_utf8();
+        if is_title_break_char(title_char) && body[..end].chars().count() >= 12 {
+            cut = Some(end);
+            break;
+        }
+    }
+    match cut {
+        Some(cut) => body[..cut]
+            .trim_end()
+            .trim_end_matches(is_title_break_char)
+            .to_string(),
+        None => title.to_string(),
+    }
+}
+
+fn is_title_break_char(title_char: char) -> bool {
+    // 空格刻意不算句读：英文长标题会在词间碎截；只在真实标点处收口。
+    matches!(
+        title_char,
+        '。' | '！' | '？' | '；' | '，' | '、' | '：' | '.' | '!' | '?' | ';' | ',' | ':'
+    )
 }
 
 fn is_meaningful_title(title_text: &str) -> bool {
@@ -21152,6 +21185,28 @@ node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
     }
 
     #[test]
+    fn title_candidate_truncates_at_punctuation_boundary() {
+        // 长 prompt 兜底标题：截断回退到最近句读，不输出半截话。
+        let long_chinese = "你到底在干嘛啊，你为什么又开始iso的任务了，你现在的任务就是回答我前面的问题，你不需要做逆向任务，那个是别的session在做！";
+        let title = title_candidate_from_text(long_chinese).unwrap();
+        assert!(
+            title.chars().count() < 40,
+            "应当在句读处收口而不是保留到 80 字：{title}"
+        );
+        assert!(title.contains("干嘛"), "保留开头语义：{title}");
+
+        // 短标题与无句读长词不受影响。
+        assert_eq!(
+            title_candidate_from_text("say hi"),
+            Some("say hi".to_string())
+        );
+        assert_eq!(
+            title_candidate_from_text("排查配置问题"),
+            Some("排查配置问题".to_string())
+        );
+    }
+
+    #[test]
     fn opencode_summary_budget_uses_lightweight_fallback_then_cache() {
         let connection = opencode_memory_connection();
         let session_id = "ses_budget_test";
@@ -21483,10 +21538,7 @@ node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
         let session =
             read_codex_thread_with_summary(&thread, scan_time_ms, &options, None).unwrap();
 
-        assert_eq!(
-            session.title,
-            "This is the first prompt, not the latest user message"
-        );
+        assert_eq!(session.title, "This is the first prompt");
         assert_eq!(session.last_user_message, None);
         assert_eq!(session.last_ai_message, None);
         assert_eq!(session.message_count, 0);
