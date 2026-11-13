@@ -5339,8 +5339,23 @@ fn copy_file_to_clipboard(path: &Path) -> bool {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn copy_file_to_clipboard(_path: &Path) -> bool {
-    false
+fn copy_file_to_clipboard(path: &Path) -> bool {
+    // macOS：把文件以 POSIX file 写进剪贴板（Finder/IM 可直接 Cmd+V 粘贴出发送），
+    // 对齐 Windows CF_HDROP 的语义。失败由调用方走 reveal-in-Finder 降级。
+    let Some(path_text) = path.to_str() else {
+        return false;
+    };
+    let mut command = Command::new("osascript");
+    command.args([
+        "-e",
+        &format!(
+            "set the clipboard to (POSIX file {})",
+            applescript_string(path_text)
+        ),
+    ]);
+    spawn_hidden(command)
+        .map(|_| true)
+        .unwrap_or(false)
 }
 
 
@@ -6016,16 +6031,13 @@ fn bridge_extension_installed() -> bool {
 }
 
 fn open_vscode_deep_link(deep_link: &str) -> Result<(), String> {
-    let mut protocol_command = Command::new("rundll32.exe");
-    protocol_command.args(["url.dll,FileProtocolHandler", deep_link]);
-
-    match spawn_hidden(protocol_command) {
-        Ok(_) => Ok(()),
+    match open_system_url(deep_link) {
+        Ok(()) => Ok(()),
         Err(protocol_error) => {
             let arguments = vec!["--open-url".to_string(), deep_link.to_string()];
             spawn_code_cli(&arguments).map_err(|code_error| {
                 format!(
-                    "Windows protocol launch failed ({}); VS Code CLI launch failed ({})",
+                    "protocol launch failed ({}); VS Code CLI launch failed ({})",
                     protocol_error, code_error
                 )
             })
@@ -9348,7 +9360,7 @@ fn opencode_session_resource(session_id: &str) -> String {
 fn open_codex_session(session: &OpenSessionRequest) -> Result<(), String> {
     if let Some(resource) = clean_option(session.session_resource.as_deref()) {
         if resource.starts_with("codex://") {
-            match open_windows_url(resource) {
+            match open_system_url(resource) {
                 Ok(()) => return Ok(()),
                 Err(open_error) => {
                     if let Some(workspace_path) = clean_option(session.workspace_path.as_deref()) {
@@ -9367,7 +9379,7 @@ fn open_codex_session(session: &OpenSessionRequest) -> Result<(), String> {
 
     if let Some(raw_id) = raw_request_session_id(session.id.as_deref()) {
         let link = codex_thread_resource(raw_id);
-        match open_windows_url(&link) {
+        match open_system_url(&link) {
             Ok(()) => return Ok(()),
             Err(open_error) => {
                 if let Some(workspace_path) = clean_option(session.workspace_path.as_deref()) {
@@ -9416,7 +9428,7 @@ fn launch_codex_handoff(workspace_path: &str, prompt: &str) -> Result<String, St
         Ok(thread_id)
     })?;
 
-    let _ = open_windows_url(&codex_thread_resource(&thread_id));
+    let _ = open_system_url(&codex_thread_resource(&thread_id));
     Ok(thread_id)
 }
 
@@ -9432,7 +9444,7 @@ fn open_opencode_session(session: &OpenSessionRequest) -> Result<(), String> {
         .ok_or_else(|| "Missing OpenCode session id".to_string())?;
 
     let port = ensure_opencode_web_server()?;
-    open_windows_url(&opencode_web_session_url(port, workspace_path, &session_id))
+    open_system_url(&opencode_web_session_url(port, workspace_path, &session_id))
         .map_err(|error| format!("Failed to open OpenCode Web session: {}", error))
 }
 
@@ -9765,10 +9777,45 @@ fn spawn_visible_terminal(
     executable: &str,
     arguments: &[&str],
 ) -> std::io::Result<Child> {
-    let mut command = Command::new("cmd.exe");
-    command.args(["/C", "start", title, executable]);
-    command.args(arguments);
-    command.spawn()
+    #[cfg(target_os = "windows")]
+    {
+        let mut command = Command::new("cmd.exe");
+        command.args(["/C", "start", title, executable]);
+        command.args(arguments);
+        command.spawn()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // macOS：Terminal 不接受命令行参数，经 osascript 的 do script 起一条
+        // 前台 shell；标题跟随 Terminal 会话名，参数做单引号转义。
+        let mut script = format!("cd ~ && printf '\\e]0;{}\\a' && exec ", title.replace('\'', ""));
+        script.push_str(&shell_quote(executable));
+        for argument in arguments {
+            script.push(' ');
+            script.push_str(&shell_quote(argument));
+        }
+        let mut command = Command::new("osascript");
+        command.args([
+            "-e",
+            &format!(
+                "tell application \"Terminal\" to do script {}",
+                applescript_string(&script)
+            ),
+        ]);
+        command.spawn()
+    }
+}
+
+/// POSIX 单引号转义：'…' 内无法出现单引号，用 '\'' 拼接。
+#[cfg(not(target_os = "windows"))]
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+/// AppleScript 字符串字面量转义（反斜杠与双引号）。
+#[cfg(not(target_os = "windows"))]
+fn applescript_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 fn opencode_cli_run_supports_interactive(opencode_cli: &str) -> bool {
@@ -9824,7 +9871,7 @@ fn launch_opencode_cli_handoff(workspace_path: &str, prompt: &str) -> Result<Str
 fn launch_opencode_handoff(workspace_path: &str, prompt: &str) -> Result<String, String> {
     if opencode_desktop_is_running() {
         let link = opencode_new_session_deep_link(workspace_path, prompt);
-        return open_windows_url(&link)
+        return open_system_url(&link)
             .map(|_| "opencode-desktop".to_string())
             .or_else(|desktop_error| {
                 launch_opencode_cli_handoff(workspace_path, prompt).map_err(|cli_error| {
@@ -10393,12 +10440,26 @@ fn open_codex_workspace(workspace_path: &str) -> Result<(), String> {
         .map_err(|error| format!("Failed to open Codex workspace: {}", error))
 }
 
-fn open_windows_url(url: &str) -> Result<(), String> {
-    let mut protocol_command = Command::new("rundll32.exe");
-    protocol_command.args(["url.dll,FileProtocolHandler", url]);
-    spawn_hidden(protocol_command)
-        .map(|_| ())
-        .map_err(|error| format!("Windows protocol launch failed: {}", error))
+/// 经系统打开 URL scheme 深链（vscode://、workbuddy://、codex thread 等）。
+/// Windows 走 rundll32 FileProtocolHandler，macOS/Linux 走 `open`/`xdg-open`。
+fn open_system_url(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let mut protocol_command = Command::new("rundll32.exe");
+        protocol_command.args(["url.dll,FileProtocolHandler", url]);
+        return spawn_hidden(protocol_command)
+            .map(|_| ())
+            .map_err(|error| format!("Windows protocol launch failed: {}", error));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        let mut command = Command::new(opener);
+        command.arg(url);
+        spawn_hidden(command)
+            .map(|_| ())
+            .map_err(|error| format!("{opener} launch failed: {}", error))
+    }
 }
 
 fn scan_copilot_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<AgentSession> {
@@ -15389,7 +15450,7 @@ fn open_workbuddy_session(session: &OpenSessionRequest) -> Result<(), String> {
         "workbuddy://chat/{}",
         percent_encode_path_segment(session_id)
     );
-    open_windows_url(&deep_link).map_err(|error| {
+    open_system_url(&deep_link).map_err(|error| {
         format!(
             "WorkBuddy session launch failed ({error}): 无法通过 workbuddy:// 协议拉起 \
              WorkBuddy，请确认桌面端已安装并关联了该协议"
