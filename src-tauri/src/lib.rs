@@ -889,12 +889,14 @@ struct PerformanceSnapshot {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(target_os = "windows")]
 struct ProcessCpuSample {
     sampled_ms: u64,
     cpu_time_100ns: u64,
 }
 
 static PERFORMANCE_LAST_SCAN: OnceLock<Mutex<PerformanceScanSnapshot>> = OnceLock::new();
+#[cfg(target_os = "windows")]
 static PERFORMANCE_PROCESS_SAMPLES: OnceLock<Mutex<HashMap<u32, ProcessCpuSample>>> =
     OnceLock::new();
 static PERFORMANCE_CODEX_TURN_REQUESTS: AtomicU64 = AtomicU64::new(0);
@@ -4128,6 +4130,7 @@ fn performance_process_image_path(pid: u32) -> Option<String> {
     Some(String::from_utf16_lossy(&buffer[..size as usize]))
 }
 
+#[cfg(target_os = "windows")]
 fn performance_agent_process_role(process_name: &str, image_path: &str) -> Option<&'static str> {
     let normalized = process_name.to_ascii_lowercase();
     let normalized_path = image_path.replace('/', "\\").to_ascii_lowercase();
@@ -4216,6 +4219,7 @@ fn wide_null_string(buffer: &[u16]) -> String {
     String::from_utf16_lossy(&buffer[..len])
 }
 
+#[cfg(target_os = "windows")]
 fn bytes_to_mb(bytes: u64) -> f64 {
     bytes as f64 / 1_048_576.0
 }
@@ -9614,7 +9618,14 @@ fn discover_opencode_web_server_ports() -> Vec<u16> {
 /// （桌面端包一层 Electron 之类）都算。
 #[cfg(not(target_os = "windows"))]
 fn opencode_web_server_ports_from_lsof_output(output: &str) -> Vec<u16> {
-    let opencode_process_ids = opencode_process_ids();
+    opencode_web_server_ports_from_lsof_output_with_ids(output, &opencode_process_ids())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn opencode_web_server_ports_from_lsof_output_with_ids(
+    output: &str,
+    opencode_process_ids: &HashSet<u32>,
+) -> Vec<u16> {
     let mut ports = Vec::new();
     for line in output.lines() {
         let columns: Vec<&str> = line.split_whitespace().collect();
@@ -9639,6 +9650,7 @@ fn opencode_web_server_ports_from_lsof_output(output: &str) -> Vec<u16> {
     ports
 }
 
+#[cfg(target_os = "windows")]
 fn opencode_web_server_ports_from_netstat_output(
     output: &str,
     opencode_process_ids: &HashSet<u32>,
@@ -20833,6 +20845,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn opencode_netstat_parser_keeps_only_listening_opencode_ports() {
         let mut opencode_process_ids = HashSet::new();
@@ -20850,6 +20863,31 @@ mod tests {
             opencode_web_server_ports_from_netstat_output(output, &opencode_process_ids),
             vec![49348, 51511]
         );
+    }
+
+    /// Unix 侧对等覆盖：lsof 行解析只认 opencode 属主的 LISTEN 端口。
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn opencode_lsof_parser_keeps_only_listening_opencode_ports() {
+        let output = r#"
+COMMAND   PID   USER   FD   TYPE   DEVICE SIZE/OFF NODE NAME
+opencode 2040 pengbo   20u  IPv4  0x1234      0t0  TCP 127.0.0.1:49348 (LISTEN)
+node     28660 pengbo   21u  IPv4  0x5678      0t0  TCP 127.0.0.1:60670 (LISTEN)
+node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
+"#;
+
+        // node 28660 不在 opencode 进程集里（PID 也不是 opencode 命令名）→ 排除；
+        // node 72592 模拟桌面端包一层的形态：命令名不带 opencode，但 PID 属主命中。
+        // 为此这里通过进程 ID 集合注入（lsof 解析器内部按 pgrep 结果判定）。
+        let ports = opencode_web_server_ports_from_lsof_output_with_ids(
+            output,
+            &{
+                let mut ids = HashSet::new();
+                ids.insert(72592_u32);
+                ids
+            },
+        );
+        assert_eq!(ports, vec![49348, 51511]);
     }
 
     #[test]
