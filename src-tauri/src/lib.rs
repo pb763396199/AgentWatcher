@@ -7067,13 +7067,40 @@ fn codex_response_message_text(message_payload: &Value) -> Option<String> {
     clean_preview_text(&parts.join("\n"))
 }
 
+/// Codex 桌面端会往 user 轮里塞各种命名空间注入块（环境、技能、多代理协作、
+/// 浏览器标签快照等）。它们不是用户的真实输入，不能当标题/预览。
+/// 名单来自 2026-11 Mac/Windows 双端 rollout 的实测统计（按出现频次收录）；
+/// `<class` 这类可能是用户手贴 HTML 的形态刻意不收。
 fn is_codex_context_user_text(text: &str) -> bool {
     let trimmed = text.trim_start();
     trimmed.starts_with("# AGENTS.md instructions")
-        || trimmed.starts_with("<environment_context>")
-        || trimmed.contains("\n<environment_context>")
         || trimmed.starts_with("Current task state:")
+        || trimmed.contains("\n<environment_context>")
+        || CODEX_CONTEXT_INJECTION_PREFIXES
+            .iter()
+            .any(|prefix| trimmed.starts_with(prefix))
 }
+
+const CODEX_CONTEXT_INJECTION_PREFIXES: &[&str] = &[
+    "<environment_context",
+    "<external_browser_tabs",
+    "<in-app-browser-context",
+    "<codex_internal_context",
+    "<codex_apps_client_time_context",
+    "<send_user_message_question_reply",
+    "<skills_instructions",
+    "<multi_agent_role",
+    "<multi_agent_mode",
+    "<collaboration_mode",
+    "<recommended_plugins",
+    "<app-context",
+    "<agent-context",
+    "<user_goal",
+    "<system-reminder",
+    "<permissions",
+    "<tools",
+    "<image_resize_notice",
+];
 
 #[cfg(test)]
 fn codex_turn_summary_from_thread(thread_json: &Value) -> CodexTurnSummary {
@@ -21078,6 +21105,50 @@ node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
             Some("OpenCode reply is visible.")
         );
         assert_eq!(summary.todo_ids, vec!["todo-awoc-abc123".to_string()]);
+    }
+
+    #[test]
+    fn codex_context_user_text_filters_desktop_injection_blocks() {
+        // Codex 桌面端的命名空间注入块不是用户输入：标题/预览都不该被它们顶掉。
+        // 名单按 2026-11 双端 rollout 实测频次收录。
+        for injected in [
+            "# AGENTS.md instructions\n...",
+            "Current task state: xxx",
+            "<environment_context>\n...",
+            "<external_browser_tabs>...</external_browser_tabs>",
+            "<in-app-browser-context source=\"ambient-ui-state\">",
+            "<codex_internal_context source=\"user_goal\"> ... </codex_internal_context>",
+            "<codex_apps_client_time_context>",
+            "<send_user_message_question_reply",
+            "<skills_instructions>",
+            "<multi_agent_role>",
+            "<multi_agent_mode>",
+            "<collaboration_mode>",
+            "<recommended_plugins>",
+            "<app-context>",
+            "<agent-context>\n...",
+            "<system-reminder>\n...",
+            "<permissions>\n...",
+            "<tools>\n...",
+            "<image_resize_notice>",
+        ] {
+            assert!(
+                is_codex_context_user_text(injected),
+                "应当过滤注入块：{injected}"
+            );
+        }
+        // 真实用户输入（哪怕以 < 开头贴代码/HTML）不能误杀；<class 刻意不收进名单。
+        for genuine in [
+            "帮我修这个 bug",
+            "<html>我贴的网页源码</html>",
+            "<class Foo>(这是用户贴的代码)",
+            "say hi",
+        ] {
+            assert!(
+                !is_codex_context_user_text(genuine),
+                "不能误杀真实输入：{genuine}"
+            );
+        }
     }
 
     #[test]
