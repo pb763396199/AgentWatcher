@@ -37,6 +37,11 @@ const COPILOT_TITLE_SAMPLE_LINES: usize = 240;
 const CLAUDE_TITLE_SAMPLE_LINES: usize = 240;
 const JSONL_HEAD_SAMPLE_BYTES: usize = 128 * 1024;
 const JSONL_TAIL_SAMPLE_BYTES: usize = 256 * 1024;
+// Codex rollout 的事件密度高（每轮几十条 token_count / token_usage_record /
+// reasoning 小事件），大文件（>10MB）的活跃写入期里，256KB 尾窗会被这些小事件
+// 稀释到把 message 行挤出窗口——表现为「多轮会话预览正文时有时无」的竞态。
+// Codex 单独用 2MB 尾窗，保证覆盖最近几轮真实消息。
+const CODEX_TAIL_SAMPLE_BYTES: usize = 2 * 1024 * 1024;
 const COPILOT_PROMPT_SCAN_BYTES: usize = 16 * 1024 * 1024;
 const COPILOT_TRANSCRIPT_SCAN_BYTES: usize = 2 * 1024 * 1024;
 const CLAUDE_PROMPT_SCAN_BYTES: usize = 8 * 1024 * 1024;
@@ -6919,7 +6924,12 @@ fn read_codex_file_session_summary(
     let tail_covers_file =
         !has_extension(session_path, "zst") && tail_sample_covers_file(fingerprint.len);
     if depth == CodexZstDepth::Full {
-        let _ = visit_jsonl_tail_values(session_path, fingerprint.len, |json_value| {
+        // Codex 尾窗用大预算：见 CODEX_TAIL_SAMPLE_BYTES 的稀释说明。
+        let _ = visit_jsonl_tail_values_with_budget(
+            session_path,
+            fingerprint.len,
+            CODEX_TAIL_SAMPLE_BYTES,
+            |json_value| {
             if is_archived_json(json_value) {
                 archived = true;
             }
@@ -6941,7 +6951,8 @@ fn read_codex_file_session_summary(
                     last_ai_message = Some(ai_text);
                 }
             }
-        });
+            },
+        );
     }
 
     let (last_user_message, last_user_message_truncated) =
@@ -11779,7 +11790,19 @@ fn visit_jsonl_tail_values<F>(session_path: &Path, file_len: u64, mut visit: F) 
 where
     F: FnMut(&Value),
 {
-    let tail_text = read_file_suffix_text(session_path, file_len, JSONL_TAIL_SAMPLE_BYTES)?;
+    visit_jsonl_tail_values_with_budget(session_path, file_len, JSONL_TAIL_SAMPLE_BYTES, visit)
+}
+
+fn visit_jsonl_tail_values_with_budget<F>(
+    session_path: &Path,
+    file_len: u64,
+    max_bytes: usize,
+    mut visit: F,
+) -> Option<()>
+where
+    F: FnMut(&Value),
+{
+    let tail_text = read_file_suffix_text(session_path, file_len, max_bytes)?;
     for line_text in tail_text.lines() {
         if let Some(json_value) = json_value_from_jsonl_line(line_text) {
             visit(&json_value);
