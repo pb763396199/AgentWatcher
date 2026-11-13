@@ -9496,6 +9496,7 @@ fn probe_opencode_web_server(port: u16) -> bool {
     response.contains(" 200 ") && response.contains("OpenCode")
 }
 
+#[cfg(target_os = "windows")]
 fn discover_opencode_web_server_ports() -> Vec<u16> {
     let opencode_process_ids = opencode_process_ids();
     if opencode_process_ids.is_empty() {
@@ -9513,6 +9514,50 @@ fn discover_opencode_web_server_ports() -> Vec<u16> {
         &String::from_utf8_lossy(&output.stdout),
         &opencode_process_ids,
     )
+}
+
+/// macOS/Linux：lsof 一趟拿全 LISTEN 套接字（含属主 PID），不用先枚举进程再对端口。
+#[cfg(not(target_os = "windows"))]
+fn discover_opencode_web_server_ports() -> Vec<u16> {
+    let mut command = Command::new("lsof");
+    command.args(["-nP", "-iTCP", "-sTCP:LISTEN"]);
+    let Ok(output) = spawn_hidden_with_output(command) else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    opencode_web_server_ports_from_lsof_output(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// lsof 行：`COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME`，NAME 形如
+/// `127.0.0.1:4096`。命令名带 opencode（TUI/server）或 PID 属于 opencode 进程
+/// （桌面端包一层 Electron 之类）都算。
+#[cfg(not(target_os = "windows"))]
+fn opencode_web_server_ports_from_lsof_output(output: &str) -> Vec<u16> {
+    let opencode_process_ids = opencode_process_ids();
+    let mut ports = Vec::new();
+    for line in output.lines() {
+        let columns: Vec<&str> = line.split_whitespace().collect();
+        // NAME 是第 9 列（index 8）；少于 9 列的是表头或异常行。
+        if columns.len() < 9 || !columns[8].contains(':') {
+            continue;
+        }
+        let command_name = columns[0].to_ascii_lowercase();
+        let pid_match = columns[1]
+            .parse::<u32>()
+            .map(|pid| opencode_process_ids.contains(&pid))
+            .unwrap_or(false);
+        if !command_name.contains("opencode") && !pid_match {
+            continue;
+        }
+        if let Some(port) = port_from_netstat_endpoint(columns[8]) {
+            if !ports.contains(&port) {
+                ports.push(port);
+            }
+        }
+    }
+    ports
 }
 
 fn opencode_web_server_ports_from_netstat_output(
@@ -9590,7 +9635,20 @@ fn opencode_process_ids() -> HashSet<u32> {
 
 #[cfg(not(target_os = "windows"))]
 fn opencode_process_ids() -> HashSet<u32> {
-    HashSet::new()
+    // Unix 无 ToolHelp 快照；pgrep -f 覆盖 TUI/桌面端/server 各种启动形态。
+    let mut command = Command::new("pgrep");
+    command.arg("-f").arg("opencode");
+    let mut ids = HashSet::new();
+    if let Ok(output) = spawn_hidden_with_output(command) {
+        if output.status.success() {
+            for line in String::from_utf8_lossy(&output.stdout).lines() {
+                if let Ok(pid) = line.trim().parse::<u32>() {
+                    ids.insert(pid);
+                }
+            }
+        }
+    }
+    ids
 }
 
 fn opencode_desktop_is_running() -> bool {
@@ -9748,7 +9806,7 @@ fn find_opencode_cli_path() -> Option<String> {
     }
     // npm 全局装的 opencode 常常因为跳过 postinstall 而损坏（bin 是占位脚本），
     // 而独立前缀目录下的安装是完整的。这类旁路目录一并探测。
-    if let Some(user_profile) = env::var_os("USERPROFILE") {
+    if let Some(user_profile) = user_home() {
         let profile_root = PathBuf::from(user_profile);
         for relative in [
             ".workbuddy/binaries/opencode/node_modules/opencode-ai/bin/opencode.exe",
@@ -9757,6 +9815,16 @@ fn find_opencode_cli_path() -> Option<String> {
         ] {
             candidates.push(path_to_string(&profile_root.join(relative)));
         }
+    }
+    // macOS / Linux：homebrew 与系统 npm 前缀的 bin 和包内平台二进制。
+    for prefix in ["/opt/homebrew", "/usr/local"] {
+        candidates.push(format!("{prefix}/bin/opencode"));
+        candidates.push(format!(
+            "{prefix}/lib/node_modules/opencode-ai/bin/opencode"
+        ));
+        candidates.push(format!(
+            "{prefix}/lib/node_modules/opencode-ai/node_modules/opencode-darwin-arm64/bin/opencode"
+        ));
     }
     candidates.extend(
         ["opencode.exe", "opencode.cmd", "opencode.ps1", "opencode"]
@@ -10221,6 +10289,15 @@ fn find_codex_cli_path() -> Option<String> {
             &PathBuf::from(appdata_path).join("npm").join("codex.cmd"),
         ));
     }
+    // macOS / Linux：npm 全局前缀常见落点（homebrew node 的 /opt/homebrew、
+    // /usr/local、用户自设 ~/.npm-global），再加上裸名交给 PATH 解析。
+    if let Some(home) = user_home() {
+        candidates.push(path_to_string(
+            &home.join(".npm-global").join("bin").join("codex"),
+        ));
+    }
+    candidates.push("/opt/homebrew/bin/codex".to_string());
+    candidates.push("/usr/local/bin/codex".to_string());
     candidates.extend(
         ["codex.cmd", "codex.exe", "codex"]
             .iter()
@@ -13774,6 +13851,16 @@ fn spawn_code_cli_in(current_dir: Option<&str>, arguments: &[String]) -> Result<
                 .join("code-insiders.cmd"),
         ));
     }
+    // macOS：默认安装位置与 homebrew shim（GUI 深链兜底路径，open 命令由系统处理）。
+    candidates.push(
+        "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code".to_string(),
+    );
+    candidates.push(
+        "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code-insiders"
+            .to_string(),
+    );
+    candidates.push("/opt/homebrew/bin/code".to_string());
+    candidates.push("/usr/local/bin/code".to_string());
 
     let mut last_error = None;
     for candidate in candidates {
@@ -13808,8 +13895,13 @@ fn spawn_hidden(mut command: Command) -> std::io::Result<Child> {
 #[cfg(target_os = "windows")]
 struct KillOnCloseJob(windows_sys::Win32::Foundation::HANDLE);
 
+/// Unix 等价物：子进程放进独立进程组，Drop 时 `kill(-pgid, SIGKILL)` 收整组
+/// （node → codex 等孙进程都在组内）。与 Windows Job Object 的差异：宿主自身被
+/// SIGKILL 时没人替我们触发 Drop，进程组会留下；正常退出与显式终止路径等价。
 #[cfg(not(target_os = "windows"))]
-struct KillOnCloseJob;
+struct KillOnCloseJob {
+    process_group_id: i32,
+}
 
 #[cfg(target_os = "windows")]
 impl std::fmt::Debug for KillOnCloseJob {
@@ -13894,8 +13986,23 @@ fn spawn_in_kill_on_close_job(mut command: Command) -> std::io::Result<(Child, K
 }
 
 #[cfg(not(target_os = "windows"))]
-fn spawn_in_kill_on_close_job(command: Command) -> std::io::Result<(Child, KillOnCloseJob)> {
-    spawn_hidden(command).map(|child| (child, KillOnCloseJob))
+fn spawn_in_kill_on_close_job(mut command: Command) -> std::io::Result<(Child, KillOnCloseJob)> {
+    use std::os::unix::process::CommandExt;
+    // 独立进程组：组长就是直接子进程，其后代默认继承同组。
+    command.process_group(0);
+    let mut child = command.spawn()?;
+    let process_group_id = child.id() as i32;
+    Ok((child, KillOnCloseJob { process_group_id }))
+}
+
+#[cfg(not(target_os = "windows"))]
+impl Drop for KillOnCloseJob {
+    fn drop(&mut self) {
+        // 组已空时返回 ESRCH，忽略即可；显式终止路径会先 kill+wait 主进程再走到这。
+        unsafe {
+            libc::kill(-self.process_group_id, libc::SIGKILL);
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -13943,6 +14050,11 @@ fn terminate_server_tree(child: &mut Child, job: &mut Option<KillOnCloseJob>) {
         unsafe {
             windows_sys::Win32::System::JobObjects::TerminateJobObject(job.0, 0);
         }
+    }
+    #[cfg(not(target_os = "windows"))]
+    if let Some(job) = job.take() {
+        // 先杀整组（孙进程一并），Drop 兜底；主进程由下面的 kill+wait 收尸。
+        drop(job);
     }
     let _ = child.kill();
     let _ = child.wait();
@@ -14307,6 +14419,15 @@ fn find_code_cli_path() -> Option<String> {
         Some(PathBuf::from(
             "C:\\Program Files (x86)\\Microsoft VS Code\\Code.exe",
         )),
+        // macOS：默认安装位置（GUI 壳里的 CLI 入口）。
+        Some(PathBuf::from(
+            "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
+        )),
+        Some(PathBuf::from(
+            "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code",
+        )),
+        Some(PathBuf::from("/opt/homebrew/bin/code")),
+        Some(PathBuf::from("/usr/local/bin/code")),
     ];
 
     for path in common_paths.into_iter().flatten() {
@@ -18171,6 +18292,30 @@ fn codex_cli_path() -> Option<PathBuf> {
             }
         }
     }
+    // macOS / Linux：npm 全局包落在 <prefix>/lib/node_modules（homebrew node 是
+    // /opt/homebrew，系统 node 是 /usr/local，用户自设 prefix 常见 ~/.npm-global）。
+    if let Some(home) = user_home() {
+        candidates.push(
+            home.join(".npm-global")
+                .join("lib")
+                .join("node_modules")
+                .join("@openai")
+                .join("codex")
+                .join("bin")
+                .join("codex.js"),
+        );
+    }
+    for prefix in ["/opt/homebrew", "/usr/local"] {
+        candidates.push(
+            PathBuf::from(prefix)
+                .join("lib")
+                .join("node_modules")
+                .join("@openai")
+                .join("codex")
+                .join("bin")
+                .join("codex.js"),
+        );
+    }
     candidates.into_iter().find(|path| path.exists())
 }
 
@@ -18421,9 +18566,10 @@ fn send_codex_message_blocking(session_key: &str, text: &str) -> Result<(), Stri
 
 fn which_node() -> Option<PathBuf> {
     let path = std::env::var("PATH").ok()?;
-    for dir in path.split(';') {
-        let node = PathBuf::from(dir).join("node.exe");
-        if node.exists() {
+    let node_binary = if cfg!(windows) { "node.exe" } else { "node" };
+    for dir in path.split(path_list_separator()) {
+        let node = PathBuf::from(dir).join(node_binary);
+        if node.is_file() {
             return Some(node);
         }
     }

@@ -253,8 +253,10 @@ impl Drop for FileLock {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn try_lock(_file: &fs::File) -> bool {
-    true
+fn try_lock(file: &fs::File) -> bool {
+    use std::os::unix::io::AsRawFd;
+    // 与 Windows LockFileEx 同语义：非阻塞独占锁，拿不到立即失败。
+    unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) == 0 }
 }
 
 #[cfg(not(target_os = "windows"))]
