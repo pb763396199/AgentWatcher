@@ -6924,12 +6924,8 @@ fn read_codex_file_session_summary(
     let tail_covers_file =
         !has_extension(session_path, "zst") && tail_sample_covers_file(fingerprint.len);
     if depth == CodexZstDepth::Full {
-        // Codex 尾窗用大预算：见 CODEX_TAIL_SAMPLE_BYTES 的稀释说明。
-        let _ = visit_jsonl_tail_values_with_budget(
-            session_path,
-            fingerprint.len,
-            CODEX_TAIL_SAMPLE_BYTES,
-            |json_value| {
+        // Codex 尾扫用「凑够消息即停」的指数扩窗：见 CODEX_TAIL_SAMPLE_BYTES 的稀释说明。
+        let _ = visit_codex_tail_values_until_messages(session_path, fingerprint.len, |json_value| {
             if is_archived_json(json_value) {
                 archived = true;
             }
@@ -6951,8 +6947,7 @@ fn read_codex_file_session_summary(
                     last_ai_message = Some(ai_text);
                 }
             }
-            },
-        );
+        });
     }
 
     let (last_user_message, last_user_message_truncated) =
@@ -11810,6 +11805,46 @@ where
     }
 
     Some(())
+}
+
+/// Codex 专用尾扫：固定窗口在活跃大文件（实测 94MB）上会被高频小事件瞬时挤穿，
+/// message 行滑出窗口导致预览闪空。这里按 2MB → 8MB → 32MB → 64MB 指数扩窗，
+/// 凑够 4 条 user/ai 消息行即停；计数遍用子串预筛避免整窗 JSON 反序列化。
+fn visit_codex_tail_values_until_messages<F>(
+    session_path: &Path,
+    file_len: u64,
+    mut visit: F,
+) -> Option<()>
+where
+    F: FnMut(&Value),
+{
+    const CODEX_TAIL_MIN_MESSAGES: usize = 4;
+    const CODEX_TAIL_MAX_WINDOW: usize = 64 * 1024 * 1024;
+    let mut window = CODEX_TAIL_SAMPLE_BYTES;
+    loop {
+        let mut messages = 0usize;
+        if let Some(tail_text) = read_file_suffix_text(session_path, file_len, window) {
+            for line_text in tail_text.lines() {
+                // 轻量预筛：message 行必然带这两个子串，避免无关大行的完整 parse。
+                if line_text.contains("\"role\":\"user\"")
+                    || line_text.contains("\"role\":\"assistant\"")
+                {
+                    if let Some(json_value) = json_value_from_jsonl_line(line_text) {
+                        if codex_jsonl_user_text(&json_value).is_some()
+                            || codex_jsonl_ai_text(&json_value).is_some()
+                        {
+                            messages += 1;
+                        }
+                    }
+                }
+            }
+        }
+        if messages >= CODEX_TAIL_MIN_MESSAGES || window >= CODEX_TAIL_MAX_WINDOW {
+            break;
+        }
+        window = (window * 4).min(CODEX_TAIL_MAX_WINDOW);
+    }
+    visit_jsonl_tail_values_with_budget(session_path, file_len, window, visit)
 }
 
 fn read_file_prefix_text(session_path: &Path, file_len: u64, max_bytes: usize) -> Option<String> {
