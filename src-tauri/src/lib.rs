@@ -21576,6 +21576,7 @@ mod tests {
         .flatten()
     }
 
+    #[cfg(feature = "gui")]
     #[test]
     fn performance_snapshot_samples_current_process_tree() {
         let first_snapshot = get_performance_snapshot(None);
@@ -21593,6 +21594,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "gui")]
     #[test]
     fn performance_snapshot_can_enable_agent_client_scope() {
         let snapshot = get_performance_snapshot(Some(PerformanceSnapshotOptions {
@@ -22092,14 +22094,15 @@ mod tests {
         };
         store_jsonl_usage_detail("claude:detail-test", &entry);
 
-        let detail = get_session_usage_detail("claude:detail-test".to_string());
+        // 直接测核心入口（GUI command 是它的薄包装）；headless 构建同样覆盖。
+        let detail = session_usage_detail("claude:detail-test".to_string());
         assert_eq!(
             detail.usage.as_ref().and_then(|usage| usage.total_input_tokens),
             Some(42_000)
         );
         assert_eq!(detail.top_tools.first().map(|tool| tool.name.as_str()), Some("Bash"));
 
-        let missing = get_session_usage_detail("claude:missing".to_string());
+        let missing = session_usage_detail("claude:missing".to_string());
         assert!(missing.usage.is_none());
         assert!(missing.top_tools.is_empty());
         reset_usage_scan_budget();
