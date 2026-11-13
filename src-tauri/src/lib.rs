@@ -6759,7 +6759,12 @@ fn read_codex_jsonl_session_at_depth(
         .and_then(display_name_from_path)
         .or_else(|| session_path.parent().and_then(display_name_from_path))
         .unwrap_or_else(|| "Codex".to_string());
-    let title = title.unwrap_or_else(|| fallback_session_title("Codex", &workspace, &session_id));
+    // 会话名称优先取 state_5.sqlite 的 threads.name（Codex 桌面端生成的名称，
+    // 与 app-server 分支的 /name 同源）；没有名称时退回首条真实 user 消息标题。
+    let title = codex_state_thread_name(&session_id)
+        .and_then(|name| title_candidate_from_text(&name))
+        .or(title)
+        .unwrap_or_else(|| fallback_session_title("Codex", &workspace, &session_id));
     let session_path_text = path_to_string(session_path);
     let session_resource = codex_thread_resource(&session_id);
     let workspace_identity = build_workspace_identity(
@@ -17630,6 +17635,68 @@ fn codex_home_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".codex"))
 }
 
+// ---- Codex 会话名称（state_5.sqlite 的 threads.name）----
+// Codex 桌面端把会话名称（自动生成或用户命名）持久化在 ~/.codex/state_5.sqlite 的
+// threads 表：`name` 列是生成的会话名称（app-server thread/list 的 /name 同源），
+// `title` 列只是首条 user 消息的截断。文件扫描分支（无 app-server 的平台 / CLI）
+// 直接读这张表补齐名称，让两分支的卡片标题与搜索口径一致。
+
+const CODEX_THREAD_NAME_CACHE_TTL_MS: u64 = 10_000;
+
+struct CachedCodexThreadNames {
+    loaded_ms: u64,
+    names: HashMap<String, String>,
+}
+
+static CODEX_THREAD_NAME_CACHE: OnceLock<Mutex<Option<CachedCodexThreadNames>>> = OnceLock::new();
+
+/// 查某个 Codex thread 的会话名称；state 库缺库/缺表/读失败时返回 None（退回
+/// 既有 prompt 标题兜底，扫描不受影响）。带 10s 进程内缓存，避免逐文件重开库。
+fn codex_state_thread_name(thread_id: &str) -> Option<String> {
+    let now_ms = current_time_ms();
+    let cache = CODEX_THREAD_NAME_CACHE.get_or_init(|| Mutex::new(None));
+    let Ok(mut guard) = cache.lock() else {
+        return None;
+    };
+    let need_refresh = match guard.as_ref() {
+        Some(cached) => now_ms.saturating_sub(cached.loaded_ms) > CODEX_THREAD_NAME_CACHE_TTL_MS,
+        None => true,
+    };
+    if need_refresh {
+        let db_path = codex_home_dir().join("state_5.sqlite");
+        let names = open_readonly_sqlite(&db_path, ZCODE_SQLITE_BUSY_TIMEOUT_MS)
+            .map(|connection| codex_thread_names_from_connection(&connection))
+            .unwrap_or_default();
+        *guard = Some(CachedCodexThreadNames {
+            loaded_ms: now_ms,
+            names,
+        });
+    }
+    guard
+        .as_ref()?
+        .names
+        .get(thread_id)
+        .map(|name| name.to_string())
+}
+
+/// 纯读取函数，便于用内存库做单测。
+fn codex_thread_names_from_connection(connection: &Connection) -> HashMap<String, String> {
+    let Ok(mut statement) = connection.prepare(
+        "select id, name from threads where name is not null and trim(name) <> ''",
+    ) else {
+        return HashMap::new();
+    };
+    let Ok(rows) = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+        ))
+    }) else {
+        return HashMap::new();
+    };
+    rows.filter_map(Result::ok).collect()
+}
+
 /// 系统侧 imagegen skill 的 SKILL.md；存在才返回 Some。
 fn system_imagegen_skill_path() -> Option<PathBuf> {
     let path = codex_home_dir()
@@ -21203,6 +21270,37 @@ node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
         assert_eq!(
             title_candidate_from_text("排查配置问题"),
             Some("排查配置问题".to_string())
+        );
+    }
+
+    #[test]
+    fn codex_state_thread_names_read_from_threads_table() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute(
+                "create table threads (id text primary key, name text)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into threads (id, name) values (?1, ?2), (?3, ?4), (?5, ?6)",
+                rusqlite::params![
+                    "thread-1",
+                    "研究 Sony IE·DT Edit 和 Viewer",
+                    "thread-2",
+                    "",
+                    "thread-3",
+                    Option::<String>::None
+                ],
+            )
+            .unwrap();
+
+        let names = codex_thread_names_from_connection(&connection);
+        assert_eq!(names.len(), 1, "空串与 NULL 的 name 不进表：{names:?}");
+        assert_eq!(
+            names.get("thread-1").map(String::as_str),
+            Some("研究 Sony IE·DT Edit 和 Viewer")
         );
     }
 
