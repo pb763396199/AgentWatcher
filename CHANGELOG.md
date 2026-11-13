@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- 修 macOS 会话卡片不显示 Codex 会话名称、按名称搜索搜不到的问题：会话名称（Codex 桌面端生成的 thread name，Windows GUI 经 app-server `/name` 获取）持久化在 `~/.codex/state_5.sqlite` 的 `threads.name` 列；文件扫描分支此前不读这个库，标题全落到 prompt 兜底。现在文件扫描按 thread id 融合 `threads.name` 作为标题（与 app-server 分支同源同口径，无名称时退回 prompt 标题），带 10s 进程内缓存避免逐文件重开库；无 CLI 平台（macOS）的卡片标题与搜索恢复官方命名，Windows 的 CLI 文件扫描同样受益。
 - 修 macOS 会话标题全是原始 prompt 的问题（两个叠加根因）：
   - Mac 上没有独立 codex CLI，GUI/CLI 全走 rollout 文件扫描；文件扫描的注入过滤器只认 4 种旧形态，Codex 桌面端新版塞进 user 轮的 `<external_browser_tabs>`、`<codex_internal_context>`、`<skills_instructions>`、`<multi_agent_*>` 等命名空间注入块全部漏过、顶成了标题。过滤器名单按 2026-11 双端 rollout 实测频次扩充到 18 项（`CODEX_CONTEXT_INJECTION_PREFIXES`），标题/首条消息/最新预览共用同一过滤。
   - 超长 prompt 兜底标题被 80 字硬截成半句话。新规则：超过 40 字符的标题在第一个不早于 12 字的句读（中英文标点，不含空格）处收口并剥掉尾部标点；无句读的长串（URL 等）保持原样。
