@@ -1541,17 +1541,57 @@ fn open_readonly_sqlite(db_path: &Path, busy_timeout_ms: u64) -> Option<Connecti
     Some(connection)
 }
 
+// ---- opencode schema 容忍层 ----
+// opencode 的 session 表在 1.2.x → 1.19.x 间陆续加了 path / cost / tokens_* 列；
+// 老库（或装了新版但还没启动过、迁移未发生的库）没有它们。按实际列集构造
+// SELECT，缺的列用 NULL / 0 占位，扫描不因 schema 演进整体失败。
+
+fn sqlite_table_has_column(connection: &Connection, table: &str, column: &str) -> bool {
+    connection
+        .query_row(
+            "select count(*) from pragma_table_info(?1) where name = ?2",
+            rusqlite::params![table, column],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|count| count > 0)
+        .unwrap_or(false)
+}
+
+/// 扫描 / 定向查找共用的 12 列 SELECT 头，位置索引与 opencode_session_row_from_sql 一一对应。
+fn opencode_session_scan_select(connection: &Connection) -> String {
+    let path = if sqlite_table_has_column(connection, "session", "path") {
+        "path".to_string()
+    } else {
+        "null as path".to_string()
+    };
+    let numeric = |column: &str| {
+        if sqlite_table_has_column(connection, "session", column) {
+            format!("coalesce({column}, 0)")
+        } else {
+            "0".to_string()
+        }
+    };
+    format!(
+        "select id, title, directory, {path}, time_created, time_updated, time_archived, \
+         {}, {}, {}, {}, {}",
+        numeric("cost"),
+        numeric("tokens_input"),
+        numeric("tokens_output"),
+        numeric("tokens_cache_read"),
+        numeric("tokens_cache_write"),
+    )
+}
+
 fn lookup_opencode_session_by_key(scan_time_ms: u64, key: &str) -> Option<AgentSession> {
     let db_path = opencode_db_path().filter(|path| path.exists())?;
     let connection = open_readonly_sqlite(&db_path, OPENCODE_SQLITE_BUSY_TIMEOUT_MS)?;
     let mut statement = connection
-        .prepare(
-            "select id, title, directory, path, time_created, time_updated, time_archived, \
-                    coalesce(cost, 0), coalesce(tokens_input, 0), coalesce(tokens_output, 0), \
-                    coalesce(tokens_cache_read, 0), coalesce(tokens_cache_write, 0) \
+        .prepare(&format!(
+            "{} \
              from session \
              where id = ?1",
-        )
+            opencode_session_scan_select(&connection)
+        ))
         .ok()?;
     let row = statement
         .query_row(rusqlite::params![key], opencode_session_row_from_sql)
@@ -3126,10 +3166,18 @@ fn opencode_usage_detail(session_id: &str) -> SessionUsageDetail {
     let _ = connection.busy_timeout(Duration::from_millis(OPENCODE_SQLITE_BUSY_TIMEOUT_MS));
     let _ = connection.pragma_update(None, "query_only", "ON");
 
+    // 老 schema 没有 cost 列（1.2.x），占位 0 让查询照常返回时间跨度。
+    let cost_column = if sqlite_table_has_column(&connection, "session", "cost") {
+        "coalesce(cost, 0)"
+    } else {
+        "0"
+    };
     let Ok(mut usage) = connection
         .query_row(
-            "select coalesce(cost, 0), time_created, time_updated \
-             from session where id = ?1",
+            &format!(
+                "select {cost_column}, time_created, time_updated \
+                 from session where id = ?1"
+            ),
             [session_id],
             |row| {
                 let cost: Option<f64> = row.get(0)?;
@@ -7210,16 +7258,15 @@ fn scan_opencode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> V
         return Vec::new();
     };
 
-    let mut statement = match connection.prepare(
-        "select id, title, directory, path, time_created, time_updated, time_archived, \
-                coalesce(cost, 0), coalesce(tokens_input, 0), coalesce(tokens_output, 0), \
-                coalesce(tokens_cache_read, 0), coalesce(tokens_cache_write, 0) \
+    let mut statement = match connection.prepare(&format!(
+        "{} \
          from session \
          where (?2 = 0 or time_updated >= ?2 or time_created >= ?2) \
            and (?3 = 0 or time_archived is null) \
          order by time_updated desc \
          limit ?1",
-    ) {
+        opencode_session_scan_select(&connection)
+    )) {
         Ok(statement) => statement,
         Err(error) => {
             // 扫描失败要留痕：schema 变更（列名对不上）或库损坏时曾静默返回空列表，
@@ -7749,12 +7796,17 @@ fn read_opencode_session_metadata(
     request: &HandoffSourceContextRequest,
 ) -> Result<OpenCodeSessionRow, String> {
     let mut statement = connection
-        .prepare(
-            "select id, title, directory, path, time_created, time_updated, time_archived \
+        .prepare(&format!(
+            "{} \
              from session \
              where id = ?1 \
              limit 1",
-        )
+            if sqlite_table_has_column(connection, "session", "path") {
+                "select id, title, directory, path, time_created, time_updated, time_archived"
+            } else {
+                "select id, title, directory, null as path, time_created, time_updated, time_archived"
+            }
+        ))
         .map_err(|error| format!("Failed to prepare OpenCode session query: {}", error))?;
 
     let result = statement.query_row(rusqlite::params![session_id], |row| {
