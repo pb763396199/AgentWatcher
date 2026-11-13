@@ -1531,6 +1531,9 @@ fn open_readonly_sqlite(db_path: &Path, busy_timeout_ms: u64) -> Option<Connecti
         db_path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
+    .map_err(|error| {
+        eprintln!("sqlite readonly open failed for {}: {error}", db_path.display());
+    })
     .ok()?;
     let _ = connection.busy_timeout(Duration::from_millis(busy_timeout_ms));
     let _ = connection.pragma_update(None, "query_only", "ON");
@@ -7218,7 +7221,12 @@ fn scan_opencode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> V
          limit ?1",
     ) {
         Ok(statement) => statement,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            // 扫描失败要留痕：schema 变更（列名对不上）或库损坏时曾静默返回空列表，
+            // 用户只会看到「opencode 没会话」而无处排查。
+            eprintln!("opencode scan prepare failed: {error}");
+            return Vec::new();
+        }
     };
 
     let active_cutoff_ms = scan_time_ms.saturating_sub(options.active_window_ms) as i64;
@@ -7236,7 +7244,14 @@ fn scan_opencode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> V
     };
 
     let mut candidate_rows: Vec<OpenCodeSessionRow> = Vec::new();
-    for row in rows.filter_map(Result::ok) {
+    for row in rows {
+        let row = match row {
+            Ok(row) => row,
+            Err(error) => {
+                eprintln!("opencode scan row read failed: {error}");
+                continue;
+            }
+        };
         if options.hide_archived && row.time_archived.is_some() {
             continue;
         }
