@@ -19230,11 +19230,14 @@ mod tests {
 
     #[test]
     fn todo_state_path_lives_under_agentwatcher_appdata() {
-        let path = todo_state_path_from_appdata(Path::new(r"C:\Users\me\AppData\Roaming"));
+        let appdata = Path::new(r"C:\Users\me\AppData\Roaming");
+        let path = todo_state_path_from_appdata(appdata);
 
+        // 期望值用同一套 join 构造：Windows 渲染反斜杠，Unix 渲染正斜杠，
+        // 断言关注「挂在 appdata/AgentWatcher 下」这个语义而不是分隔符。
         assert_eq!(
             path,
-            PathBuf::from(r"C:\Users\me\AppData\Roaming\AgentWatcher\todos.v1.json")
+            appdata.join("AgentWatcher").join("todos.v1.json")
         );
     }
 
@@ -19662,6 +19665,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn decode_file_uri_normalizes_vscode_drive_paths() {
         assert_eq!(
             decode_file_uri("file:///f%3A/AiProject/AgentWatcher")
@@ -19676,6 +19680,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn decode_file_uri_normalizes_vscode_unc_paths() {
         assert_eq!(
             decode_file_uri("file://%3F/UNC/server/share/AgentWatcher")
@@ -21332,7 +21337,12 @@ mod tests {
                 "INSERT INTO sessions VALUES (?1, ?2, NULL, 'vscode', 'dev', ?3, 'copilotcli', NULL, ?4, ?5)",
                 rusqlite::params![
                     "cli-session-1",
-                    r"F:\AiProject\AgentWatcher",
+                    // cwd 用平台原生分隔符：工作区标签从路径段提取，跨平台断言同一个目录名。
+                    if cfg!(windows) {
+                        r"F:\AiProject\AgentWatcher".to_string()
+                    } else {
+                        "/tmp/AiProject/AgentWatcher".to_string()
+                    },
                     "Latest CLI summary",
                     "2026-08-05T01:00:00.000Z",
                     "2026-08-05T02:00:00.000Z"
@@ -24033,9 +24043,10 @@ mod tests {
         assert_eq!(session.provider_label, "WB");
         assert_eq!(session.title, "启动adt-3dgs-to-bim技能");
         assert_eq!(session.workspace_name, "adt-scene-agent");
+        // 展示口径按平台：Windows 统一反斜杠，Unix 保持 cwd 原样的正斜杠。
         assert_eq!(
             session.workspace_path.as_deref(),
-            Some(r"F:\AiProject\adt-scene-agent")
+            Some(workspace_path_display("F:/AiProject/adt-scene-agent").as_str())
         );
         assert_eq!(session.status, "waiting");
         assert_eq!(
@@ -25158,20 +25169,41 @@ mod tests {
 
     #[test]
     fn zcode_send_classifies_child_failure() {
-        // 非零退出：错误信息要带上退出码。
-        let mut command = std::process::Command::new("cmd");
-        command.args(["/c", "exit 2"]).env_remove("ELECTRON_RUN_AS_NODE");
+        // 非零退出：错误信息要带上退出码。Windows 用 cmd，Unix 用 /bin/sh。
+        let mut command = if cfg!(windows) {
+            let mut command = std::process::Command::new("cmd");
+            command.args(["/c", "exit 2"]).env_remove("ELECTRON_RUN_AS_NODE");
+            command
+        } else {
+            let mut command = std::process::Command::new("/bin/sh");
+            command.arg("-c").arg("exit 2");
+            command
+        };
         let error = run_child_with_timeout(&mut command, 10, "超时").unwrap_err();
         assert!(error.contains("退出码 2"), "actual: {error}");
 
         // 正常退出：成功。
-        let mut ok_command = std::process::Command::new("cmd");
-        ok_command.args(["/c", "exit 0"]);
+        let mut ok_command = if cfg!(windows) {
+            let mut command = std::process::Command::new("cmd");
+            command.args(["/c", "exit 0"]);
+            command
+        } else {
+            let mut command = std::process::Command::new("/bin/sh");
+            command.arg("-c").arg("exit 0");
+            command
+        };
         assert!(run_child_with_timeout(&mut ok_command, 10, "超时").is_ok());
 
         // 超时：长进程配 1 秒超时，要被杀掉并报超时。
-        let mut slow_command = std::process::Command::new("cmd");
-        slow_command.args(["/c", "ping -n 5 127.0.0.1 > nul"]);
+        let mut slow_command = if cfg!(windows) {
+            let mut command = std::process::Command::new("cmd");
+            command.args(["/c", "ping -n 5 127.0.0.1 > nul"]);
+            command
+        } else {
+            let mut command = std::process::Command::new("/bin/sh");
+            command.arg("-c").arg("sleep 5");
+            command
+        };
         let timeout_error = run_child_with_timeout(&mut slow_command, 1, "子进程超时").unwrap_err();
         assert_eq!(timeout_error, "子进程超时");
     }
