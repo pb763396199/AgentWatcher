@@ -2,6 +2,13 @@
 
 ## 未发布
 
+- GUI（Tauri 桌面壳）移植 macOS：`cargo check --features gui` 在 macOS 零错误零警告，`npm run dev` 起真窗口，`tauri build` 产出未签名 `AgentWatcher.app` 与 aarch64 `.dmg`（本机侧载可用，未做签名/公证）。
+  - 运行时等价：URL scheme 深链（vscode://、workbuddy://、codex thread）macOS 走 `open`（原 rundll32）；opencode-cli handoff 的可见终端走 osascript `tell application "Terminal" do script`；会话打包的文件剪贴板走 osascript `POSIX file`（Finder 可 Cmd+V，失败仍回退 reveal）。Windows 行为不变。
+  - 透明无边框窗口在 macOS 启用 `macos-private-api`（tauri.conf.json `app.macOSPrivateApi` + Cargo feature 对齐声明）。
+  - 图标：`generate-icons` 同一 GDI+ 路径追加输出 1024 PNG 源图，`tauri icon` 生成 `icon.icns`，`bundle.icon` 补全（Windows 手绘 15 尺寸 ico 保持不变）。
+  - 性能诊断面板 macOS v1 空列表降级（进程采样维持 Windows 专属）；`windows-sys` 显式声明 `Win32_Security` feature（不再依赖传递 feature union）。
+  - 验证：macOS（M1 Pro）dev 窗口与 .app 启动均经 CGWindowList 确认在屏；Windows 侧 lib 177 + CLI 分类 19 + 契约 13 + 真实 Tauri smoke 全绿。macOS 无 CDP，像素级效果留人工验收。
+- AgentWatcher 技能装入 Mac 上的 ChatGPT：ChatGPT 桌面版（26.x）内嵌 Codex Framework，读 `~/.codex/skills/`（并参考 `~/.agents/skills`）；`agentwatcher-cli skill install` 已把 SKILL.md v3 装入 Mac 的 `~/.codex`、`~/.agents`、`~/.workbuddy` 三处宿主目录。
 - agentwatcher-cli 移植 macOS（第一步，GUI 仍为 Windows 专属）：
   - Cargo 结构跨平台化：`winreg` / `windows-sys` / `junction` 移入 `cfg(windows)` 目标依赖，新增 Unix 侧 `libc`；Tauri GUI 壳挂到 `gui` feature（默认开启，Windows 发布链路不变）。macOS 用 `cargo build --manifest-path src-tauri/Cargo.toml --no-default-features --bin agentwatcher-cli` 构建 headless CLI，不要求 ui-dist 前端产物；`cargo check --no-default-features` 同时成为「CLI 永不依赖 GUI」的回归门。
   - 数据源路径跨平台：`USERPROFILE` → `$HOME`、`APPDATA` → `~/Library/Application Support`（VS Code 用户数据、AgentWatcher 自身状态共用该根）；`.codex` / `.claude` / `.local/share/opencode` / `.zcode` / `.workbuddy` 相对布局各平台一致。Windows 侧路径解析优先级不变，返回值与历史版本逐字节一致。

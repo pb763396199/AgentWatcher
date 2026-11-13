@@ -19,7 +19,7 @@ AgentWatcher 是一个 Windows 桌面小工具，用 Tauri 2 写的。它盯着�
 
 ## 怎么跑起来
 
-所有命令都在仓库根目录、用 PowerShell 跑，必须是 Windows。
+所有命令都在仓库根目录跑；Windows 用 PowerShell。GUI 与 CLI 都支持 macOS（GUI 为未签名侧载构建，性能面板进程采样暂为空列表降级）。
 
 - `npm install` —— 装依赖，只跑一次。
 - `npm run dev` —— 唯一标准开发入口。会给 WebView2 自动打开 CDP 调试端口（默认从 `9222` 找可用端口），写入 `.tmp/tauri-dev-runtime.json`，再执行 `tauri dev`：起 Vite `http://127.0.0.1:1420`，并拉起真实 Tauri 桌面壳。后续 agent 不要让用户区分 dev/debug；`target/debug/agentwatcher.exe` 只是 Tauri dev 内部产物名。
@@ -30,6 +30,7 @@ AgentWatcher 是一个 Windows 桌面小工具，用 Tauri 2 写的。它盯着�
 - `npm run build` —— `tauri build`，跑 Rust + 打包。生成的 exe 在 `src-tauri/target/release/agentwatcher.exe`。
 - `cargo build --manifest-path src-tauri/Cargo.toml --bin agentwatcher-cli` —— 单独构建 AI 命令行二进制（见「AI 操作 CLI」一节）。
 - `cargo build --manifest-path src-tauri/Cargo.toml --no-default-features --bin agentwatcher-cli` —— headless 构建（macOS 等非 Windows 平台用这条）：`gui` feature 关掉后不编译 Tauri 壳、不要求 ui-dist 前端产物。`cargo check --no-default-features --bin agentwatcher-cli` 是「CLI 永不依赖 GUI」的回归门，动了 lib.rs 的 feature 门控或依赖划分必须跑。
+- macOS GUI：`npm install && npm run dev`（dev 启动器已有非 win32 分支）；打包 `npx tauri build`，产物在 `src-tauri/target/release/bundle/macos/AgentWatcher.app` 与 `bundle/dmg/`（未签名，侧载首次需右键打开过 Gatekeeper）。macOS 无 WebView2 CDP，验收用进程存活 + CGWindowList 窗口枚举 + 人工看屏；SSH 里的 `screencapture` 受 TCC 屏幕录制权限限制。
 - `npm run generate:icons` —— 重新生成 `src-tauri/icons/icon.ico` 和 `icon-runtime-256.rgba`。**只能在 Windows 上跑**，里面调了 `pwsh` 用 .NET 的 `System.Drawing` 画 Segoe UI 字体。其他系统会报错。
 - `npm run package:exe` —— 完整发布流水线：编译、用 `rcedit` 把图标塞进 exe、增量构建并复制 `agentwatcher-cli.exe`、复制 `vscode-agentwatcher-bridge/`、用 `npx @vscode/vsce` 打 VSIX、最后输出 `artifacts/AgentWatcher/AgentWatcher.exe` + `agentwatcher-cli.exe` + `vscode-agentwatcher-bridge/agentwatcher-bridge-0.1.12.vsix`，再压成 `artifacts/AgentWatcher-v<版本>-windows-x64.zip`。跑这个前会先把老的 `artifacts/AgentWatcher-v*-windows-x64{,.zip}` 清掉。
 - Rust 单元测试：`cargo test --manifest-path src-tauri/Cargo.toml`（测试代码就在 `src-tauri/src/lib.rs` 文件最末尾，CLI 相关的还有 `src-tauri/tests/cli_taxonomy.rs` 和 `src-tauri/tests/cli_contract.rs`）。
