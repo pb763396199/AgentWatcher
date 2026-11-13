@@ -1,4 +1,9 @@
-use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+// headless 构建（`--no-default-features`，CLI 专用）不引用 GUI 壳的常量与辅助函数，
+// 那些项在此模式下的 dead_code 提示全是噪音；GUI 构建保持完整 lint。
+#![cfg_attr(not(feature = "gui"), allow(dead_code))]
+#[cfg(feature = "gui")]
+use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Event, EventKind};
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -12,8 +17,11 @@ use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{mpsc, Mutex, OnceLock};
+#[cfg(feature = "gui")]
+use std::sync::mpsc;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+#[cfg(feature = "gui")]
 use tauri::{Emitter, Manager};
 
 pub mod orchestration;
@@ -1088,6 +1096,7 @@ static ZCODE_SESSION_SUMMARY_CACHE: OnceLock<Mutex<HashMap<String, CachedZcodeSu
     OnceLock::new();
 static ZCODE_SCAN_CACHE: OnceLock<Mutex<Option<CachedZcodeScan>>> = OnceLock::new();
 
+#[cfg(feature = "gui")]
 fn start_session_file_watcher(app_handle: tauri::AppHandle) {
     std::thread::spawn(move || {
         let watch_roots = session_watch_roots();
@@ -1233,12 +1242,14 @@ fn is_session_file_event(event: &Event) -> bool {
     })
 }
 
+#[cfg(feature = "gui")]
 fn emit_sessions_changed(app_handle: &tauri::AppHandle, emitted_ms: u64) {
     clear_opencode_scan_cache();
     clear_zcode_scan_cache();
     let _ = app_handle.emit(SESSIONS_CHANGED_EVENT, emitted_ms);
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn get_bridge_status() -> BridgeStatus {
     let local_version = get_local_bridge_version();
@@ -1282,6 +1293,7 @@ fn get_bridge_status() -> BridgeStatus {
     }
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn install_bridge() -> Result<String, String> {
     let vscode_bridge_dir =
@@ -1334,6 +1346,7 @@ fn install_bridge() -> Result<String, String> {
     }
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn set_window_always_on_top(
     window: tauri::WebviewWindow,
@@ -1349,6 +1362,7 @@ fn set_window_always_on_top(
     Ok(())
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 async fn scan_sessions(
     app: tauri::AppHandle,
@@ -3184,6 +3198,7 @@ fn opencode_usage_detail(session_id: &str) -> SessionUsageDetail {
     detail
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn get_session_usage_detail(id: String) -> SessionUsageDetail {
     session_usage_detail(id)
@@ -3667,11 +3682,13 @@ fn codex_thread_timeline(
     ))
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn get_session_lifecycle(request: SessionLifecycleRequest) -> SessionLifecycle {
     session_lifecycle(request)
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn get_performance_snapshot(options: Option<PerformanceSnapshotOptions>) -> PerformanceSnapshot {
     let captured_ms = current_time_ms();
@@ -4119,6 +4136,7 @@ fn round_metric(value: f64) -> f64 {
     (value * 10.0).round() / 10.0
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn open_session(session: OpenSessionRequest) -> Result<(), String> {
     if clean_option(session.provider.as_deref()) == Some("codex") {
@@ -4172,6 +4190,7 @@ fn open_session(session: OpenSessionRequest) -> Result<(), String> {
     open_agents_page(session.workspace_path.as_deref())
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 async fn launch_handoff(request: HandoffLaunchRequest) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || launch_handoff_blocking(request))
@@ -4179,6 +4198,7 @@ async fn launch_handoff(request: HandoffLaunchRequest) -> Result<(), String> {
         .map_err(|error| format!("Failed to wait for handoff launch task: {}", error))?
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 async fn prepare_handoff_source_context(
     request: HandoffSourceContextRequest,
@@ -4260,6 +4280,7 @@ struct SessionPackageInfo {
     git: Option<Value>,
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 async fn export_session_package(
     request: HandoffSourceContextRequest,
@@ -5235,6 +5256,7 @@ fn copy_file_to_clipboard(_path: &Path) -> bool {
 }
 
 
+#[cfg(feature = "gui")]
 fn launch_handoff_blocking(request: HandoffLaunchRequest) -> Result<(), String> {
     let mode = clean_option(Some(request.mode.as_str()))
         .ok_or_else(|| "Missing handoff launch mode".to_string())?;
@@ -5320,6 +5342,7 @@ fn path_to_cli_string(path: &Path) -> String {
     path_text
 }
 
+#[cfg(feature = "gui")]
 fn open_vscode_command_in_workspace(
     workspace_path: &str,
     command: &str,
@@ -5425,18 +5448,21 @@ fn bridge_session_open_error_should_retry(error: &str) -> bool {
         || lower.contains("session open before timeout")
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn get_todo_state() -> Result<Value, String> {
     let path = todo_state_path()?;
     read_todo_state_from_path(&path)
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn save_todo_state(state: Value) -> Result<(), String> {
     let path = todo_state_path()?;
     write_todo_state_to_path(&path, &state)
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn scan_plugins() -> Result<plugin_catalog::AwPluginCatalogSnapshot, String> {
     let (mount_store, installed_root) = plugin_catalog_paths()?;
@@ -5449,6 +5475,7 @@ fn scan_plugins() -> Result<plugin_catalog::AwPluginCatalogSnapshot, String> {
     Ok(snapshot)
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn mount_plugin(plugin_path: String) -> Result<plugin_catalog::AwDiscoveredPlugin, String> {
     let path = PathBuf::from(plugin_path.trim());
@@ -5463,6 +5490,7 @@ fn mount_plugin(plugin_path: String) -> Result<plugin_catalog::AwDiscoveredPlugi
     Ok(plugin)
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn unmount_plugin(plugin_name: String) -> Result<bool, String> {
     ensure_plugin_exists(&plugin_name)?;
@@ -5479,6 +5507,7 @@ fn unmount_plugin(plugin_name: String) -> Result<bool, String> {
     Ok(changed)
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 async fn invoke_plugin_command(
     request: plugin_catalog::AwPluginInvokeRequest,
@@ -5493,6 +5522,7 @@ async fn invoke_plugin_command(
     .map_err(|error| format!("failed to wait for plugin command: {error}"))?
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn get_plugin_runtime_state(
     plugin_name: String,
@@ -5502,6 +5532,7 @@ fn get_plugin_runtime_state(
     plugin_state::get_plugin_runtime_state(&path, &plugin_name)
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn set_plugin_enabled(
     plugin_name: String,
@@ -5517,6 +5548,7 @@ fn set_plugin_enabled(
     )
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn get_orchestration_status() -> Result<orchestration::AwOrchestrationStatus, String> {
     let current_dir = env::current_dir()
@@ -5540,6 +5572,7 @@ fn agentwatcher_silent_debug_enabled() -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn get_debug_runtime_state() -> DebugRuntimeState {
     DebugRuntimeState {
@@ -5723,6 +5756,7 @@ fn write_todo_state_to_path(path: &Path, state: &Value) -> Result<(), String> {
     fs::rename(&temp_path, path).map_err(|error| format!("Failed to replace todo state: {}", error))
 }
 
+#[cfg(feature = "gui")]
 fn ensure_bridge_command_route_available() -> Result<(), String> {
     if bridge_command_route_available() {
         return Ok(());
@@ -6325,6 +6359,7 @@ fn fetch_codex_turn_summary(
     Some(summary)
 }
 
+#[cfg(feature = "gui")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -14268,6 +14303,7 @@ fn parse_version(version_str: &str) -> Option<Vec<u32>> {
         .collect()
 }
 
+#[cfg(feature = "gui")]
 fn auto_install_bridge_on_startup() {
     std::thread::spawn(|| {
         let status = get_bridge_status();
@@ -14277,6 +14313,7 @@ fn auto_install_bridge_on_startup() {
     });
 }
 
+#[cfg(feature = "gui")]
 fn runtime_window_icon() -> Option<tauri::image::Image<'static>> {
     let expected_bytes = (RUNTIME_ICON_SIZE * RUNTIME_ICON_SIZE * 4) as usize;
     if RUNTIME_ICON_RGBA.len() != expected_bytes {
@@ -14290,7 +14327,7 @@ fn runtime_window_icon() -> Option<tauri::image::Image<'static>> {
     ))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", feature = "gui"))]
 fn apply_native_window_icons<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::core::BOOL;
@@ -14404,7 +14441,7 @@ fn apply_native_window_icons<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", feature = "gui"))]
 fn apply_native_always_on_top<R: tauri::Runtime>(
     window: &tauri::WebviewWindow<R>,
     always_on_top: bool,
@@ -15020,7 +15057,7 @@ fn read_workbuddy_session_row(
         "workbuddy",
         &[last_user_message.as_deref(), last_ai_message.as_deref()],
     );
-    let mut merged_usage = usage;
+    let merged_usage = usage;
     // 卡片消息数没有库表可数：用「用户轮次 + 模型调用数」近似（均为全量正文口径）
     let message_count = merged_usage
         .as_ref()
@@ -15548,6 +15585,7 @@ fn suggestion_runtime() -> &'static Mutex<SuggestionRuntime> {
 /// 2026-11-09 对齐官方 Composer Predictions：主触发是「turn 完成 → idle」（live），
 /// 会话重新出现按 catch_up 采样，waiting 仍保留给审批 / AskUserQuestion 选项场景。
 /// 护栏：时间新鲜度、每会话冷却、单轮生成上限、确定性采样，防止冷启动刷模型。
+#[cfg(feature = "gui")]
 fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSession]) {
     let now_ms = current_time_ms();
     let mut spawns: Vec<(String, Option<String>)> = Vec::new();
@@ -15779,6 +15817,7 @@ pub fn suggestion_prompt_preview(session_id: &str) -> Result<SuggestionPreview, 
 }
 
 /// 生成一个会话的建议并广播。扫描触发与「换一个」共用这一条路。
+#[cfg(feature = "gui")]
 fn spawn_suggestion_generation(
     app: tauri::AppHandle,
     session_id: String,
@@ -15795,6 +15834,7 @@ fn spawn_suggestion_generation(
 }
 
 /// 同上，但允许界面指定「用 Codex 生成」以及源会话转写路径。
+#[cfg(feature = "gui")]
 fn spawn_suggestion_generation_with(
     app: tauri::AppHandle,
     session_id: String,
@@ -15805,6 +15845,7 @@ fn spawn_suggestion_generation_with(
     spawn_suggestion_generation_impl(app, session_id, avoid, options, true);
 }
 
+#[cfg(feature = "gui")]
 fn spawn_suggestion_generation_impl(
     app: tauri::AppHandle,
     session_id: String,
@@ -16075,6 +16116,7 @@ fn generate_zcode_suggestion(session_id: &str, avoid: Option<&str>) -> Option<Se
 
 /// 全自动作答的挂接点：护栏全过才替用户把选项发出去。
 /// 只对带结构化待选项的建议生效，自由文本永远不自动发。
+#[cfg(feature = "gui")]
 fn maybe_auto_answer(app: &tauri::AppHandle, session_id: &str, suggestion: &SessionSuggestion) {
     let Some(options) = suggestion.options.clone() else {
         return;
@@ -16238,6 +16280,7 @@ fn auto_reply_send(session_id: &str, text: &str) -> Result<(), String> {
 
 /// 冷却未满时延后派发：睡到冷却结束再生成发送。
 /// 等待期间用户可能已经关掉开关或手动发了消息，醒来后要重新核对。
+#[cfg(feature = "gui")]
 fn spawn_auto_reply_delayed(app: tauri::AppHandle, session_id: String, remaining_ms: u64) {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(remaining_ms));
@@ -16259,6 +16302,7 @@ fn spawn_auto_reply_delayed(app: tauri::AppHandle, session_id: String, remaining
 ///
 /// 触发时机由扫描管线决定（会话从 running/waiting 转 idle），
 /// 这里负责：生成建议 → 校验仍然新鲜 → 发送 → 记账与审计。
+#[cfg(feature = "gui")]
 fn spawn_auto_reply(app: tauri::AppHandle, session_id: String) {
     std::thread::spawn(move || {
         let now_ms = current_time_ms();
@@ -18434,6 +18478,7 @@ fn send_opencode_message_blocking(id: &str, text: &str) -> Result<(), String> {
         .map_err(|error| format!("{server_error}；CLI 兜底也失败：{error}"))
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 async fn send_opencode_message(
     app: tauri::AppHandle,
@@ -18475,6 +18520,7 @@ async fn send_opencode_message(
     .map_err(|error| format!("send worker failed: {error}"))?
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 async fn send_codex_message(
     app: tauri::AppHandle,
@@ -18529,6 +18575,7 @@ async fn send_codex_message(
 // ---- 按会话的自动作答开关与「换一个」 ----
 
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn set_zcode_auto_answer(id: String, enabled: bool) -> Result<(), String> {
     if !id.starts_with("zcode:") {
@@ -18548,6 +18595,7 @@ fn set_zcode_auto_answer(id: String, enabled: bool) -> Result<(), String> {
 /// 开启/关闭某会话的自动回复：会话停止工作后自动生成一条回复并发回会话。
 /// 与 ZCode 的「自动作答」是两件事——自动作答只在结构化选项里挑一个，
 /// 自动回复是把生成的建议原文发回会话，适用所有有发送通道的 agent。
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn set_auto_reply(id: String, enabled: bool) -> Result<(), String> {
     let provider = session_provider_key(&id).to_string();
@@ -18570,6 +18618,7 @@ fn set_auto_reply(id: String, enabled: bool) -> Result<(), String> {
 }
 
 /// 查询某会话是否开着自动回复（界面回显开关状态用）。
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn get_auto_reply(id: String) -> bool {
     suggestion_runtime()
@@ -18579,6 +18628,7 @@ fn get_auto_reply(id: String) -> bool {
 }
 
 /// 界面上点「丢弃建议」：只清本地状态，不动会话本身。
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn dismiss_suggestion(id: String) {
     if let Ok(mut runtime) = suggestion_runtime().lock() {
@@ -18588,6 +18638,7 @@ fn dismiss_suggestion(id: String) {
     }
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn regenerate_suggestion(
     app: tauri::AppHandle,
@@ -18828,20 +18879,6 @@ fn run_child_with_timeout(
 }
 
 /// 阻塞发送：以纯 node 方式运行 zcode.cjs，把 text 写成该会话的下一条用户消息。
-/// 检查用户消息是否已落库（text 匹配且时间在 send_started 之后）。
-fn zcode_message_landed(session_key: &str, text: &str, since_ms: u64) -> bool {
-    let Some(db_path) = zcode_db_path() else { return false };
-    let Some(connection) = open_readonly_sqlite(&db_path, ZCODE_SQLITE_BUSY_TIMEOUT_MS) else { return false };
-    connection
-        .query_row(
-            "select count(*) from message m join part p on p.message_id = m.id              where m.session_id = ?1 and json_extract(m.data, '$.role') = 'user'                and json_extract(p.data, '$.type') = 'text'                and json_extract(p.data, '$.text') like ?2                and m.time_created >= ?3",
-            rusqlite::params![session_key, format!("%{}%", &text.chars().take(20).collect::<String>()), since_ms as i64],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|count| count > 0)
-        .unwrap_or(false)
-}
-
 fn send_zcode_message_blocking(session_key: &str, workspace_path: &str, text: &str) -> Result<(), String> {
     let exe = resolve_zcode_exe()?;
     let cjs = zcode_cjs_path(&exe);
@@ -18859,6 +18896,7 @@ fn send_zcode_message_blocking(session_key: &str, workspace_path: &str, text: &s
     .map(|_| ())
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 async fn send_zcode_message(
     app: tauri::AppHandle,
@@ -18872,6 +18910,7 @@ async fn send_zcode_message(
     .map_err(|error| format!("send worker failed: {error}"))?
 }
 
+#[cfg(feature = "gui")]
 fn send_zcode_message_impl(
     app: tauri::AppHandle,
     id: String,
@@ -18881,6 +18920,7 @@ fn send_zcode_message_impl(
 }
 
 /// 快速发送：消息落库即返回（约 3-8 秒），模型回复后台继续。
+#[cfg(feature = "gui")]
 fn send_zcode_message_fast(
     app: tauri::AppHandle,
     id: String,
