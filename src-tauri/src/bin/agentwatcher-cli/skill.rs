@@ -48,10 +48,13 @@ fn doc_version() -> &'static str {
 }
 
 fn candidate_roots() -> Vec<(&'static str, PathBuf)> {
-    let Some(home) = std::env::var_os("USERPROFILE") else {
+    // Windows 读 USERPROFILE，其余平台读 HOME；各宿主的技能目录相对布局一致。
+    let Some(home) = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+    else {
         return Vec::new();
     };
-    let home = PathBuf::from(home);
     vec![
         ("zcode", home.join(".zcode").join("skills")),
         ("claude-code", home.join(".claude").join("skills")),

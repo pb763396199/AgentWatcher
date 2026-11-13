@@ -86,6 +86,44 @@ const TODO_PLUGIN_WORKFLOW_EVENT_LIMIT: usize = 12;
 const TODO_LONG_TEXT_LIMIT: usize = 4_000;
 const TODO_SHORT_TEXT_LIMIT: usize = 800;
 
+// ---- 跨平台路径口径 ----
+// Windows 读 USERPROFILE/APPDATA，macOS 落到 HOME 与 ~/Library/Application Support。
+// 优先级保证 Windows 行为与历史版本逐字节一致；数据源目录相对布局各平台同构。
+
+/// 用户主目录：Windows 是 %USERPROFILE%，其余平台是 $HOME。
+fn user_home() -> Option<PathBuf> {
+    env::var_os("USERPROFILE")
+        .or_else(|| env::var_os("HOME"))
+        .map(PathBuf::from)
+}
+
+/// 应用数据根：Windows 是 %APPDATA%（Roaming），macOS 是 ~/Library/Application Support。
+/// VS Code 的 `Code/User/...` 与 AgentWatcher 自身的插件/todo 状态都在这个根下。
+fn app_data_root() -> Option<PathBuf> {
+    if let Some(appdata) = env::var_os("APPDATA") {
+        return Some(PathBuf::from(appdata));
+    }
+    user_home().map(|home| home.join("Library").join("Application Support"))
+}
+
+/// PATH 风格列表的分隔符：Windows 用 ';'，其余平台用 ':'。
+fn path_list_separator() -> char {
+    if cfg!(windows) {
+        ';'
+    } else {
+        ':'
+    }
+}
+
+/// 工作区路径的展示/匹配口径：Windows 沿用历史行为统一反斜杠，其余平台保持原样正斜杠。
+fn workspace_path_display(raw: &str) -> String {
+    if cfg!(windows) {
+        raw.replace('/', "\\")
+    } else {
+        raw.to_string()
+    }
+}
+
 fn bridge_extension_name() -> String {
     ["agentwatcher", "vscode", "session", "bridge"].join("-")
 }
@@ -1150,8 +1188,7 @@ fn start_session_file_watcher(app_handle: tauri::AppHandle) {
 
 fn session_watch_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
-    if let Some(appdata_path) = env::var_os("APPDATA") {
-        let appdata_path = PathBuf::from(appdata_path);
+    if let Some(appdata_path) = app_data_root() {
         for product_folder in ["Code", "Code - Insiders"] {
             push_existing_path(
                 &mut roots,
@@ -1170,7 +1207,7 @@ fn session_watch_roots() -> Vec<PathBuf> {
             push_existing_path(&mut roots, copilot_cli_store.with_extension("db-wal"));
         }
     }
-    if let Some(user_profile_path) = env::var_os("USERPROFILE") {
+    if let Some(user_profile_path) = user_home() {
         let user_profile_path = PathBuf::from(user_profile_path);
         let codex_home = user_profile_path.join(".codex");
         let opencode_data = user_profile_path
@@ -1553,7 +1590,7 @@ fn lookup_zcode_session_by_key(scan_time_ms: u64, key: &str) -> Option<AgentSess
 }
 
 fn lookup_codex_session_by_key(scan_time_ms: u64, key: &str) -> Option<AgentSession> {
-    let user_profile_path = env::var_os("USERPROFILE")?;
+    let user_profile_path = user_home()?;
     let codex_home = PathBuf::from(user_profile_path).join(".codex");
     let options = full_history_resolved_options();
     let mut candidates: Vec<(PathBuf, u64)> = Vec::new();
@@ -2674,7 +2711,7 @@ fn codex_rollout_file_index() -> Option<HashMap<String, Vec<PathBuf>>> {
             }
         }
     }
-    let user_profile_path = env::var_os("USERPROFILE")?;
+    let user_profile_path = user_home()?;
     let sessions_root = PathBuf::from(user_profile_path)
         .join(".codex")
         .join("sessions");
@@ -4521,7 +4558,7 @@ fn package_session_key(request: &HandoffSourceContextRequest, provider: &str) ->
 }
 
 fn codex_home_path() -> Option<PathBuf> {
-    env::var_os("USERPROFILE").map(|profile| PathBuf::from(profile).join(".codex"))
+    user_home().map(|profile| profile.join(".codex"))
 }
 
 fn claude_package_entries(request: &HandoffSourceContextRequest) -> Result<Vec<SessionPackageEntry>, String> {
@@ -4551,7 +4588,7 @@ fn claude_package_entries(request: &HandoffSourceContextRequest) -> Result<Vec<S
 /// UI 传来的 sessionPath 可能缺失（waiting 快照、DOM 兜底、sessions-index 无路径条目）：
 /// 按 <会话id>.jsonl 的文件名在 ~/.claude/projects 下重新定位，取修改时间最新的一条。
 fn locate_claude_session_file(key: &str) -> Option<PathBuf> {
-    let user_profile_path = env::var_os("USERPROFILE")?;
+    let user_profile_path = user_home()?;
     let projects_root = PathBuf::from(user_profile_path).join(".claude").join("projects");
     locate_session_file_under(&projects_root, &format!("{}.jsonl", key))
 }
@@ -5596,15 +5633,15 @@ fn ensure_plugin_enabled(plugin_name: &str) -> Result<(), String> {
 }
 
 fn plugin_state_path() -> Result<PathBuf, String> {
-    let appdata = env::var_os("APPDATA").map(PathBuf::from).ok_or_else(|| {
-        "APPDATA is not available; cannot locate AgentWatcher plugin state".to_string()
+    let appdata = app_data_root().ok_or_else(|| {
+        "无法定位应用数据目录（APPDATA / HOME 都不可用）；插件状态无法存取".to_string()
     })?;
     Ok(plugin_state::plugin_state_path_from_appdata(&appdata))
 }
 
 fn plugin_catalog_paths() -> Result<(PathBuf, PathBuf), String> {
-    let appdata = env::var_os("APPDATA").map(PathBuf::from).ok_or_else(|| {
-        "APPDATA is not available; cannot locate AgentWatcher plugin mounts".to_string()
+    let appdata = app_data_root().ok_or_else(|| {
+        "无法定位应用数据目录（APPDATA / HOME 都不可用）；插件挂载无法存取".to_string()
     })?;
     let localappdata = env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
@@ -5621,8 +5658,8 @@ fn scan_plugin_catalog() -> Result<plugin_catalog::AwPluginCatalogSnapshot, Stri
 }
 
 fn todo_state_path() -> Result<PathBuf, String> {
-    let appdata = env::var_os("APPDATA").map(PathBuf::from).ok_or_else(|| {
-        "APPDATA is not available; cannot locate AgentWatcher todo storage".to_string()
+    let appdata = app_data_root().ok_or_else(|| {
+        "无法定位应用数据目录（APPDATA / HOME 都不可用）；todo 状态无法存取".to_string()
     })?;
     Ok(todo_state_path_from_appdata(&appdata))
 }
@@ -6189,7 +6226,7 @@ fn dedup_codex_thread_items(thread_items: Vec<Value>, scan_time_ms: u64) -> Vec<
 }
 
 fn scan_codex_file_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<AgentSession> {
-    let Some(user_profile_path) = env::var_os("USERPROFILE") else {
+    let Some(user_profile_path) = user_home() else {
         return Vec::new();
     };
 
@@ -7247,7 +7284,7 @@ fn scan_opencode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> V
 }
 
 fn opencode_db_path() -> Option<PathBuf> {
-    env::var_os("USERPROFILE")
+    user_home()
         .map(PathBuf::from)
         .map(|user_profile| {
             user_profile
@@ -8130,7 +8167,7 @@ fn scan_zcode_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<
 }
 
 fn zcode_db_path() -> Option<PathBuf> {
-    env::var_os("USERPROFILE").map(PathBuf::from).map(|user_profile| {
+    user_home().map(|user_profile| {
         user_profile
             .join(".zcode")
             .join("cli")
@@ -10221,14 +10258,11 @@ fn open_windows_url(url: &str) -> Result<(), String> {
 }
 
 fn scan_copilot_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<AgentSession> {
-    let Some(appdata_path) = env::var_os("APPDATA") else {
+    let Some(appdata_path) = app_data_root() else {
         return Vec::new();
     };
 
-    let storage_root = PathBuf::from(appdata_path)
-        .join("Code")
-        .join("User")
-        .join("workspaceStorage");
+    let storage_root = appdata_path.join("Code").join("User").join("workspaceStorage");
 
     let mut candidates: Vec<(PathBuf, WorkspaceInfo, u64)> = Vec::new();
     for storage_entry in read_directory(&storage_root) {
@@ -10267,10 +10301,9 @@ fn scan_copilot_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Ve
 }
 
 fn copilot_cli_session_store_paths() -> Vec<PathBuf> {
-    let Some(appdata_path) = env::var_os("APPDATA") else {
+    let Some(appdata_path) = app_data_root() else {
         return Vec::new();
     };
-    let appdata_path = PathBuf::from(appdata_path);
     ["Code", "Code - Insiders"]
         .iter()
         .map(|product_folder| {
@@ -10587,7 +10620,7 @@ fn read_copilot_session(
 }
 
 fn scan_claude_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<AgentSession> {
-    let Some(user_profile_path) = env::var_os("USERPROFILE") else {
+    let Some(user_profile_path) = user_home() else {
         return Vec::new();
     };
 
@@ -11190,8 +11223,7 @@ fn copilot_transcript_path(session_path: &Path) -> Option<PathBuf> {
 
 /// Claude 同理：chatSessions 路径缺失时按 <会话id>.jsonl 在 workspaceStorage 下重定位。
 fn locate_copilot_chat_session_file(key: &str) -> Option<PathBuf> {
-    let appdata_path = env::var_os("APPDATA")?;
-    let appdata = PathBuf::from(appdata_path);
+    let appdata = app_data_root()?;
     for product_folder in ["Code", "Code - Insiders"] {
         let storage_root = appdata
             .join(product_folder)
@@ -13234,6 +13266,11 @@ fn decode_file_uri(uri_text: &str) -> Option<PathBuf> {
         }
     }
 
+    // Unix 上 file URI 解出来就是绝对路径（/Users/...），直接用；
+    // 下面的反斜杠归一与 UNC 前缀兜底是 Windows 盘符路径专属逻辑。
+    if !cfg!(windows) {
+        return Some(PathBuf::from(decoded_path));
+    }
     let is_drive_path = decoded_path.len() > 2
         && decoded_path.as_bytes().get(1).copied() == Some(b':')
         && decoded_path.as_bytes()[0].is_ascii_alphabetic();
@@ -13999,7 +14036,7 @@ fn bridge_extension_inventory_from_cli_output(output: &str) -> BridgeExtensionIn
 }
 
 fn bridge_extension_inventory_from_extension_folders() -> BridgeExtensionInventory {
-    let Some(user_profile_path) = env::var_os("USERPROFILE") else {
+    let Some(user_profile_path) = user_home() else {
         return BridgeExtensionInventory::default();
     };
 
@@ -14550,7 +14587,7 @@ struct WorkbuddyUsageRow {
 }
 
 fn workbuddy_home_dir() -> Option<PathBuf> {
-    env::var_os("USERPROFILE").map(PathBuf::from).map(|home| home.join(".workbuddy"))
+    user_home().map(|home| home.join(".workbuddy"))
 }
 
 fn workbuddy_db_path() -> Option<PathBuf> {
@@ -15008,7 +15045,7 @@ fn read_workbuddy_session_row(
     usage: Option<SessionUsage>,
 ) -> Option<AgentSession> {
     // db 的 cwd 是正斜杠（F:/x/y），卡片与深链统一用 Windows 反斜杠形态
-    let workspace_path = clean_option(Some(row.cwd.as_str())).map(|text| text.replace('/', "\\"));
+    let workspace_path = clean_option(Some(row.cwd.as_str())).map(workspace_path_display);
     let workspace_hint = workspace_path
         .as_deref()
         .and_then(|path_text| path_segments_basename(&workspace_path_segments(path_text)))
@@ -16608,7 +16645,7 @@ fn cross_agent_transcript_path(
     if key.is_empty() {
         return None;
     }
-    let home = PathBuf::from(std::env::var("USERPROFILE").ok()?);
+    let home = user_home()?;
     match provider {
         "claude" => {
             let projects = home.join(".claude").join("projects");
@@ -16832,7 +16869,7 @@ fn cross_agent_suggestion_context(
         };
         if workspace_path.is_empty() {
             if let Some(cwd) = string_at(&value, &["/cwd"]).filter(|cwd| !cwd.trim().is_empty()) {
-                workspace_path = normalize_windows_drive(&cwd.replace('/', "\\"));
+                workspace_path = normalize_windows_drive(&workspace_path_display(&cwd));
             }
         }
         let event_type = string_at(&value, &["/type"]).unwrap_or("");
@@ -17258,7 +17295,7 @@ pub enum CodexImagegenError {
 fn codex_home_dir() -> PathBuf {
     std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join(".codex")))
+        .or_else(|| user_home().map(|home| home.join(".codex")))
         .unwrap_or_else(|| PathBuf::from(".codex"))
 }
 
@@ -18118,7 +18155,7 @@ fn codex_cli_path() -> Option<PathBuf> {
         );
     }
     // WorkBuddy 自带的 node 运行时，其 npm 全局根就在这里。
-    if let Some(home) = std::env::var_os("USERPROFILE") {
+    if let Some(home) = user_home() {
         let binaries = PathBuf::from(home).join(".workbuddy").join("binaries").join("node").join("versions");
         if let Ok(entries) = std::fs::read_dir(&binaries) {
             for entry in entries.flatten() {
@@ -18142,9 +18179,7 @@ fn codex_cli_path() -> Option<PathBuf> {
 /// 同名日期内按文件名倒序，保证拿到最新片段（上下文尾部才有意义）。
 fn codex_session_file(session_id: &str) -> Option<PathBuf> {
     let key = codex_session_key(session_id)?;
-    let sessions_dir = std::env::var("USERPROFILE")
-        .ok()
-        .map(|home| PathBuf::from(home).join(".codex").join("sessions"))?;
+    let sessions_dir = user_home().map(|home| home.join(".codex").join("sessions"))?;
     fn sorted_dirs(dir: &Path) -> Vec<PathBuf> {
         let mut dirs: Vec<PathBuf> = std::fs::read_dir(dir)
             .map(|entries| {
@@ -18314,7 +18349,7 @@ fn workbuddy_suggestion_context(session_id: &str) -> Option<SuggestionContext> {
         }
         if workspace_path.is_empty() {
             if let Some(cwd) = string_at(&value, &["/cwd"]).filter(|cwd| !cwd.trim().is_empty()) {
-                workspace_path = normalize_windows_drive(&cwd.replace('/', "\\"));
+                workspace_path = normalize_windows_drive(&workspace_path_display(&cwd));
             }
         }
         let part_type = if role == "user" { "input_text" } else { "output_text" };
