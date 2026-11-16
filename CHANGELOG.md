@@ -2,6 +2,7 @@
 
 ## 未发布
 
+- 下线 GUI 的工作流总控入口（用户拍板：本阶段以 CLI 跑通闭环为主线，UI 不再做工作流迭代）：移除标题栏「工作流总控」按钮、只读诊断窗（`ui/index.html`）与 `workflow_snapshot` / `workflow_human_action` 两个 tauri command 及其注册；`test:tauri:flow -- workflow` 真实桌面流程同步删除。workflow 服务与全部 CLI 命令不受影响，需要 UI 时从 git 历史恢复。
 - 持久工作流服务：SQLite 作为路线、执行、交付与授权的事实源（`src-tauri/src/workflow/`），CLI 新增 `workflow apply/snapshot/guide/next/watch` 与 `service status|start|stop`，技能文档升 v5，GUI 增只读工作流窗；通用实现零插件可运行，具体业务归独立插件。
 - 新增 `install-cli` 子命令，修 macOS 上 CLI 不在 PATH、技能裸命令调不到的问题（实测用户交互 PATH 常不含 `~/.local/bin`，曾需手动写 PATH 兜底）：默认复制自身到 `~/.agentwatcher/bin` 并**自动幂等写 shell rc**（`~/.zshrc → ~/.zprofile → ~/.bashrc → ~/.profile`，已含该目录则跳过；`AGENTWATCHER_CLI_BIN` 可覆盖目录；Windows 不动注册表给系统设置指引）。`skill install` 收尾检测 PATH 无 CLI 时输出 install-cli 提示；技能文档升 v6：定位指引补 Unix 候选路径与 install-cli 建议。Mac 实测：装后新开 shell 裸命令直达 `~/.agentwatcher/bin`，重跑不重复写 rc。
 - 修 macOS 会话卡片不显示 Codex 会话名称、按名称搜索搜不到的问题：会话名称（Codex 桌面端生成的 thread name，Windows GUI 经 app-server `/name` 获取）持久化在 `~/.codex/state_5.sqlite` 的 `threads.name` 列；文件扫描分支此前不读这个库，标题全落到 prompt 兜底。现在文件扫描按 thread id 融合 `threads.name` 作为标题（与 app-server 分支同源同口径，无名称时退回 prompt 标题），带 10s 进程内缓存避免逐文件重开库；无 CLI 平台（macOS）的卡片标题与搜索恢复官方命名，Windows 的 CLI 文件扫描同样受益。

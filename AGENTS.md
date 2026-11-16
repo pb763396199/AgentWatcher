@@ -91,8 +91,9 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 - `agentwatcher-cli service status|start|stop` 管理本机服务；`workflow apply --file <JSON或->` 收发任务；`workflow snapshot [--project <ID>]` 查询；`workflow guide` 输出内嵌指南。`--workflow-home` 只能用于明确选择独立数据目录，测试必须使用临时目录。
 - `service status` 不创建数据、不启动服务；工作流请求按需唤起。普通 session 查询保持只读，不唤起此服务。关闭主窗口收起到托盘，显式退出停止调度，外部施工继续。
 - 请求 `schemaVersion/requestId/command/payload`，重复 ID 只能重放完全相同内容。不要绕过服务直接改正式数据库，不要编造 `humanConfirmed`。
-- 新测试：`cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --test workflow_contract --test workflow_git --test workflow_codex --test cli_taxonomy --test cli_contract`；真实桌面入口 `npm run test:tauri:flow -- workflow`（中文别名「工作流」）只验收只读诊断窗。运行器真实模型测试会产生用量，只能在隔离仓库中执行。
-- AI 主流程使用 `workflow next` 取得动作收件箱、`workflow watch --after <cursor>` 取得事件增量、`workflow apply` 提交状态变化；Tauri 工作流窗不得重新实现批准、暂停、退回或下游授权。
+- 新测试：`cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --test workflow_contract --test workflow_git --test workflow_codex --test cli_taxonomy --test cli_contract`。运行器真实模型测试会产生用量，只能在隔离仓库中执行。
+- AI 主流程使用 `workflow next` 取得动作收件箱、`workflow watch --after <cursor>` 取得事件增量、`workflow apply` 提交状态变化。批准、暂停、退回与下游授权全部走 CLI，UI 不参与。
+- **GUI 入口已下线（2026-11-16 用户拍板）**：本阶段以 CLI 跑通闭环为主线，AgentWatcher UI 不再做工作流迭代——标题栏「工作流总控」按钮、只读诊断窗与 `workflow_snapshot` / `workflow_human_action` 两个 tauri command 均已移除（`test:tauri:flow -- workflow` 同步删除），需要时从 git 历史恢复；不要在 UI 上重新加回工作流入口。
 - 运行器独立持有 Codex thread；结果不明先核对，禁止盲目重复建会话。`runner.recover` 需要人确认、已知 thread 和已释放的旧运行器锁。备份恢复默认暂停，活动施工未安全停止时拒绝覆盖。
 
 ## 不能随便改的标识符

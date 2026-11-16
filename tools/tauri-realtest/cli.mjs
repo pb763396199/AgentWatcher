@@ -30,8 +30,6 @@ fs.mkdirSync(outputDir, { recursive: true });
 
 const aliasToFlow = new Map([
   ['smoke', 'smoke'],
-  ['workflow', 'workflow'],
-  ['工作流', 'workflow'],
   ['冒烟', 'smoke'],
   ['all', 'smoke'],
   ['全部', 'smoke'],
@@ -197,8 +195,6 @@ try {
       await runStep('点击打开性能诊断窗口', () => runPerformanceFlow());
       await runStep('确认接续面板 WebViewWindow 可被识别', () => runHandoffFlow());
       await runStep('点击切换到 AgentTask 面板', () => runAgentTaskFlow());
-    } else if (flow === 'workflow') {
-      await runStep('查看真实持久工作流服务', () => runWorkflowFlow());
     } else if (flow === 'agent-task') {
       await runStep('点击切换到 AgentTask 面板', () => runAgentTaskFlow());
     } else if (flow === 'plugin-lifecycle') {
@@ -1586,29 +1582,6 @@ async function runSettingsPerformanceFlow() {
     阈值毫秒: 2000,
     截图: screenshot,
   };
-}
-
-async function runWorkflowFlow() {
-  const main = await getMainPage();
-  await assertTauriPage(main, '工作流主窗口');
-  await maybeBringToFront(main);
-  await ensureWatcherSurface(main);
-  await main.locator('#workflowToggle').click();
-  await main.locator('#workflowConsole').waitFor({ state: 'visible' });
-  await main.waitForFunction(() => {
-    const text = document.querySelector('#workflowConsole')?.textContent || '';
-    return !text.includes('正在读取持久任务状态');
-  }, null, { timeout: 20000 });
-  const text = await main.locator('#workflowConsole').innerText();
-  if (text.includes('工作流服务读取失败')) throw new Error(text);
-  if (process.env.AGENTWATCHER_REALTEST_WORKFLOW_FIXTURE === '1') {
-    if (!process.env.AGENTWATCHER_WORKFLOW_HOME || !text.includes('AW isolated acceptance fixture')) throw new Error('工作流测试只允许操作明确隔离的 fixture');
-    if (!text.includes('这里只读显示任务状态')) throw new Error('工作流窗口必须保持只读诊断定位');
-    if (text.includes('接受交付') || text.includes('暂停项目')) throw new Error('工作流窗口不应暴露状态变更按钮');
-  }
-  const screenshot = await saveScreenshot(main, 'workflow-console.png');
-  await main.locator('#workflowConsole').getByRole('button', { name: '关闭', exact: true }).click();
-  return { 截图: screenshot, 状态: text.slice(0, 500) };
 }
 
 async function ensureWatcherSurface(page) {

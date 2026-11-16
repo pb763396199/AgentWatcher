@@ -29,28 +29,9 @@ pub mod plugin_catalog;
 pub mod plugin_state;
 pub mod workflow;
 
-#[cfg(feature = "gui")]
-#[tauri::command]
-async fn workflow_snapshot(project: Option<String>) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        workflow::service::snapshot(&workflow::default_home(), project.as_deref())
-            .map_err(|e| format!("{}: {}",e.code,e.message))
-    }).await.map_err(|e|e.to_string())?
-}
-
-#[cfg(feature = "gui")]
-#[tauri::command]
-async fn workflow_human_action(command: String, payload: Value) -> Result<Value, String> {
-    if !["handoff.accept","handoff.reject","control.set","roadmap.propose","execution.resume","execution.release","node.revalidate","runner.approval_reply","runner.recover"].contains(&command.as_str()) {
-        return Err("This action is not available from the workflow confirmation panel".into());
-    }
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut payload=payload;payload["humanConfirmed"]=json!(true);
-        workflow::service::apply(&workflow::default_home(),&workflow::Request {
-            schema_version:1,request_id:workflow::id("ui"),command,payload
-        }).map_err(|e|format!("{}: {}",e.code,e.message))
-    }).await.map_err(|e|e.to_string())?
-}
+// GUI 的工作流总控入口已按用户决策移除（2026-11-16：本阶段以 CLI 跑通闭环为主线，
+// UI 不再迭代；workflow_snapshot / workflow_human_action 两个 command 与标题栏
+// ◇ 按钮、只读诊断窗一并下线，需要时从 git 历史恢复）。
 const DEFAULT_MAX_ACTIVE_SESSIONS: usize = 80;
 const DEFAULT_ACTIVE_SESSION_DAYS: u64 = 7;
 const ACTIVE_SESSION_DAYS_LIMIT: u64 = 30;
@@ -6498,8 +6479,6 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            workflow_snapshot,
-            workflow_human_action,
             scan_sessions,
             send_zcode_message,
             send_codex_message,
