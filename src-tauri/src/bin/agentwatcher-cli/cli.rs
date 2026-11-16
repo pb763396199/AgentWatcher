@@ -26,12 +26,26 @@ pub struct Cli {
     #[arg(long, global = true, default_value = "json")]
     pub format: OutputFormat,
 
+    /// 工作流服务数据目录（默认用户应用目录；用于隔离项目服务与测试）
+    #[arg(long, global = true)]
+    pub workflow_home: Option<String>,
+
     #[command(subcommand)]
     pub command: Commands,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
+    /// 查询或管理本机任务服务；status 不会启动服务
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction,
+    },
+    /// 经受控服务管理路线、节点、执行与交付
+    Workflow {
+        #[command(subcommand)]
+        action: WorkflowAction,
+    },
     /// 查询被监控的会话
     Session {
         #[command(subcommand)]
@@ -57,6 +71,73 @@ pub enum Commands {
         #[command(subcommand)]
         action: ImagegenAction,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ServiceAction {
+    /// 读取服务健康状态，不启动服务
+    Status,
+    /// 启动或复用本机任务服务
+    Start,
+    /// 请求服务停止调度
+    Stop,
+    #[command(hide = true)]
+    /// Internal service process entry; not part of the public agent contract
+    Run,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WorkflowAction {
+    /// 仅调用已挂载启用插件描述文件声明的命令
+    Plugin {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        command: String,
+        #[arg(long)]
+        file: String,
+    },
+    /// 在服务停止后恢复数据库；保留旧库并暂停恢复的项目
+    Restore {
+        #[arg(long)]
+        file: String,
+        #[arg(long)]
+        confirm: bool,
+    },
+    #[command(hide = true)]
+    /// Internal runner entry; not part of the public agent contract
+    Worker {
+        #[arg(long)]
+        operation: String,
+    },
+    /// 提交一个固定命令的 JSON 请求；- 从 stdin 读取
+    Apply {
+        #[arg(long)]
+        file: String,
+    },
+    /// 查询正式状态与通知，可按项目过滤
+    Snapshot {
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// 从事件游标读取增量；--wait-ms 可等待新事件，适合 AI 长轮询
+    Watch {
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long, default_value_t = 0)]
+        after: u64,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+        #[arg(long, default_value_t = 0)]
+        wait_ms: u64,
+    },
+    /// 返回当前按紧急程度排序的下一步动作，不改变状态
+    Next {
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// 打印 agent 的服务使用指南，不启动服务
+    Guide,
 }
 
 #[derive(Debug, Subcommand)]

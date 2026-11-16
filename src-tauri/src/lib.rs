@@ -27,6 +27,30 @@ use tauri::{Emitter, Manager};
 pub mod orchestration;
 pub mod plugin_catalog;
 pub mod plugin_state;
+pub mod workflow;
+
+#[cfg(feature = "gui")]
+#[tauri::command]
+async fn workflow_snapshot(project: Option<String>) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        workflow::service::snapshot(&workflow::default_home(), project.as_deref())
+            .map_err(|e| format!("{}: {}",e.code,e.message))
+    }).await.map_err(|e|e.to_string())?
+}
+
+#[cfg(feature = "gui")]
+#[tauri::command]
+async fn workflow_human_action(command: String, payload: Value) -> Result<Value, String> {
+    if !["handoff.accept","handoff.reject","control.set","roadmap.propose","execution.resume","execution.release","node.revalidate","runner.approval_reply","runner.recover"].contains(&command.as_str()) {
+        return Err("This action is not available from the workflow confirmation panel".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut payload=payload;payload["humanConfirmed"]=json!(true);
+        workflow::service::apply(&workflow::default_home(),&workflow::Request {
+            schema_version:1,request_id:workflow::id("ui"),command,payload
+        }).map_err(|e|format!("{}: {}",e.code,e.message))
+    }).await.map_err(|e|e.to_string())?
+}
 const DEFAULT_MAX_ACTIVE_SESSIONS: usize = 80;
 const DEFAULT_ACTIVE_SESSION_DAYS: u64 = 7;
 const ACTIVE_SESSION_DAYS_LIMIT: u64 = 30;
@@ -6474,6 +6498,8 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            workflow_snapshot,
+            workflow_human_action,
             scan_sessions,
             send_zcode_message,
             send_codex_message,
@@ -6505,6 +6531,19 @@ pub fn run() {
             set_window_always_on_top
         ])
         .setup(|app| {
+            let show = tauri::menu::MenuItem::with_id(app,"show-main","打开 AgentWatcher",true,None::<&str>)?;
+            let exit = tauri::menu::MenuItem::with_id(app,"exit-agentwatcher","退出 AgentWatcher（施工会话继续）",true,None::<&str>)?;
+            let menu = tauri::menu::Menu::with_items(app,&[&show,&exit])?;
+            let mut tray = tauri::tray::TrayIconBuilder::with_id("agentwatcher-tray")
+                .tooltip("AgentWatcher")
+                .menu(&menu)
+                .on_menu_event(|app,event|match event.id.as_ref(){
+                    "show-main"=>{if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}},
+                    "exit-agentwatcher"=>{let _=workflow::service::stop(&workflow::default_home());app.exit(0);},
+                    _=>{},
+                });
+            if let Some(icon)=runtime_window_icon(){tray=tray.icon(icon);}
+            tray.build(app)?;
             if let Some(window) = app.get_webview_window("main") {
                 if let Some(icon) = runtime_window_icon() {
                     let _ = window.set_icon(icon);
@@ -6528,6 +6567,13 @@ pub fn run() {
             start_session_file_watcher(app.handle().clone());
 
             Ok(())
+        })
+        .on_window_event(|window,event|{
+            if window.label()=="main" {
+                if let tauri::WindowEvent::CloseRequested{api,..}=event {
+                    api.prevent_close();let _=window.hide();
+                }
+            }
         })
         .build(tauri::generate_context!())
         .expect("error while building AgentWatcher");
@@ -16018,6 +16064,7 @@ fn suggestion_runtime() -> &'static Mutex<SuggestionRuntime> {
 /// 护栏：时间新鲜度、每会话冷却、单轮生成上限、确定性采样，防止冷启动刷模型。
 #[cfg(feature = "gui")]
 fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSession]) {
+    let managed_sessions = workflow::active_session_ids();
     let now_ms = current_time_ms();
     let mut spawns: Vec<(String, Option<String>)> = Vec::new();
     let mut auto_reply_spawns: Vec<String> = Vec::new();
@@ -16029,6 +16076,10 @@ fn maybe_run_suggestion_pipeline(app: &tauri::AppHandle, sessions: &[AgentSessio
         };
         let mut seen: HashSet<&str> = HashSet::new();
         for session in sessions {
+            if managed_sessions.contains(&session.id) {
+                runtime.auto_reply_sessions.remove(&session.id);
+                continue;
+            }
             // 状态跟踪覆盖所有支持发送的 provider：自动回复要在 opencode 等
             // 会话上识别「running/waiting → idle」这个转 idle 的瞬间。
             // 但建议的自动生成（无脑刷模型）仍然只对 zcode/codex 生效。
@@ -19114,6 +19165,9 @@ fn set_zcode_auto_answer(id: String, enabled: bool) -> Result<(), String> {
 #[cfg(feature = "gui")]
 #[tauri::command]
 fn set_auto_reply(id: String, enabled: bool) -> Result<(), String> {
+    if enabled && workflow::active_session_ids().contains(&id) {
+        return Err("该会话由工作流任务服务管理；请在工作流中控制跟进".into());
+    }
     let provider = session_provider_key(&id).to_string();
     if !auto_reply_supported_provider(&provider) {
         return Err(format!("{provider} 暂不支持自动回复（没有发送通道）"));

@@ -21,6 +21,11 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 name = "agentwatcher-cli"
 path = "src/bin/agentwatcher-cli/main.rs"
 
+[[bin]]
+name = "agentwatcher"
+path = "src/main.rs"
+required-features = ["gui"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -32,11 +37,12 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 notify = "6"
 # macos-private-api：主窗口 transparent: true 在 macOS 上必须启用（WKWebView 透明
 # 依赖私有 API）；Windows 构建忽略该 feature。
-tauri = { version = "2", features = ["macos-private-api"], optional = true }
+tauri = { version = "2", features = ["macos-private-api", "tray-icon"], optional = true }
 tauri-plugin-opener = { version = "2", optional = true }
 ruzstd = "0.9.1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

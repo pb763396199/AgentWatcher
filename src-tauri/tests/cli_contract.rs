@@ -250,7 +250,9 @@ fn skill_print_and_status_expose_doc_surface() {
     assert_eq!(envelope["command"], "skill print");
     let content = envelope["data"]["content"].as_str().expect("data.content is a string");
     assert!(content.contains("name: agentwatcher"), "doc has frontmatter");
-    assert!(content.contains("version: 3"), "doc carries a version");
+    assert!(content.contains("version: 5"), "doc carries a version");
+    assert!(content.contains("## 调技能开任务"), "skill teaches task kickoff");
+    assert!(content.contains("### 调技能做验收"), "skill teaches isolated skill-led acceptance");
     assert!(content.contains("suggest generate"), "doc teaches the suggest command");
     assert!(
         envelope["data"]["docBytes"].as_u64().unwrap_or(0) > 0,
@@ -261,7 +263,7 @@ fn skill_print_and_status_expose_doc_surface() {
     let (envelope, _stderr, code) = run_cli(&["--format", "json", "skill", "status"]);
     assert_eq!(code, Some(0));
     assert_eq!(envelope["command"], "skill status");
-    assert_eq!(envelope["data"]["docVersion"], "3");
+    assert_eq!(envelope["data"]["docVersion"], "5");
     let hosts = envelope["data"]["hosts"].as_array().expect("data.hosts is an array");
     assert!(!hosts.is_empty(), "至少有一个宿主候选");
     let valid_actions = ["none", "skill install", "skip"];

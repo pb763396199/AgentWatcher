@@ -1,0 +1,21 @@
+   Compiling agentwatcher v0.1.11 (F:\AiProject\AgentWatcher\src-tauri)
+warning: variable does not need to be mutable
+     --> src\lib.rs:11830:67
+      |
+11830 | fn visit_jsonl_tail_values<F>(session_path: &Path, file_len: u64, mut visit: F) -> Option<()>
+      |                                                                   ----^^^^^
+      |                                                                   |
+      |                                                                   help: remove this `mut`
+      |
+      = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+     --> src\lib.rs:11862:5
+      |
+11862 |     mut visit: F,
+      |     ----^^^^^
+      |     |
+      |     help: remove this `mut`
+
+warning: `agentwatcher` (lib) generated 2 warnings (run `cargo fix --lib -p agentwatcher` to apply 2 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 26.67s

@@ -1,0 +1,187 @@
+{
+  "fixtureHome": "F:\\AiProject\\AgentWatcher\\.tmp\\workflow-codex-code-realtest\\d6ed8a9f-5357-4b5e-95d1-67d977aad25a",
+  "scope": "Actual Codex author and independent reviewer; isolated test-only commit approval; no AgentWatcher source commit.",
+  "executions": [
+    {
+      "id": "execution_25c0c0d4-9702-4ce5-b43d-ced84d38d33e",
+      "session_id": "codex:01a1d47f-6a5f-7622-8df3-48e8b6b70e7c",
+      "state": "completed"
+    }
+  ],
+  "handoffs": [
+    {
+      "id": "handoff_9beb4a60-2e77-4b09-95cf-b518c2aa2984",
+      "state": "accepted",
+      "body": {
+        "artifacts": [],
+        "codeRevision": "af9f07c1e409d57ceb545c10e087434b71b3b27a",
+        "executionId": "execution_25c0c0d4-9702-4ce5-b43d-ced84d38d33e",
+        "expectedRevision": 1,
+        "inputs": [],
+        "nodeContractDigest": "371a4f28c4652f86bee860cff962c4120991ae21f656b54056159c67b6049fc7",
+        "summary": "Created and committed calculator.py with add(a, b) returning a + b. Commit message: test calculator. Working tree clean.",
+        "verification": [
+          {
+            "criterion": "add supports positive and negative inputs",
+            "evidence": "Ran $env:PYTHONDONTWRITEBYTECODE='1'; python -c \"from calculator import add; assert add(2,3)==5; assert add(-2,2)==0\". Exit code 0; both assertions passed.",
+            "outcome": "passed"
+          }
+        ]
+      }
+    }
+  ],
+  "reviews": [
+    {
+      "id": "review_a29845ef-4b29-4a8e-89bd-43f609a381a1",
+      "reviewer": "codex:01a1d486-0cda-70e3-a69f-a3007d5b609f",
+      "verdict": "approved",
+      "body": {
+        "handoffId": "handoff_9beb4a60-2e77-4b09-95cf-b518c2aa2984",
+        "reviewerSessionId": "codex:01a1d486-0cda-70e3-a69f-a3007d5b609f",
+        "summary": "HEAD matches af9f07c1e409d57ceb545c10e087434b71b3b27a on the current node branch. Commit message is exactly 'test calculator'; only calculator.py changed, README.md is unchanged, and the working tree is clean. calculator.py contains the required two-line function with correct indentation. Independently ran $env:PYTHONDONTWRITEBYTECODE='1'; python -c \"from calculator import add; assert add(2,3)==5; assert add(-2,2)==0\" with exit code 0, supporting 'add supports positive and negative inputs'. Handoff records outcome 'passed' and artifacts []. No shortcomings found.",
+        "verdict": "approved"
+      }
+    }
+  ],
+  "milestones": [
+    {
+      "id": "m",
+      "state": "landed",
+      "body": {
+        "blockers": [],
+        "id": "m",
+        "landed": false,
+        "nodes": [
+          {
+            "expectedRevision": 1,
+            "nodeId": "code",
+            "roadmapId": "route"
+          }
+        ],
+        "projectId": "test",
+        "ready": true,
+        "repositoryVersions": [
+          {
+            "integrationBranch": "codex/roadmap/8a84e406c08ac959",
+            "repositoryPath": "\\\\?\\F:\\AiProject\\AgentWatcher\\.tmp\\workflow-codex-code-realtest\\d6ed8a9f-5357-4b5e-95d1-67d977aad25a\\repo",
+            "revision": "af9f07c1e409d57ceb545c10e087434b71b3b27a",
+            "targetBranch": "dev"
+          }
+        ]
+      }
+    }
+  ],
+  "runners": [
+    {
+      "operation_id": "26b5dc5f-2ff9-415f-82d4-0d8f6f4fe16a",
+      "body": {
+        "approval": {
+          "id": 0,
+          "method": "item/commandExecution/requestApproval",
+          "params": {
+            "availableDecisions": [
+              "accept",
+              {
+                "acceptWithExecpolicyAmendment": {
+                  "execpolicy_amendment": [
+                    "C:\\Users\\YUMEI\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\powershell\\pwsh.exe",
+                    "-NoProfile",
+                    "-Command",
+                    "git add -- calculator.py; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; git commit -m \"test calculator\"; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; git rev-parse HEAD; git status --short"
+                  ]
+                }
+              },
+              "cancel"
+            ],
+            "command": "\"C:\\\\Users\\\\YUMEI\\\\.cache\\\\codex-runtimes\\\\codex-primary-runtime\\\\dependencies\\\\native\\\\powershell\\\\pwsh.exe\" -NoProfile -Command 'git add -- calculator.py; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; git commit -m \"test calculator\"; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; git rev-parse HEAD; git status --short'",
+            "commandActions": [
+              {
+                "command": "git add -- calculator.py; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; git commit -m \"test calculator\"; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; git rev-parse HEAD; git status --short",
+                "type": "unknown"
+              }
+            ],
+            "cwd": "F:\\AiProject\\AgentWatcher\\.tmp\\workflow-codex-code-realtest\\d6ed8a9f-5357-4b5e-95d1-67d977aad25a\\state\\workspaces\\f093d6a6b266c38cf125",
+            "environmentId": "local",
+            "itemId": "exec-844787a5-8c75-4eee-98de-46ce3b03b90e",
+            "kind": "command",
+            "proposedExecpolicyAmendment": [
+              "C:\\Users\\YUMEI\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\powershell\\pwsh.exe",
+              "-NoProfile",
+              "-Command",
+              "git add -- calculator.py; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; git commit -m \"test calculator\"; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; git rev-parse HEAD; git status --short"
+            ],
+            "reason": "May I commit calculator.py as requested? Git needs write access to this worktree’s metadata outside the writable workspace.",
+            "startedAtMs": 1794566774137,
+            "threadId": "01a1d47f-6a5f-7622-8df3-48e8b6b70e7c",
+            "turnId": "01a1d47f-6ef8-7de1-a49e-a562f0931c9f"
+          }
+        },
+        "message": "{\"handoff\":{\"summary\":\"Created and committed calculator.py with add(a, b) returning a + b. Commit message: test calculator. Working tree clean.\",\"codeRevision\":\"af9f07c1e409d57ceb545c10e087434b71b3b27a\",\"verification\":[{\"criterion\":\"add supports positive and negative inputs\",\"outcome\":\"passed\",\"evidence\":\"Ran $env:PYTHONDONTWRITEBYTECODE='1'; python -c \\\"from calculator import add; assert add(2,3)==5; assert add(-2,2)==0\\\". Exit code 0; both assertions passed.\"}],\"artifacts\":[]}}",
+        "pid": 43088,
+        "state": "completed",
+        "threadId": "01a1d47f-6a5f-7622-8df3-48e8b6b70e7c",
+        "turnId": "01a1d47f-6ef8-7de1-a49e-a562f0931c9f",
+        "turnStatus": "completed",
+        "usage": {
+          "threadId": "01a1d47f-6a5f-7622-8df3-48e8b6b70e7c",
+          "tokenUsage": {
+            "last": {
+              "cacheWriteInputTokens": 0,
+              "cachedInputTokens": 39680,
+              "inputTokens": 40010,
+              "outputTokens": 141,
+              "reasoningOutputTokens": 0,
+              "totalTokens": 40151
+            },
+            "modelContextWindow": 828400,
+            "total": {
+              "cacheWriteInputTokens": 0,
+              "cachedInputTokens": 625024,
+              "inputTokens": 659475,
+              "outputTokens": 1303,
+              "reasoningOutputTokens": 230,
+              "totalTokens": 660778
+            }
+          },
+          "turnId": "01a1d47f-6ef8-7de1-a49e-a562f0931c9f"
+        }
+      }
+    },
+    {
+      "operation_id": "26b5dc5f-2ff9-415f-82d4-0d8f6f4fe16a:review:handoff_9beb4a60-2e77-4b09-95cf-b518c2aa2984",
+      "body": {
+        "message": "{\"review\":{\"verdict\":\"approved\",\"summary\":\"HEAD matches af9f07c1e409d57ceb545c10e087434b71b3b27a on the current node branch. Commit message is exactly 'test calculator'; only calculator.py changed, README.md is unchanged, and the working tree is clean. calculator.py contains the required two-line function with correct indentation. Independently ran $env:PYTHONDONTWRITEBYTECODE='1'; python -c \\\"from calculator import add; assert add(2,3)==5; assert add(-2,2)==0\\\" with exit code 0, supporting 'add supports positive and negative inputs'. Handoff records outcome 'passed' and artifacts []. No shortcomings found.\"}}",
+        "pid": 73032,
+        "role": "review",
+        "state": "completed",
+        "threadId": "01a1d486-0cda-70e3-a69f-a3007d5b609f",
+        "turnId": "01a1d486-116f-7140-bb34-bfe983028bc5",
+        "turnStatus": "completed",
+        "usage": {
+          "threadId": "01a1d486-0cda-70e3-a69f-a3007d5b609f",
+          "tokenUsage": {
+            "last": {
+              "cacheWriteInputTokens": 0,
+              "cachedInputTokens": 38144,
+              "inputTokens": 38516,
+              "outputTokens": 234,
+              "reasoningOutputTokens": 76,
+              "totalTokens": 38750
+            },
+            "modelContextWindow": 828400,
+            "total": {
+              "cacheWriteInputTokens": 0,
+              "cachedInputTokens": 75520,
+              "inputTokens": 113774,
+              "outputTokens": 760,
+              "reasoningOutputTokens": 260,
+              "totalTokens": 114534
+            }
+          },
+          "turnId": "01a1d486-116f-7140-bb34-bfe983028bc5"
+        }
+      }
+    }
+  ],
+  "projectHead": "af9f07c1e409d57ceb545c10e087434b71b3b27a"
+}

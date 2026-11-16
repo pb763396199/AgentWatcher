@@ -3,6 +3,7 @@ mod commands;
 mod output;
 mod scan_cache;
 mod skill;
+mod workflow_commands;
 
 use clap::Parser;
 use cli::{
@@ -17,7 +18,14 @@ fn main() {
 
     let parsed = Cli::parse();
     output::set_format(parsed.format);
+    let workflow_home = parsed.workflow_home.map(std::path::PathBuf::from)
+        .unwrap_or_else(agentwatcher_lib::workflow::default_home);
+    let workflow_home = if workflow_home.is_absolute() { workflow_home } else {
+        std::env::current_dir().expect("current directory").join(workflow_home)
+    };
     match parsed.command {
+        Commands::Service { action } => workflow_commands::service_command(&workflow_home, action),
+        Commands::Workflow { action } => workflow_commands::workflow_command(&workflow_home, action),
         Commands::Session { action } => match action {
             SessionAction::List {
                 provider,

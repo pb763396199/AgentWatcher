@@ -1,0 +1,998 @@
+{
+  "工具": "AgentWatcher Tauri 真实交互测试",
+  "说明": "通过 Playwright 连接 Windows WebView2 CDP，验证真实 Tauri 桌面壳，不使用浏览器 mock。",
+  "开始时间": "2026-11-13T13:22:11.197Z",
+  "仓库": "F:\\AiProject\\AgentWatcher",
+  "开发地址": "http://127.0.0.1:1420",
+  "输出目录": "F:\\AiProject\\AgentWatcher\\.tmp\\tauri-realtest\\20261113-212211",
+  "静默调试": true,
+  "流程": [
+    "workflow"
+  ],
+  "步骤": [
+    {
+      "名称": "切换主窗口界面语言为中文",
+      "通过": true,
+      "用时毫秒": 327,
+      "详情": {
+        "操作": "通过设置面板切换到中文界面",
+        "切换前": {
+          "htmlLang": "en",
+          "bodyLang": "en"
+        },
+        "切换后": {
+          "htmlLang": "zh-CN",
+          "bodyLang": "zh",
+          "工作区筛选": "全部工作区",
+          "状态筛选": "全部 26 / 待回 8 / 运行 12 / 闲置 6"
+        }
+      }
+    },
+    {
+      "名称": "查看真实持久工作流服务",
+      "通过": true,
+      "用时毫秒": 8089,
+      "详情": {
+        "截图": "F:\\AiProject\\AgentWatcher\\.tmp\\tauri-realtest\\20261113-212211\\workflow-console.png",
+        "状态": "工作流总控\n刷新\n关闭\n\n这里只读显示任务状态。人工确认、暂停、退回、恢复和下游授权请由 AI 使用 agentwatcher-cli workflow next/watch/apply 完成。\n\n还没有登记的项目。通过 agentwatcher-cli workflow guide 查看任务服务指南；普通会话不会自动加入路线。"
+      }
+    }
+  ],
+  "窗口": [
+    {
+      "地址": "http://127.0.0.1:1420/",
+      "标题": "AgentWatcher",
+      "Tauri运行时": true
+    },
+    {
+      "地址": "http://127.0.0.1:1420/?handoff=1",
+      "标题": "AgentWatcher Handoff",
+      "Tauri运行时": true
+    }
+  ],
+  "截图": [
+    "F:\\AiProject\\AgentWatcher\\.tmp\\tauri-realtest\\20261113-212211\\workflow-console.png"
+  ],
+  "诊断": {
+    "浏览器日志": [
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12248:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12302:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12246:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at emitTo (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:149:8)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:5422:45\n    at Array.forEach (<anonymous>)",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at refreshSessions (http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12084:32)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12707:9",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at emitTo (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:149:8)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:5422:45\n    at Array.forEach (<anonymous>)",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12310:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12269:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at Window.setSize (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/window-aaeoMKOV.js?v=b73ea667:1043:10)\n    at syncNativeWindowSize (http://127.0.0.1:1420/index.html?html-proxy&index=0.js:9951:29)\n    at setPageZoom (http://127.0.0.1:1420/index.html?html-proxy&index=0.js:5338:15)",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12322:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at Webview.setZoom (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_webview.js?v=b10d5d42:419:10)\n    at applyPageZoom (http://127.0.0.1:1420/index.html?html-proxy&index=0.js:5321:22)\n    at applyDocumentSettings (http://127.0.0.1:1420/index.html?html-proxy&index=0.js:5281:7)",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12291:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at refreshPluginCatalog (http://127.0.0.1:1420/index.html?html-proxy&index=0.js:2780:39)\n    at setSettingsPanelOpen (http://127.0.0.1:1420/index.html?html-proxy&index=0.js:9052:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:9062:36",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12325:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12258:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at Webview.setZoom (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_webview.js?v=b10d5d42:419:10)\n    at applyPageZoom (http://127.0.0.1:1420/index.html?html-proxy&index=0.js:5321:22)\n    at applyDocumentSettings (http://127.0.0.1:1420/index.html?html-proxy&index=0.js:5281:7)",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12305:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12266:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at emitTo (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:149:8)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:5422:45\n    at Array.forEach (<anonymous>)",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12280:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12337:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12265:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at emitTo (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:149:8)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:5422:45\n    at Array.forEach (<anonymous>)",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at refreshPluginCatalog (http://127.0.0.1:1420/index.html?html-proxy&index=0.js:2780:39)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12709:9",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at emitTo (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:149:8)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:5422:45\n    at Array.forEach (<anonymous>)",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at Webview.setZoom (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_webview.js?v=b10d5d42:419:10)\n    at applyPageZoom (http://127.0.0.1:1420/index.html?html-proxy&index=0.js:5321:22)\n    at applyDocumentSettings (http://127.0.0.1:1420/index.html?html-proxy&index=0.js:5281:7)",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at Webview.setZoom (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_webview.js?v=b10d5d42:419:10)\n    at applyPageZoom (http://127.0.0.1:1420/index.html?html-proxy&index=0.js:5321:22)\n    at setPageZoom (http://127.0.0.1:1420/index.html?html-proxy&index=0.js:5337:9)",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12249:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12316:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12247:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at checkBridgeStatus (http://127.0.0.1:1420/index.html?html-proxy&index=0.js:10550:32)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12708:9",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12319:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12348:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at listen (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/@tauri-apps_api_event.js?v=a7592d44:70:9)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12264:20",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 2562288444. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 1145008132. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 1261164102. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 4229198983. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 3734856807. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 192126308. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 3561256739. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 1760797131. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 3959508487. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 2548368770. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 3315026073. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 4018059462. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 776512140. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 3909870736. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 3788673583. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 812046259. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 1010834760. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 1905722972. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 3567703099. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 3159170924. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 2027425200. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 1878954149. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 3662126285. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 4207952190. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 1195820087. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 2222711533. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 2507350805. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 3714866719. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 339105756. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 4272054367. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 605435368. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 2121462185. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 1526097418. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 3759136513. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 3759136513. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 282572545. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 282572545. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 282572545. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 282572545. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 282572545. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 282572545. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 282572545. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 282572545. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      }
+    ],
+    "页面错误": []
+  },
+  "通过": true,
+  "CDP端口": 9223,
+  "启动方式": "复用已有 Vite，启动 debug exe",
+  "WebView2": {
+    "Browser": "Edg/157.0.4341.46",
+    "File-Path-Style": "windows",
+    "Protocol-Version": "1.3",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36 Edg/157.0.0.0",
+    "V8-Version": "15.7.11.4",
+    "WebKit-Version": "537.36 (@a0c6bd61d7884b3c402a34c67d05100107a9e5e4)",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:9223/devtools/browser/441e8a0f-a29a-40c3-ad84-e82551e6a086"
+  },
+  "结束时间": "2026-11-13T13:22:20.489Z"
+}

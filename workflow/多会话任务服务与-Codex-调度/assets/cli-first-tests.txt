@@ -1,0 +1,101 @@
+   Compiling agentwatcher v0.1.11 (F:\AiProject\AgentWatcher\src-tauri)
+warning: variable does not need to be mutable
+     --> src\lib.rs:11830:67
+      |
+11830 | fn visit_jsonl_tail_values<F>(session_path: &Path, file_len: u64, mut visit: F) -> Option<()>
+      |                                                                   ----^^^^^
+      |                                                                   |
+      |                                                                   help: remove this `mut`
+      |
+      = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+     --> src\lib.rs:11862:5
+      |
+11862 |     mut visit: F,
+      |     ----^^^^^
+      |     |
+      |     help: remove this `mut`
+
+warning: `agentwatcher` (lib) generated 2 warnings (run `cargo fix --lib -p agentwatcher` to apply 2 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.28s
+     Running tests\cli_contract.rs (src-tauri\target\debug\deps\cli_contract-c05882a57161312d.exe)
+
+running 13 tests
+test json_imagegen_empty_prompt_fails_in_envelope ... ok
+test skill_list_without_dir_reports_host_candidates ... ok
+test version_flag_exits_zero ... ok
+test skill_print_and_status_expose_doc_surface ... ok
+test skill_lifecycle_in_explicit_dir_is_idempotent ... ok
+test json_session_list_exclude_playground_keeps_envelope ... ok
+test human_session_list_does_not_emit_envelope ... ok
+test json_session_list_emits_single_envelope ... ok
+test default_window_session_list_leaves_no_scan_cache ... ok
+test not_found_deep_link_and_bare_uuid_still_fail_cleanly ... ok
+test json_handoff_export_unknown_id_fails_in_envelope has been running for over 60 seconds
+test json_session_show_unknown_id_fails_in_envelope has been running for over 60 seconds
+test json_session_usage_unknown_id_fails_in_envelope has been running for over 60 seconds
+test json_session_usage_unknown_id_fails_in_envelope ... ok
+test json_session_show_unknown_id_fails_in_envelope ... ok
+test json_handoff_export_unknown_id_fails_in_envelope ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 72.79s
+
+     Running tests\cli_taxonomy.rs (src-tauri\target\debug\deps\cli_taxonomy-5945b0b4f8bca5d9.exe)
+
+running 20 tests
+test every_subcommand_has_about_text ... ok
+test skill_doc_commands_resolve_in_clap ... ok
+test session_list_parses_full_history_flags ... ok
+test session_list_parses_no_cache_flag ... ok
+test suggest_generate_parses_model_and_effort ... ok
+test session_usage_requires_id ... ok
+test unknown_verb_is_rejected ... ok
+test session_list_parses_filters ... ok
+test handoff_export_requires_id ... ok
+test session_list_parses_exclude_playground_flag ... ok
+test imagegen_generate_parses_prompt_and_options ... ok
+test suggest_generate_parses_engine_flag ... ok
+test suggest_generate_parses_via_and_session_path ... ok
+test session_show_requires_id_and_parses_content ... ok
+test imagegen_help_lists_command_without_model_flag ... ok
+test suggest_prompt_requires_id ... ok
+test suggest_generate_parses_id_and_avoid ... ok
+test format_is_global_and_defaults_to_json ... ok
+test skill_verbs_parse_with_optional_dir ... ok
+test workflow_service_commands_and_isolated_home_parse ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\workflow_codex.rs (src-tauri\target\debug\deps\workflow_codex-0696ff4b0cad80f4.exe)
+
+running 1 test
+test workflow_codex_lost_ownership_requires_explicit_same_thread_recovery ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests\workflow_contract.rs (src-tauri\target\debug\deps\workflow_contract-ef0421d2e89b17e6.exe)
+
+running 12 tests
+test workflow_cli_watch_cursor_and_next_actions_are_machine_readable ... ok
+test workflow_rejects_malformed_payload_and_cyclic_dependencies_without_losing_service ... ok
+test workflow_concurrent_claims_have_one_owner ... ok
+test workflow_roadmap_changes_freeze_only_the_declared_dependency_closure ... ok
+test workflow_codex_session_aliases_cannot_claim_two_nodes ... ok
+test workflow_claim_and_receipt_are_exclusive_idempotent_and_revision_checked ... ok
+test workflow_status_is_read_only_and_writes_wake_single_service ... ok
+test workflow_backup_restores_referenced_artifacts_and_legacy_import_is_explicit ... ok
+test workflow_reflects_after_two_no_progress_results_and_pause_survives_restart ... ok
+test workflow_backup_restore_keeps_pauses_and_validates_storage ... ok
+test workflow_changed_upstream_invalidates_downstream_results_and_scoped_authorization ... ok
+test workflow_restore_refuses_to_replace_active_execution_state ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.77s
+
+     Running tests\workflow_git.rs (src-tauri\target\debug\deps\workflow_git-5249ee7224f1ff4b.exe)
+
+running 1 test
+test workflow_git_requires_real_code_and_serializes_target_updates ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.18s
+

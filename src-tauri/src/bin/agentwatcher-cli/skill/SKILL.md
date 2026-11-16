@@ -1,10 +1,44 @@
 ---
 name: agentwatcher
-description: 查询本机 AI 助手（VS Code Copilot、Copilot CLI、Claude Code、Codex、OpenCode、ZCode、WorkBuddy）的会话状态、用量与正文，导出接续上下文，并按会话所属 agent 生成下一条建议回复。用户问哪些会话在等人、在跑、闲着，要把会话接到新窗口，或想让人代拟下一句话时使用。
-version: 3
+description: 通过 AgentWatcher CLI 开启、接续和测试持久任务：登记已讨论的 roadmap、领取节点、提交 handoff、读取通知并等待人工确认；也可查询本机 AI 会话、用量、导出接续上下文和生成建议回复。用户说用 AgentWatcher 开任务、沿路线施工、测试工作流或查看会话时使用。
+version: 5
 ---
 
-# AgentWatcher 会话查询与建议
+# AgentWatcher 任务执行与会话查询
+
+## 调技能开任务
+
+用户调用 `$agentwatcher` 并给出任务目标后，由你操作 CLI，用户不需要编写 JSON、手动建测试数据库或点击界面。
+
+1. 先定位 `agentwatcher-cli`，检查 `workflow --help` 含 `next/watch/apply`，再读 `workflow guide`。仅 `--version` 不能证明支持工作流；旧程序报 unknown subcommand 时不能继续套新协议。可用用户指定的安装目录或当前 AgentWatcher 仓库的实际构建产物；不要凭空猜其他仓库路径。
+2. 确定真实 workspace、项目和 roadmap 身份。先读 `workflow snapshot` 找已有任务；继续任务必须复用现有身份，不因新会话重复创建。
+3. 新目标先讨论目标、依赖、节点写入范围、验收证据和人应判断什么。用户指定 WayFinder/grilling/brainstorm 时读取它们并完成讨论；缺少关键决策时先讨论，已有明确认可的设计直接沿用。任务拆分应能在一个正常会话完成，不设置施工上下文截止条件。
+4. 将确认后的目标写入 `project.create` 与 `roadmap.publish`。用户明确说启动当前节点后，代码节点先 `node.prepare` 再 `node.launch`；已有手工会话用 `node.claim` 绑定。非代码节点需要实际 `workspace`。请求形态与字段从 `workflow guide` 获取，不自造命令。
+5. 用 `workflow next --project <id>` 看待处理事项，用 `workflow watch --project <id> --after <cursor>` 按游标收事件；没有动作不代表任务完成，应结合节点和执行状态判断。收到原作者 handoff 后向人交付可读结论、实际证据、风险和需要决定的事项。
+6. 默认停在人工确认。人同意接受后才 `handoff.accept`；只有明确授权选定下游时才带 `continueNodes` 或 `authorization.grant`。需要改线时使用 propose、停止回执和新版本发布，不能改写其他会话的施工结论。
+
+### 调技能做验收
+
+用户说“用技能测试”时，由你在独立绝对 `--workflow-home` 和测试 workspace 中建立最小项目、路线、节点，实际领取并完成一个小任务。提交原作者 handoff，核对 `next`、事件游标和服务重启后身份一致；默认保留为 submitted，向用户给出交付与待确认事项。测试授权只覆盖测试项目，不能据此接受真实业务交付或启动下游。说明这是当前会话绑定测试还是另一个真实 Codex 的启动测试，不能把脚本伪造 handoff 说成模型施工。
+
+返回测试数据目录、项目/路线/执行 ID、证据路径、当前状态，以及一条可直接再次调用本技能的接续提示。测试结束后停止测试服务，保留数据；下次 CLI 会按需唤起。
+
+## 持久任务服务
+
+当用户要沿 roadmap 执行节点、更新进度或提交 handoff 时，先读取 `agentwatcher-cli workflow guide`。
+用 `agentwatcher-cli workflow snapshot` 查询路线版本、节点归属和通知；用
+`agentwatcher-cli workflow apply --file <请求文件>` 提交固定命令的 JSON 请求。
+用 `agentwatcher-cli workflow next --project <id>` 读取当前待处理动作，用
+`agentwatcher-cli workflow watch --project <id> --after <cursor> --wait-ms 30000` 读取增量事件。
+Tauri 工作流窗口只读，不要把按钮或窗口状态当作控制面；所有批准、暂停、退回、恢复和下游授权都走 `apply`。
+工作流命令会按需唤起后台服务；原有 session 查询继续只读本地数据。
+
+每次写请求使用新的 requestId；仅重试同一请求时复用原 ID 和完全相同内容。
+保管 node.claim 返回的执行 token，开工、修改范围和交付前查询通知。
+收到暂停请求后在安全位置停止新增修改并提交 execution.pause_ack；不要因为会话失联就另开重复施工。
+原施工会话提交 handoff，人工接受与启动下游默认分开。只有用户明确授权时才允许自动启动下游。
+两次无进展触发“反思一下，方向对了还是错了，继续深挖还是换个思路”，第三次仍无进展转人。
+上下文规模用于规划，不是施工中断条件。`humanConfirmed:true` 只记录用户在当前会话中已明确给出的授权：可以代为写入已获授权的动作，不能编造授权或扩大路线。用户要求启动隔离测试时可以发布测试路线，但不能默认接受测试 handoff 或启动下游。
 
 先确认命令可用：执行 `agentwatcher-cli --version`。提示找不到命令时，向用户询问 AgentWatcher 的安装目录，可执行文件是目录里的 `agentwatcher-cli.exe`（与 AgentWatcher.exe 同目录），后续命令都带完整路径执行。
 
@@ -15,6 +49,7 @@ version: 3
 - 想看某个会话聊了什么、花了多少 token、调了多少次工具。
 - 要把某个会话的上下文导出来，交给新的会话接续。
 - 想替某个会话拟一条下一句话（建议回复），由用户决定发不发送。
+- 想通过调技能开启或接续持久任务、按已确认路线施工，或在隔离目录验收任务流程。
 
 ## 命令
 
@@ -103,5 +138,5 @@ version: 3
 - 写盘命令：`handoff export` 写系统临时目录的 `AgentWatcher\handoff-sources\`（每次导出生成新文件），对 `.jsonl.zst` 归档取正文时在同目录写解压副本；全历史 `session list`（`--active-days 0` 或 `--include-archived`）写 `AgentWatcher\cli-scan-cache\` 下的跨进程扫描缓存（120 秒有效）；`skill install` / `skill remove` 只动宿主的 `agentwatcher` 技能目录。
 - 计费命令：`suggest generate` 不写盘，但会真实调用外部模型、消耗该 agent 账号的用量。不要在一个循环里反复调用；同一条会话要换一条建议时加 `--avoid <上一条>`，而不是重试。两条通道的 token 口径不同：采样送整段历史，exec 只送尾部 4 轮，长会话用 exec 更省。`--via codex` 走的是 Codex 账号，即使源会话属于别的 agent。
 - 要最新状态就重新执行 `session list`。全历史模式的同参数查询 120 秒内可能读到缓存快照，需要确保重新扫描时加 `--no-cache`；默认 7 天窗口的查询不缓存。
-- 命令不启动任何后台服务，也不依赖 AgentWatcher 桌面程序在运行。
+- 原有会话查询不启动后台服务；工作流命令会按需启动任务服务，不要求 AgentWatcher 桌面程序运行。`node.launch` 和 `review.launch` 会真实调用 Codex 并产生用量。
 - 宿主里装的技能副本可能落后于当前程序版本：`skill list` 报 `outdated` 时用 `skill install` 覆盖升级，装完再按新版命令用。

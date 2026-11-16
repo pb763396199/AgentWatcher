@@ -1,0 +1,14 @@
+
+> agentwatcher@0.1.11 test:tauri:smoke
+> node tools/tauri-realtest/cli.mjs smoke --isolated-runtime
+
+[真实测试] 启动真实 Tauri 交互测试
+[真实测试] 检测到 Vite 已在运行，直接启动 debug exe。
+[真实测试] CDP 已就绪：127.0.0.1:9223
+[真实测试] 步骤：切换主窗口界面语言为中文
+[真实测试] 步骤：确认主窗口是真实 Tauri 运行时
+[真实测试] 步骤：点击打开性能诊断窗口
+[真实测试] 步骤：确认接续面板 WebViewWindow 可被识别
+[真实测试] 步骤：点击切换到 AgentTask 面板
+[真实测试] 通过：冒烟流程
+[真实测试] 结果：F:\AiProject\AgentWatcher\.tmp\tauri-realtest\20261113-185524\result.json

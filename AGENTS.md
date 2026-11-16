@@ -85,6 +85,16 @@ VS Code CLI 查找顺序（在 `find_code_cli_path` 里）：先 PATH 里的 `co
 - skill 分发：用法文档 `skill/SKILL.md` 以 `include_str!` 内嵌进二进制（`skill.rs`），宿主候选目录表也在这两处（当前 zcode / claude-code / agents / codex / workbuddy / copilot / opencode；`~/.workbuddy/skills` 由 dev 的「技能分发覆盖 WorkBuddy 宿主」补齐，2026-11-09 另补了 workbuddy 与 copilot，此前已装在 `~/.workbuddy/skills` 的副本不归 CLI 管）。子命令五个：`install` 覆盖升级、`list` 看状态、`status` 逐宿主给下一步动作并汇总（`none` / `skill install` / `skip`）、`print` 吐出内嵌正文供宿主自行写盘或 diff、`remove` 清理。文档版本号取自 frontmatter 的 `version:` 行（`doc_version()`），`list` / `status` / `print` 都回 `docVersion` + `docBytes`，不要在代码里另写一份版本常量。`skills_doc_commands_resolve_in_clap` 会把文档里出现的每条 `agentwatcher-cli <动词> [<子命令>]` 拿去和 clap 命令树比对；改文档或候选表还要同步 `cli_contract.rs` 的宿主状态断言。自动化测试只经 `--dir` 打临时目录，装真实宿主目录走人工清单。
 - 测试：`src-tauri/tests/cli_taxonomy.rs` 锁命令解析（动词、必填参数、全局参数、帮助文本），`src-tauri/tests/cli_contract.rs` 起真实二进制锁信封契约（五键、错误码、退出码、human 不吐信封、列表无正文键）。改 CLI 必跑这两个。
 
+## 持久工作流服务
+
+- 通用实现位于 `src-tauri/src/workflow/`；SQLite 是路线、执行、交付与授权的事实源。具体业务仍归独立插件，零插件应能完整运行。
+- `agentwatcher-cli service status|start|stop` 管理本机服务；`workflow apply --file <JSON或->` 收发任务；`workflow snapshot [--project <ID>]` 查询；`workflow guide` 输出内嵌指南。`--workflow-home` 只能用于明确选择独立数据目录，测试必须使用临时目录。
+- `service status` 不创建数据、不启动服务；工作流请求按需唤起。普通 session 查询保持只读，不唤起此服务。关闭主窗口收起到托盘，显式退出停止调度，外部施工继续。
+- 请求 `schemaVersion/requestId/command/payload`，重复 ID 只能重放完全相同内容。不要绕过服务直接改正式数据库，不要编造 `humanConfirmed`。
+- 新测试：`cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --test workflow_contract --test workflow_git --test workflow_codex --test cli_taxonomy --test cli_contract`；真实桌面入口 `npm run test:tauri:flow -- workflow`（中文别名「工作流」）只验收只读诊断窗。运行器真实模型测试会产生用量，只能在隔离仓库中执行。
+- AI 主流程使用 `workflow next` 取得动作收件箱、`workflow watch --after <cursor>` 取得事件增量、`workflow apply` 提交状态变化；Tauri 工作流窗不得重新实现批准、暂停、退回或下游授权。
+- 运行器独立持有 Codex thread；结果不明先核对，禁止盲目重复建会话。`runner.recover` 需要人确认、已知 thread 和已释放的旧运行器锁。备份恢复默认暂停，活动施工未安全停止时拒绝覆盖。
+
 ## 不能随便改的标识符
 
 这些是发布合同的一部分，改了的话，已经装了的 Bridge、已经发布的 VSIX 全部会坏。

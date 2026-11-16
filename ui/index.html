@@ -5729,6 +5729,7 @@
           <button class="win-btn mode-switch-btn" id="todoToggle" type="button" aria-label="Switch to AgentTask" title="Switch to AgentTask"><span class="mode-switch-icon task-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M10 6h10"></path><path d="M10 12h10"></path><path d="M10 18h10"></path><path d="m3 6 1.5 1.5L7 4"></path><path d="m3 12 1.5 1.5L7 10"></path><circle cx="5" cy="18" r="1.2"></circle></svg></span></button>
           <button class="win-btn performance-monitor-btn" id="performanceToggle" type="button" aria-pressed="false" data-performance-toggle data-i18n-title="performanceMonitor" data-i18n-aria="performanceMonitor"><span class="performance-monitor-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M4 19V5"></path><path d="M4 19h16"></path><path d="m7 15 3-4 3 2 4-6"></path><path d="M17 7h3v3"></path></svg></span></button>
           <button class="win-btn" id="settingsToggle" type="button" aria-label="Settings">⚙</button>
+          <button class="win-btn" id="workflowToggle" type="button" aria-label="工作流总控" title="工作流总控">◇</button>
           <button class="win-btn" type="button" data-window-action="minimize" aria-label="Collapse to rail">−</button>
           <button class="win-btn close" type="button" data-window-action="close" aria-label="Close">×</button>
         </div>
@@ -19162,6 +19163,74 @@ function analyticsRememberSession(normalized) {
         queueBrowserMockWaitingAlert();
       }
     }
+    const workflowToggle = document.getElementById('workflowToggle');
+    let workflowDialog = null;
+    async function openWorkflowConsole() {
+      if (!tauriInvoke) { showToast('工作流总控需要真实桌面服务'); return; }
+      if (!workflowDialog) {
+        workflowDialog = document.createElement('dialog');
+        workflowDialog.id = 'workflowConsole';
+        Object.assign(workflowDialog.style, { width: 'min(920px, 94vw)', maxHeight: '88vh', overflow: 'auto', background: 'var(--panel, #252526)', color: 'var(--text, #eee)', border: '1px solid #666', borderRadius: '10px', padding: '16px' });
+        document.body.appendChild(workflowDialog);
+      }
+      if (!workflowDialog.open) workflowDialog.showModal();
+      workflowDialog.replaceChildren();
+      const heading = document.createElement('h2'); heading.textContent = '工作流总控'; workflowDialog.appendChild(heading);
+      const toolbar = document.createElement('div'); toolbar.style.cssText = 'display:flex;gap:8px;margin-bottom:12px'; workflowDialog.appendChild(toolbar);
+      const button = (parent, text, action) => {
+        const control = document.createElement('button'); control.type = 'button'; control.textContent = text;
+        control.style.cssText = 'padding:6px 10px;cursor:pointer';
+        control.addEventListener('click', async () => { control.disabled = true; try { await action(); } catch (error) { showToast(String(error)); } finally { control.disabled = false; } });
+        parent.appendChild(control); return control;
+      };
+      button(toolbar, '刷新', openWorkflowConsole);
+      button(toolbar, '关闭', () => workflowDialog.close());
+      const notice = document.createElement('p'); notice.style.cssText = 'padding:8px;border:1px solid #8a6d3b;border-radius:6px'; notice.textContent = '这里只读显示任务状态。人工确认、暂停、退回、恢复和下游授权请由 AI 使用 agentwatcher-cli workflow next/watch/apply 完成。'; workflowDialog.appendChild(notice);
+      const output = document.createElement('div'); output.textContent = '正在读取持久任务状态…'; workflowDialog.appendChild(output);
+      try {
+        const snapshot = await tauriInvoke('workflow_snapshot', { project: null });
+        output.replaceChildren();
+        if (!(snapshot.projects || []).length) {
+          output.textContent = '还没有登记的项目。通过 agentwatcher-cli workflow guide 查看任务服务指南；普通会话不会自动加入路线。';
+          return;
+        }
+        for (const project of snapshot.projects || []) {
+          const section = document.createElement('section'); section.style.cssText = 'border-top:1px solid #666;padding:12px 0'; output.appendChild(section);
+          const title = document.createElement('h3'); title.textContent = `${project.title} · ${project.control}`; section.appendChild(title);
+          for (const route of (snapshot.roadmaps || []).filter(r => r.projectId === project.id)) {
+            const routeTitle = document.createElement('h4'); routeTitle.textContent = `${route.title} · 路线版本 ${route.revision}`; section.appendChild(routeTitle);
+            const nodes = (snapshot.nodes || []).filter(n => n.roadmapId === route.id);
+            for (const node of nodes) {
+              const row = document.createElement('div'); row.style.cssText = 'padding:8px;border:1px solid #555;margin:6px 0;border-radius:6px'; section.appendChild(row);
+              const label = document.createElement('strong'); label.textContent = `${node.title} · ${node.state}`; row.appendChild(label);
+              const goal = document.createElement('p'); goal.textContent = node.contract?.goal || ''; row.appendChild(goal);
+              const executions = (snapshot.executions || []).filter(e => e.roadmapId === route.id && e.nodeId === node.id);
+              for (const execution of executions) {
+                const detail = document.createElement('p'); detail.style.overflowWrap = 'anywhere';
+                detail.textContent = `${execution.state} · ${execution.sessionId}${execution.workspace ? ' · ' + execution.workspace : ''}`; row.appendChild(detail);
+                for (const runner of (snapshot.runners || []).filter(r => r.executionId === execution.id && ['needs_human','failed'].includes(r.body?.state))) {
+                  const problem = document.createElement('p'); problem.textContent = runner.body?.error?.message || runner.body?.reason || '执行器已停止，需要人工核对'; row.appendChild(problem);
+                  const hint = document.createElement('p'); hint.textContent = `请用 CLI 核对后恢复原会话：workflow apply runner.recover (${runner.operationId})`; row.appendChild(hint);
+                }
+                for (const runner of (snapshot.runners || []).filter(r => r.executionId === execution.id && r.body?.state === 'awaiting_approval')) {
+                  const note = document.createElement('pre'); note.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere'; note.textContent = JSON.stringify(runner.body.approval, null, 2); row.appendChild(note);
+                  const hint = document.createElement('p'); hint.textContent = '请由 AI 读取审批 ID 后使用 workflow apply runner.approval_reply；此窗不直接批准。'; row.appendChild(hint);
+                }
+                for (const handoff of (snapshot.handoffs || []).filter(h => h.executionId === execution.id)) {
+                  const summary = document.createElement('details'); const caption = document.createElement('summary'); caption.textContent = `施工交付 · ${handoff.state}`;
+                  const body = document.createElement('pre'); body.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere'; body.textContent = JSON.stringify(handoff.body, null, 2);
+                  summary.append(caption, body); row.appendChild(summary);
+                  if (handoff.state === 'submitted') { const hint = document.createElement('p'); hint.textContent = '请用 workflow next 读取该 handoff，再由 AI 通过 workflow apply 提交接受、退回或选定下游。'; row.appendChild(hint); }
+                }
+              }
+            }
+          }
+        }
+        const pending = (snapshot.notifications || []).filter(n => n.state !== 'applied');
+        if (pending.length) { const note = document.createElement('p'); note.textContent = `有 ${pending.length} 条变更通知尚未取得安全停止回执。`; output.prepend(note); }
+      } catch (error) { output.textContent = '工作流服务读取失败：' + String(error); }
+    }
+    workflowToggle?.addEventListener('click', openWorkflowConsole);
   </script>
 </body>
 </html>

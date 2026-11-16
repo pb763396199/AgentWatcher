@@ -1,0 +1,60 @@
+{
+  "command": "skill status",
+  "ok": true,
+  "data": {
+    "docBytes": 16208,
+    "docVersion": "5",
+    "hosts": [
+      {
+        "action": "none",
+        "host": "zcode",
+        "path": "C:\\Users\\YUMEI\\.zcode\\skills\\agentwatcher\\SKILL.md",
+        "state": "installed"
+      },
+      {
+        "action": "none",
+        "host": "claude-code",
+        "path": "C:\\Users\\YUMEI\\.claude\\skills\\agentwatcher\\SKILL.md",
+        "state": "installed"
+      },
+      {
+        "action": "none",
+        "host": "agents",
+        "path": "C:\\Users\\YUMEI\\.agents\\skills\\agentwatcher\\SKILL.md",
+        "state": "installed"
+      },
+      {
+        "action": "none",
+        "host": "codex",
+        "path": "C:\\Users\\YUMEI\\.codex\\skills\\agentwatcher\\SKILL.md",
+        "state": "installed"
+      },
+      {
+        "action": "none",
+        "host": "workbuddy",
+        "path": "C:\\Users\\YUMEI\\.workbuddy\\skills\\agentwatcher\\SKILL.md",
+        "state": "installed"
+      },
+      {
+        "action": "none",
+        "host": "copilot",
+        "path": "C:\\Users\\YUMEI\\.copilot\\skills\\agentwatcher\\SKILL.md",
+        "state": "installed"
+      },
+      {
+        "action": "skip",
+        "host": "opencode",
+        "path": "C:\\Users\\YUMEI\\.config\\opencode\\skill\\agentwatcher\\SKILL.md",
+        "state": "host-absent"
+      }
+    ],
+    "summary": {
+      "hostAbsent": 1,
+      "installed": 6,
+      "notInstalled": 0,
+      "outdated": 0
+    }
+  },
+  "error": null,
+  "messages": []
+}

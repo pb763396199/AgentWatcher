@@ -15,6 +15,29 @@ fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
 }
 
 #[test]
+fn workflow_service_commands_and_isolated_home_parse() {
+    assert!(parse(&["--workflow-home", "F:/isolated", "service", "status"]).is_ok());
+    assert!(parse(&["workflow", "apply", "--file", "-"]).is_ok());
+    assert!(parse(&["workflow", "snapshot", "--project", "p"]).is_ok());
+    assert!(parse(&[
+        "workflow",
+        "watch",
+        "--project",
+        "p",
+        "--after",
+        "4",
+        "--wait-ms",
+        "100"
+    ])
+    .is_ok());
+    assert!(parse(&["workflow", "next", "--project", "p"]).is_ok());
+    assert!(parse(&["workflow", "guide"]).is_ok());
+    assert!(parse(&["workflow", "restore", "--file", "backup.zip", "--confirm"]).is_ok());
+    assert!(parse(&["workflow", "apply"]).is_err());
+    assert!(parse(&["workflow", "apply", "--program", "cmd.exe"]).is_err());
+}
+
+#[test]
 fn session_list_parses_filters() {
     let parsed = parse(&[
         "session",
@@ -34,16 +57,17 @@ fn session_list_parses_filters() {
     ])
     .expect("filters should parse");
     let Commands::Session {
-        action: SessionAction::List {
-            provider,
-            status,
-            workspace,
-            limit,
-            active_days,
-            include_archived,
-            exclude_playground,
-            no_cache,
-        },
+        action:
+            SessionAction::List {
+                provider,
+                status,
+                workspace,
+                limit,
+                active_days,
+                include_archived,
+                exclude_playground,
+                no_cache,
+            },
     } = parsed.command
     else {
         panic!("expected session list");
@@ -71,12 +95,13 @@ fn session_list_parses_full_history_flags() {
     ])
     .expect("full-history flags should parse");
     let Commands::Session {
-        action: SessionAction::List {
-            active_days,
-            include_archived,
-            limit,
-            ..
-        },
+        action:
+            SessionAction::List {
+                active_days,
+                include_archived,
+                limit,
+                ..
+            },
     } = parsed.command
     else {
         panic!("expected session list");
@@ -91,11 +116,12 @@ fn session_list_parses_no_cache_flag() {
     let parsed = parse(&["session", "list", "--include-archived", "--no-cache"])
         .expect("no-cache flag should parse");
     let Commands::Session {
-        action: SessionAction::List {
-            no_cache,
-            include_archived,
-            ..
-        },
+        action:
+            SessionAction::List {
+                no_cache,
+                include_archived,
+                ..
+            },
     } = parsed.command
     else {
         panic!("expected session list");
@@ -116,7 +142,8 @@ fn session_show_requires_id_and_parses_content() {
     };
     assert_eq!(id, "opencode:abc");
     assert!(!content);
-    let parsed = parse(&["session", "show", "opencode:abc", "--content"]).expect("--content parses");
+    let parsed =
+        parse(&["session", "show", "opencode:abc", "--content"]).expect("--content parses");
     let Commands::Session {
         action: SessionAction::Show { content, .. },
     } = parsed.command
@@ -164,7 +191,8 @@ fn format_is_global_and_defaults_to_json() {
     assert_eq!(parsed.format, OutputFormat::Json);
     let parsed = parse(&["session", "list", "--format", "human"]).expect("human parses");
     assert_eq!(parsed.format, OutputFormat::Human);
-    let parsed = parse(&["--format", "human", "session", "list"]).expect("global before subcommand");
+    let parsed =
+        parse(&["--format", "human", "session", "list"]).expect("global before subcommand");
     assert_eq!(parsed.format, OutputFormat::Human);
     assert!(parse(&["session", "list", "--format", "yaml"]).is_err());
 }
@@ -209,12 +237,16 @@ fn skill_doc_commands_resolve_in_clap() {
     );
     let root = Cli::command();
     for (verb, sub) in &paths {
-        let Some(top) = root.get_subcommands().find(|command| command.get_name() == verb) else {
+        let Some(top) = root
+            .get_subcommands()
+            .find(|command| command.get_name() == verb)
+        else {
             panic!("技能文档写了不存在的顶层命令 `{verb}`");
         };
         if let Some(sub) = sub {
             assert!(
-                top.get_subcommands().any(|command| command.get_name() == sub),
+                top.get_subcommands()
+                    .any(|command| command.get_name() == sub),
                 "技能文档写了不存在的子命令 `{verb} {sub}`"
             );
         }
@@ -299,7 +331,10 @@ fn imagegen_help_lists_command_without_model_flag() {
         .render_help()
         .to_string();
     assert!(imagegen_help.contains("generate"));
-    assert!(!imagegen_help.contains("--model"), "生图命令面不得暴露 --model：{imagegen_help}");
+    assert!(
+        !imagegen_help.contains("--model"),
+        "生图命令面不得暴露 --model：{imagegen_help}"
+    );
 }
 
 #[test]
@@ -320,8 +355,8 @@ fn suggest_generate_parses_id_and_avoid() {
     assert_eq!(id, "codex://threads/01a1b08c-3b17-7d83-94be-a3ce08ab951a");
     assert!(avoid.is_none());
 
-    let parsed = parse(&["suggest", "generate", "zcode:abc", "--avoid", "跳过它"])
-        .expect("--avoid parses");
+    let parsed =
+        parse(&["suggest", "generate", "zcode:abc", "--avoid", "跳过它"]).expect("--avoid parses");
     let Commands::Suggest {
         action: SuggestAction::Generate { avoid, .. },
     } = parsed.command
@@ -344,10 +379,9 @@ fn suggest_generate_parses_model_and_effort() {
     ])
     .expect("--model/--effort parse");
     let Commands::Suggest {
-        action:
-            SuggestAction::Generate {
-                id, model, effort, ..
-            },
+        action: SuggestAction::Generate {
+            id, model, effort, ..
+        },
     } = parsed.command
     else {
         panic!("expected suggest generate");
@@ -414,10 +448,9 @@ fn suggest_generate_parses_via_and_session_path() {
     // 默认跟随会话，不需要显式转写路径。
     let parsed = parse(&["suggest", "generate", "codex:abc"]).expect("defaults parse");
     let Commands::Suggest {
-        action:
-            SuggestAction::Generate {
-                via, session_path, ..
-            },
+        action: SuggestAction::Generate {
+            via, session_path, ..
+        },
     } = parsed.command
     else {
         panic!("expected suggest generate");
@@ -464,7 +497,9 @@ fn session_list_parses_exclude_playground_flag() {
     let parsed = parse(&["session", "list", "--exclude-playground"])
         .expect("exclude-playground flag should parse");
     let Commands::Session {
-        action: SessionAction::List { exclude_playground, .. },
+        action: SessionAction::List {
+            exclude_playground, ..
+        },
     } = parsed.command
     else {
         panic!("expected session list");
@@ -473,7 +508,9 @@ fn session_list_parses_exclude_playground_flag() {
 
     let parsed = parse(&["session", "list"]).expect("bare list parses");
     let Commands::Session {
-        action: SessionAction::List { exclude_playground, .. },
+        action: SessionAction::List {
+            exclude_playground, ..
+        },
     } = parsed.command
     else {
         panic!("expected session list");

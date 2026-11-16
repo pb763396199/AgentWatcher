@@ -1,0 +1,197 @@
+{
+  "工具": "AgentWatcher Tauri 真实交互测试",
+  "说明": "通过 Playwright 连接 Windows WebView2 CDP，验证真实 Tauri 桌面壳，不使用浏览器 mock。",
+  "开始时间": "2026-11-13T10:55:24.670Z",
+  "仓库": "F:\\AiProject\\AgentWatcher",
+  "开发地址": "http://127.0.0.1:1420",
+  "输出目录": "F:\\AiProject\\AgentWatcher\\.tmp\\tauri-realtest\\20261113-185524",
+  "静默调试": true,
+  "流程": [
+    "冒烟流程"
+  ],
+  "步骤": [
+    {
+      "名称": "切换主窗口界面语言为中文",
+      "通过": true,
+      "用时毫秒": 671,
+      "详情": {
+        "操作": "通过设置面板切换到中文界面",
+        "切换前": {
+          "htmlLang": "en",
+          "bodyLang": "en"
+        },
+        "切换后": {
+          "htmlLang": "zh-CN",
+          "bodyLang": "zh",
+          "工作区筛选": "全部工作区",
+          "状态筛选": "全部 26 / 待回 8 / 运行 12 / 闲置 6"
+        }
+      }
+    },
+    {
+      "名称": "确认主窗口是真实 Tauri 运行时",
+      "通过": true,
+      "用时毫秒": 96,
+      "详情": {
+        "窗口": "主窗口",
+        "地址": "http://127.0.0.1:1420/",
+        "标题": "AgentWatcher",
+        "Tauri运行时": true,
+        "静默调试契约": {
+          "测试默认静默": true,
+          "测试不直接抢前台": true,
+          "UI有静默调试开关": true,
+          "原生窗口焦点受控": true,
+          "原生窗口置顶受控": true,
+          "子窗口创建焦点受控": true
+        },
+        "静默调试运行时": {
+          "windowFlag": true,
+          "storageFlag": true
+        },
+        "截图": "F:\\AiProject\\AgentWatcher\\.tmp\\tauri-realtest\\20261113-185524\\main-tauri.png"
+      }
+    },
+    {
+      "名称": "点击打开性能诊断窗口",
+      "通过": true,
+      "用时毫秒": 138,
+      "详情": {
+        "窗口": "主窗口性能面板",
+        "地址": "http://127.0.0.1:1420/",
+        "标题": "AgentWatcher",
+        "Tauri运行时": true,
+        "打开方式": "主窗口内性能面板",
+        "新窗口": false,
+        "点击前ariaPressed": "false",
+        "点击后ariaPressed": "true",
+        "可见文本片段": "AW\n8\n12\n31\nAgentWatcher\n⚙\n◇\n−\n×\n工作区\n全部工作区\nv\n提供方\n全部提供方\nv\n搜索\n每排数量\n2 / 排\n2 列\n全部 26\n待回 8\n运行 12\n闲置 6\n9 当前可见\n17 在滚动队列\n待回复\n8\n优先\nCX\n02:14\nAesWorld\nReview required\n待回复\nGH\n00:42\nAgentWatcher",
+        "截图": "F:\\AiProject\\AgentWatcher\\.tmp\\tauri-realtest\\20261113-185524\\performance-window.png"
+      }
+    },
+    {
+      "名称": "确认接续面板 WebViewWindow 可被识别",
+      "通过": true,
+      "用时毫秒": 15997,
+      "详情": {
+        "窗口": "接续面板窗口",
+        "地址": "http://127.0.0.1:1420/?handoff=1",
+        "标题": "AgentWatcher Handoff",
+        "Tauri运行时": true,
+        "可见文本片段": "创建接续会话\n×\n在\nAgentWatcher\nv\n使用\nCopilot 编辑器\nv\nGH\nAgentWatcher / Waiting for handoff data\n最新快照\n来源定位\n预览\n存为 Todo\n复制\n启动\n提示词预览\ncwd \"AgentWatcher\"; 在 VS Code 编辑器标签页中打开 Copilot；填入接续提示词",
+        "截图": "F:\\AiProject\\AgentWatcher\\.tmp\\tauri-realtest\\20261113-185524\\handoff-window.png"
+      }
+    },
+    {
+      "名称": "点击切换到 AgentTask 面板",
+      "通过": true,
+      "用时毫秒": 1319,
+      "详情": {
+        "插件管理": {
+          "标题": "插件管理",
+          "内容": "插件管理\n刷新\n挂载\n未挂载插件\nAgentWatcher 当前以零插件模式运行。\n插件发现错误\ninvalid C:\\Users\\YUMEI\\AppData\\Local\\AgentWatcher\\Plugins\\UnrealWorkflow\\UnrealWorkflow.awplugin: unknown field `CompleteCommand`, expected one of `Name`, `FriendlyName`, `Description`, `LegacyIds`, `TaskSchema`, `PlanCommand`, `ExecuteCommand` at line 57 column 25\n插件发现错误\ninvalid F:\\AiProject\\UnrealWorkflow\\UnrealWorkflow.awplugin: unknown field `StartCommand`, expected one of `Name`, `FriendlyName`, `Description`, `LegacyIds`, `TaskSchema`, `PlanCommand`, `ExecuteCommand` at line 126 column 22",
+          "使用通用插件控件": true
+        },
+        "零插件任务面板": {
+          "工作流值": "standard",
+          "目标Agent值": "agents",
+          "插件工作流数量": 0,
+          "动态表单隐藏": true,
+          "工作流与Agent分开": true
+        },
+        "截图": [
+          "F:\\AiProject\\AgentWatcher\\.tmp\\tauri-realtest\\20261113-185524\\zero-plugin-agenttask.png"
+        ]
+      }
+    }
+  ],
+  "窗口": [
+    {
+      "地址": "http://127.0.0.1:1420/",
+      "标题": "AgentWatcher",
+      "Tauri运行时": true
+    },
+    {
+      "地址": "http://127.0.0.1:1420/?performance=1",
+      "标题": "AgentWatcher Diagnostics",
+      "Tauri运行时": true
+    },
+    {
+      "地址": "http://127.0.0.1:1420/?handoff=1",
+      "标题": "AgentWatcher Handoff",
+      "Tauri运行时": true
+    }
+  ],
+  "截图": [
+    "F:\\AiProject\\AgentWatcher\\.tmp\\tauri-realtest\\20261113-185524\\main-tauri.png",
+    "F:\\AiProject\\AgentWatcher\\.tmp\\tauri-realtest\\20261113-185524\\performance-window.png",
+    "F:\\AiProject\\AgentWatcher\\.tmp\\tauri-realtest\\20261113-185524\\handoff-window.png",
+    "F:\\AiProject\\AgentWatcher\\.tmp\\tauri-realtest\\20261113-185524\\zero-plugin-agenttask.png"
+  ],
+  "诊断": {
+    "浏览器日志": [
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at refreshSessions (http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12084:32)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12707:9",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "[TAURI] Couldn't find callback id 884465774. This might happen when the app is reloaded while Rust is running an asynchronous operation.",
+        "位置": {
+          "url": "",
+          "line": 285,
+          "column": 14,
+          "lineNumber": 285,
+          "columnNumber": 14
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at refreshSessions (http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12084:32)\n    at refreshSessions (http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12110:11)",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      },
+      {
+        "类型": "warn",
+        "地址": "http://127.0.0.1:1420/",
+        "文本": "IPC custom protocol failed, Tauri will now use the postMessage interface instead TypeError: Failed to fetch\n    at Object.sendIpcMessage (<anonymous>:83:7)\n    at Object.<anonymous> (<anonymous>:177:38)\n    at action (<anonymous>:336:38)\n    at <anonymous>:345:11\n    at new Promise (<anonymous>)\n    at Object.value (<anonymous>:325:14)\n    at invoke (http://127.0.0.1:1420/@fs/F:/AiProject/AgentWatcher/node_modules/.vite/deps/core-CM18SxXo.js?v=b73ea667:204:36)\n    at refreshSessions (http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12084:32)\n    at http://127.0.0.1:1420/index.html?html-proxy&index=0.js:12707:9",
+        "位置": {
+          "url": "",
+          "line": 105,
+          "column": 20,
+          "lineNumber": 105,
+          "columnNumber": 20
+        }
+      }
+    ],
+    "页面错误": []
+  },
+  "通过": true,
+  "CDP端口": 9223,
+  "启动方式": "复用已有 Vite，启动 debug exe",
+  "WebView2": {
+    "Browser": "Edg/157.0.4341.46",
+    "File-Path-Style": "windows",
+    "Protocol-Version": "1.3",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36 Edg/157.0.0.0",
+    "V8-Version": "15.7.11.4",
+    "WebKit-Version": "537.36 (@a0c6bd61d7884b3c402a34c67d05100107a9e5e4)",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:9223/devtools/browser/2d4e6a50-d322-4b6b-b956-0ebf3838e337"
+  },
+  "结束时间": "2026-11-13T10:55:43.748Z"
+}

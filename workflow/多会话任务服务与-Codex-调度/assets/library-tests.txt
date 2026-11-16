@@ -1,0 +1,207 @@
+   Compiling agentwatcher v0.1.11 (F:\AiProject\AgentWatcher\src-tauri)
+warning: variable does not need to be mutable
+     --> src\lib.rs:11830:67
+      |
+11830 | fn visit_jsonl_tail_values<F>(session_path: &Path, file_len: u64, mut visit: F) -> Option<()>
+      |                                                                   ----^^^^^
+      |                                                                   |
+      |                                                                   help: remove this `mut`
+      |
+      = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+     --> src\lib.rs:11862:5
+      |
+11862 |     mut visit: F,
+      |     ----^^^^^
+      |     |
+      |     help: remove this `mut`
+
+warning: `agentwatcher` (lib test) generated 2 warnings (run `cargo fix --lib -p agentwatcher --tests` to apply 2 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.57s
+     Running unittests src\lib.rs (src-tauri\target\debug\deps\agentwatcher_lib-2b1e875847dde68b.exe)
+
+running 180 tests
+test plugin_catalog::tests::live_external_plugin_handshake ... ignored, live external plugin handshake; set AGENTWATCHER_LIVE_PLUGIN_ROOT
+test tests::auto_reply_send_reaches_real_opencode ... ignored, 需要本机可用的 opencode 环境
+test plugin_catalog::tests::confirmation_required_command_rejects_missing_or_wrong_boundary ... ok
+test tests::bridge_cli_inventory_separates_stable_and_legacy_ids ... ok
+test plugin_catalog::tests::agentwatcher_source_tree_bundles_no_plugins ... ok
+test plugin_state::tests::plugin_state_path_lives_under_agentwatcher_appdata ... ok
+test plugin_state::tests::missing_plugin_state_defaults_to_disabled ... ok
+test tests::active_duration_clusters_idle_gaps_with_threshold ... ok
+test tests::auto_reply_supports_only_providers_with_send_channel ... ok
+test tests::auto_reply_guardrails ... ok
+test tests::auto_reply_audit_line_has_fields ... ok
+test tests::auto_reply_triggers_only_after_working ... ok
+test tests::agent_session_usage_fields_serialize ... ok
+test tests::bridge_folder_suffix_does_not_treat_legacy_safe_as_stable ... ok
+test tests::claude_empty_tool_use_result_answers_clear_pending_ask ... ok
+test tests::claude_ask_user_question_tool_is_part_of_ai_preview ... ok
+test tests::codex_context_user_text_filters_desktop_injection_blocks ... ok
+test tests::codex_app_server_subagent_thread_is_not_a_top_level_card ... ok
+test tests::codex_exec_args_apply_model_and_effort_overrides ... ok
+test tests::codex_exec_args_include_required_flags ... ok
+test tests::codex_dedup_thread_items_keeps_newest_duplicate ... ok
+test tests::codex_dedup_thread_items_keeps_first_on_timestamp_tie ... ok
+test tests::codex_jsonl_event_stream_parses_last_agent_message ... ok
+test tests::codex_jsonl_session_id_reads_rollout_uuid_tail ... ok
+test tests::codex_live_handoff_and_todo_tracking_when_enabled ... ok
+test tests::codex_rollout_session_id_candidates_span_resume_chain ... ok
+test tests::codex_scan_turn_fetch_budget_stays_small ... ok
+test tests::codex_session_key_accepts_cli_id_and_deep_link ... ok
+test tests::codex_status_maps_app_server_thread_states ... ok
+test tests::codex_thread_resource_percent_encodes_thread_id ... ok
+test tests::codex_wait_intervals_pair_spawn_with_next_wait ... ok
+test tests::codex_turn_summary_cache_is_keyed_by_thread_updated_ms ... ok
+test plugin_catalog::tests::zero_plugin_catalog_is_valid ... ok
+test tests::codex_usage_merge_sums_segment_counts_and_keeps_newest_totals ... ok
+test tests::copilot_ask_questions_tool_is_part_of_ai_preview ... ok
+test tests::copilot_completed_request_clears_prior_question_waiting ... ok
+test orchestration::tests::missing_ultragoal_plan_returns_safe_bootstrap_status ... ok
+test tests::copilot_transcript_ask_questions_marks_waiting_preview ... ok
+test tests::copilot_transcript_assistant_tool_request_waits_after_execution_start ... ok
+test tests::copilot_transcript_assistant_tool_request_without_execution_start_is_not_waiting ... ok
+test tests::copilot_transcript_completed_ask_questions_is_not_waiting ... ok
+test tests::copilot_transcript_later_assistant_message_clears_stale_question ... ok
+test tests::copilot_transcript_overlay_collects_todo_ids_from_raw_user_messages ... ok
+test tests::copilot_unanswered_question_carousel_is_waiting ... ok
+test tests::copilot_transcript_later_user_message_clears_stale_question ... ok
+test tests::codex_state_thread_names_read_from_threads_table ... ok
+test tests::copilot_used_question_carousel_resolves_unfinished_ask_tool ... ok
+test tests::decode_file_uri_normalizes_vscode_drive_paths ... ok
+test tests::decode_file_uri_normalizes_vscode_unc_paths ... ok
+test tests::get_session_usage_detail_serves_jsonl_and_missing_sessions ... ok
+test tests::imagegen_exec_args_flags_and_no_model_pinning ... ok
+test tests::copilot_cli_session_store_rows_are_scanned_without_chat_duplicates ... ok
+test tests::imagegen_parse_codex_thread_id ... ok
+test tests::imagegen_parse_codex_token_usage_takes_last_turn_completed ... ok
+test tests::imagegen_prompt_sources ... ok
+test tests::latest_activity_uses_file_modified_when_content_timestamp_lags ... ok
+test tests::missing_todo_state_returns_empty_state ... ok
+test tests::open_workbuddy_session_requires_session_id ... ok
+test tests::opencode_desktop_deep_links_match_supported_routes ... ok
+test tests::opencode_handoff_part_renderer_omits_reasoning_text ... ok
+test tests::opencode_handoff_source_markdown_contains_portable_transcript ... ok
+test plugin_catalog::tests::descriptor_filename_must_match_plugin_name ... ok
+test tests::opencode_http_post_json_rejects_non_2xx ... ok
+test tests::opencode_http_post_json_sends_prompt_async_payload ... ok
+test tests::downsample_lifecycle_caps_points_and_keeps_sums ... ok
+test tests::opencode_netstat_parser_keeps_only_listening_opencode_ports ... ok
+test tests::opencode_session_resource_percent_encodes_session_id ... ok
+test tests::opencode_session_row_maps_to_agent_session ... ok
+test tests::opencode_session_row_builds_usage_from_summary_columns ... ok
+test tests::opencode_live_scan_perf_when_enabled ... ok
+test tests::jsonl_usage_cache_reuses_entry_for_unchanged_file ... ok
+test tests::codex_jsonl_subagent_session_is_not_a_top_level_card ... ok
+test plugin_state::tests::set_plugin_enabled_persists_state_and_audit ... ok
+test plugin_catalog::tests::scanner_stops_below_a_discovered_plugin ... ok
+test plugin_catalog::tests::mounted_plugin_is_discovered_but_not_implicitly_enabled ... ok
+test tests::parse_claude_timeline_matches_usage_totals_and_stamps ... ok
+test tests::opencode_status_maps_running_tool_and_permission_waiting ... ok
+test tests::parse_claude_usage_dedups_by_message_id_and_counts_turns_and_tools ... ok
+test tests::opencode_web_session_url_matches_renderer_route_slug ... ok
+test tests::codex_subagents_discovers_workers_and_guardians_with_linkage ... ok
+test tests::parse_codex_usage_without_token_events_degrades_to_empty ... ok
+test orchestration::tests::reads_ultragoal_plan_as_public_orchestration_status ... ok
+test tests::codex_rollout_index_prefers_resumed_rollout_for_origin_thread ... ok
+test tests::parse_codex_usage_reads_totals_and_skips_zero_input_context ... ok
+test tests::parse_codex_timeline_collects_orchestration_events ... ok
+test plugin_catalog::tests::workflow_schema_is_resolved_from_the_plugin_root ... ok
+test tests::parse_codex_timeline_skips_zero_input_and_tracks_model ... ok
+test tests::opencode_session_timeline_reads_assistant_tokens_and_stamps ... ok
+test tests::parse_opencode_run_output_handles_event_stream ... ok
+test tests::parse_copilot_chat_usage_aggregates_patch_log ... ok
+test tests::sample_budget_only_covers_small_rollouts ... ok
+test tests::parse_copilot_chat_timeline_reads_round_tokens_and_tools ... ok
+test tests::parse_sample_suggestion_strips_wrappers ... ok
+test tests::opencode_summary_reads_user_ai_text_and_todo_id ... ok
+test tests::sample_flow_orders_calls_and_pins_params ... ok
+test tests::opencode_suggestion_context_reads_message_and_part_tables ... ok
+test tests::sample_instruction_asks_for_bare_sentence ... ok
+test tests::opencode_summary_budget_uses_lightweight_fallback_then_cache ... ok
+test tests::resolve_scan_options_defaults_include_playground_to_true ... ok
+test tests::scan_options_include_codex_by_default_and_can_disable_it ... ok
+test tests::scan_options_control_copilot_chat_and_cli_independently ... ok
+test tests::plugin_workflow_session_marker_requires_explicit_marker ... ok
+test tests::scan_options_include_opencode_by_default_and_can_disable_it ... ok
+test tests::opencode_suggestion_context_returns_none_without_text_parts ... ok
+test tests::scan_options_include_workbuddy_by_default_and_can_disable_it ... ok
+test tests::scan_options_include_zcode_by_default_and_can_disable_it ... ok
+test tests::codex_subagents_finds_children_across_day_directories ... ok
+test tests::suggestion_engine_parses_known_labels ... ok
+test tests::suggestion_sampling_is_deterministic_and_bounded ... ok
+test tests::suggestion_eligibility_blocks_plan_provider_and_blacklist ... ok
+test tests::suggestion_trigger_matches_official_live_and_catch_up_semantics ... ok
+test tests::session_bridge_link_scopes_resource_to_workspace ... ok
+test tests::opencode_suggestion_context_recovers_user_turn_outside_window ... ok
+test tests::session_limit_is_applied_per_provider_without_starving_others ... ok
+test tests::test_resolve_scan_options_full_history_mode ... ok
+test tests::todo_id_extraction_survives_long_prompt_preview_truncation ... ok
+test tests::todo_state_path_lives_under_agentwatcher_appdata ... ok
+test orchestration::tests::prefers_parent_ultragoal_plan_over_nested_runtime_state ... ok
+test tests::test_codex_file_base_name_strips_double_extension ... ok
+test tests::test_resolve_scan_options_defaults_preserved ... ok
+test tests::title_candidate_truncates_at_punctuation_boundary ... ok
+test plugin_catalog::tests::duplicate_plugin_names_reject_every_candidate ... ok
+test tests::suggestion_via_only_parses_supported_engines ... ok
+test tests::turn_audit_empty_calls_returns_empty ... ok
+test tests::turn_audit_flags_effort_change_between_turns ... ok
+test tests::turn_audit_flags_model_change_between_turns ... ok
+test tests::turn_audit_flags_reliability_signals ... ok
+test tests::turn_audit_flags_requested_model_mismatch ... ok
+test tests::turn_audit_groups_calls_into_turn_windows ... ok
+test tests::turn_audit_low_output_needs_three_reference_turns ... ok
+test tests::cross_agent_context_reads_claude_and_copilot_tails ... ok
+test tests::unioned_interval_merges_overlaps_and_never_double_counts ... ok
+test tests::turn_audit_without_turns_yields_single_row ... ok
+test tests::turn_audit_flags_low_output_below_median ... ok
+test tests::todo_state_round_trips_json ... ok
+test tests::usage_scan_budget_first_scan_generous_then_time_budgeted ... ok
+test tests::workbuddy_candidate_rows_include_playground_with_cwd_by_default ... ok
+test tests::workbuddy_candidate_rows_exclude_playground_when_disabled ... ok
+test tests::workbuddy_session_row_maps_to_agent_session ... ok
+test tests::workbuddy_candidate_rows_skip_deleted_playground_and_empty_cwd ... ok
+test tests::workbuddy_tail_marks_running_for_open_assistant_and_open_tool_call ... ok
+test tests::workbuddy_usage_aggregates_tokens_counts_and_top_tools ... ok
+test tests::workbuddy_usage_without_model_usage_keeps_tokens_null ... ok
+test tests::workbuddy_tail_extracts_previews_and_filters_injection ... ok
+test tests::workbuddy_tail_clears_waiting_after_result ... ok
+test tests::workbuddy_tail_ignores_unknown_event_types ... ok
+test tests::workbuddy_tail_marks_pending_question_waiting ... ok
+test tests::workbuddy_usage_rows_parse_credit_json ... ok
+test tests::workspace_identity_disambiguates_uga_plugin_branch ... ok
+test tests::workspace_identity_disambiguates_generic_plugin_root ... ok
+test tests::workspace_path_blacklist_defaults_to_system_temp_and_respects_explicit_empty_list ... ok
+test tests::workspace_path_blacklist_filters_directory_and_descendants_only ... ok
+test tests::zcode_auto_answer_guardrails ... ok
+test tests::zcode_send_args_assemble ... ok
+test tests::zcode_handoff_transcript_orders_by_sequence_and_renders_markdown ... ok
+test tests::workspace_path_key_normalizes_trailing_and_duplicate_separators ... ok
+test tests::zcode_session_row_maps_to_agent_session ... ok
+test tests::zcode_send_resolves_exe_from_registry_string ... ok
+test tests::zcode_status_ignores_session_heartbeat_and_uses_content_timestamp ... ok
+test tests::zcode_suggestion_pipeline_contract ... ok
+test tests::zcode_session_timeline_reads_model_usage_rows_and_stamps ... ok
+test tests::zcode_summary_maps_running_tool_status ... ok
+test tests::zcode_summary_reads_user_ai_text_and_status_hints ... ok
+test tests::zcode_usage_by_session_aggregates_observation_tables ... ok
+test tests::session_package_cleans_stale_temp_artifacts ... ok
+test tests::session_package_manifest_matches_files ... ok
+test tests::todo_state_write_bounds_plugin_workflow_task_payloads ... ok
+test tests::session_package_covers_all_providers ... ok
+test tests::zcode_auto_answer_audit_appends_to_disk ... ok
+test tests::codex_thread_summary_reads_app_server_thread_json ... ok
+test tests::codex_thread_uses_cached_turn_summary_for_preview_fields ... ok
+test tests::codex_thread_without_turn_summary_does_not_use_first_preview_as_last_user ... ok
+test tests::codex_jsonl_session_fallback_reads_local_file_summary ... ok
+test tests::imagegen_pick_latest_image_prefers_newest_mtime ... ok
+test tests::workbuddy_package_entries_use_session_path_as_raw_jsonl ... ok
+test tests::session_package_reports_source_errors ... ok
+test tests::session_package_records_git_anchor ... ok
+test plugin_catalog::tests::plugin_process_timeout_terminates_hung_child ... ok
+test tests::kill_on_close_job::job_handle_drop_terminates_whole_descendant_tree ... ok
+test tests::zcode_send_classifies_child_failure ... ok
+
+test result: ok. 178 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 1.87s
+

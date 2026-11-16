@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "protocol": "1.3.0",
+  "generated_at": "2026-11-13T08:55:59Z",
+  "generated_by": {
+    "tool_revision": "awf-0.1.0"
+  },
+  "work_item": {
+    "id": "wi_1QYFZ7SPZ2TGAMZAMK448JP45C",
+    "short_id": "wn2nx6nw",
+    "slug": "多会话任务服务与-Codex-调度",
+    "title": "多会话任务服务与 Codex 调度",
+    "kind": "feature",
+    "status": "active",
+    "branch": "dev",
+    "home_repository": "https://github.com/pb763396199/AgentWatcher.git",
+    "contract_digest": "sha256:807ccdf792d9da9509eddb8e1cc706954c00ea16bf8f9c44bb645b13b854af56",
+    "acceptance_ids": [
+      "AC-001",
+      "AC-002",
+      "AC-003",
+      "AC-004",
+      "AC-005",
+      "AC-006",
+      "AC-007",
+      "AC-008",
+      "AC-009",
+      "AC-010",
+      "AC-011",
+      "AC-012"
+    ]
+  },
+  "artifacts": [
+    {
+      "artifact_id": "ar_3FY7V5SQZEN596WM62158WQY55",
+      "type": "design",
+      "path": "design.md",
+      "outcome": "accepted",
+      "freshness": "fresh",
+      "stage": 20,
+      "depends_on": []
+    },
+    {
+      "artifact_id": "ar_1ZPZFSSPSZ1NFNZ0BXRH5HFXDQ",
+      "type": "plan",
+      "path": "plan.md",
+      "outcome": "ready",
+      "freshness": "fresh",
+      "stage": 30,
+      "depends_on": [
+        "ar_3FY7V5SQZEN596WM62158WQY55"
+      ]
+    }
+  ],
+  "wayfinder": null,
+  "manual_test": {
+    "passed": 0,
+    "open": 0,
+    "failed": 0
+  },
+  "stage": {
+    "reached": "plan",
+    "reached_stage": 30,
+    "next_skill": "aes-execute",
+    "waiting_on": null
+  },
+  "next": "计划就绪，用 aes-execute 开工；如果是查故障就用 aes-debug",
+  "computed_from": {
+    "documents": {
+      "design.md": "sha256:e33b55363e31c2e5c072b84a0fb6b13ca929f1ab404f7e976fb0cda850e76e4e",
+      "plan.md": "sha256:4b5e616b9c2d2460a1bd4205c86d7de8dd7845e3e3d92b1d4457351f5baa32ab",
+      "work-item.md": "sha256:c55153be96019bb719c828259dd8ae5bc002170ad59898e67bf254594b4185ca"
+    },
+    "change_set": {
+      "revision": "34493f3b35552dad87cdbe860d8b0341caf35e6d",
+      "tree": "caca832a448a9e09a44cad3402650b7430e8fa0c",
+      "content_digest": "sha256:ba4bad74f6e221ab154cf8d93b0c60e5c8db169425f827520e2273f54249fd7f"
+    }
+  }
+}

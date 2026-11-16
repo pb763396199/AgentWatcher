@@ -347,6 +347,59 @@ AgentWatcher 使用自带的 VS Code 连接组件实现精确 session 跳转和 
 - 插件命令只能通过 `AgentWatcherPluginStdio/1` 受控协议执行；宿主不接收任意 program、args 或 shell。
 - 零插件状态必须保持完整启动、构建和测试能力。
 
+## 持久任务服务（首版）
+
+AgentWatcher 新增通用 SQLite 工作流服务。普通会话查询保持原方式；工作流写请求与快照查询会按需启动后台服务。
+
+推荐通过技能开始，用户不需要手写 CLI 请求：在新的 Codex 会话中调用 `$agentwatcher`，给出工作区和目标，例如“使用隔离目录测试任务流程，提交 handoff 后等待我确认，不启动下游”。技能负责核对 CLI 能力、复用或登记任务、调用 `next/watch/apply`，并交付可读证据。已安装技能须经 `skill install` 更新；PATH 中的 CLI 也必须支持 `workflow` 命令。
+
+```powershell
+agentwatcher-cli service status
+agentwatcher-cli service start
+agentwatcher-cli workflow guide
+agentwatcher-cli workflow apply --file request.json
+agentwatcher-cli workflow snapshot --project my-project
+agentwatcher-cli workflow next --project my-project
+agentwatcher-cli workflow watch --project my-project --after 0 --wait-ms 30000
+agentwatcher-cli service stop
+```
+
+可用 `--workflow-home <绝对目录>` 隔离服务与测试数据。`service status` 和 `workflow guide` 不启动服务。
+`workflow next` 返回当前按紧急程度排序的待处理动作；`workflow watch` 按事件游标返回增量，适合 AI 长轮询。
+桌面工作流窗口只读显示状态，人工确认、暂停、退回、恢复和下游授权统一由 AI 通过 CLI 提交。
+复杂请求支持 `--file -` 从 stdin 读取，JSON 信封仍是五键，失败退出码为 1。服务不接收任意 shell、program 或 args。
+
+| 固定命令 | 用途 |
+| --- | --- |
+| project.create / roadmap.publish | 登记项目和经人确认的路线版本。 |
+| node.prepare / node.claim / node.launch | 准备代码工作区、绑定手工会话或启动独立 Codex 会话。 |
+| execution.progress / execution.handoff | 记录进展或提交包含验证和产物摘要的施工交付。 |
+| review.launch / review.submit | 启动只读 Codex 评审或登记独立评审结果。 |
+| handoff.accept / handoff.reject | 接受或退回当前交付；continueNodes 可授权选定下游。 |
+| roadmap.propose / execution.pause_ack | 提出改线、冻结依赖范围并登记安全停止回执。 |
+| control.set / execution.resume / execution.release | 暂停项目、恢复或在安全停止后释放原施工归属。 |
+| node.integrate / integration.publish | 隔离生成整合候选，检查并比较原目标提交后发布。 |
+| milestone.check / milestone.land | 核对跨仓库版本集合并尝试受控快进合入，部分成功不自动回滚。 |
+| storage.backup / storage.check | 一致性备份数据库和引用产物，检查数据库及产物摘要。 |
+| legacy.preview / legacy.import | 只读预览并选择导入旧任务，不把历史验收自动当作当前验收。 |
+
+请求形状如下；此例只登记项目，不启动模型：
+
+```json
+{"schemaVersion":1,"requestId":"create-project-1","command":"project.create","payload":{"id":"my-project","title":"My project"}}
+```
+
+路线发布包含 id、projectId、title、expectedRevision、humanConfirmed 和 nodes；每个节点包含 id、title、goal、acceptance，可带 dependencies、code、requiresReview。首次 expectedRevision 为 0。改版先提交 roadmap.propose，并取得安全停止回执。
+
+主窗口右上角 ◇ 打开只读工作流诊断窗，可查看交付、通知、运行器和路线状态。人工确认、暂停、接受或退回交付，以及选择下游后继续，统一由 AI 通过 CLI 提交。关闭主窗口收起到托盘；托盘菜单可重新打开或明确退出。任务服务和 Codex 运行器分别管理，服务退出不终止已启动施工。后台唤起保留暂停与授权状态。
+
+恢复命令为 `agentwatcher-cli workflow restore --file <备份.zip> --confirm`，要求先停止服务。旧数据库保留，恢复项目全部暂停，在途执行等待核对。代码仓库不进入备份，提交仍须在对应仓库可达。
+
+当前命令适配器优先 Codex；手工绑定的外部会话可主动通过 CLI 收件，不会从另一个 app-server 争抢会话写锁。需要人工审批的 Codex 请求会记录为待人处理；原生客户端的自动接管不作为已支持能力。
+
+测试：`cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --test workflow_contract --test workflow_git`。
+真实桌面入口验收：`npm run test:tauri:flow -- workflow`。
+
 ## 许可证
 
 UNLICENSED（私有项目）
