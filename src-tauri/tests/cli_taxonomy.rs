@@ -15,6 +15,27 @@ fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
 }
 
 #[test]
+fn install_cli_parses_with_optional_dir() {
+    // 裸动词：走默认候选链（AGENTWATCHER_CLI_BIN → ~/.local/bin → …）。
+    let parsed = parse(&["install-cli"]).expect("bare install-cli parses");
+    let Commands::InstallCli { dir } = parsed.command else {
+        panic!("expected install-cli");
+    };
+    assert!(dir.is_none());
+
+    let parsed = parse(&["install-cli", "--dir", "/tmp/aw-bin"]).expect("--dir parses");
+    let Commands::InstallCli { dir } = parsed.command else {
+        panic!("expected install-cli");
+    };
+    assert_eq!(dir.as_deref(), Some("/tmp/aw-bin"));
+
+    // 技能文档里的动词必须全部在命令树上（skills_doc_commands_resolve_in_clap
+    // 校验 SKILL.md 的引用，这里反向锁帮助文本包含新动词）。
+    let help = Cli::command().render_help().to_string();
+    assert!(help.contains("install-cli"), "帮助文本应包含 install-cli：\n{help}");
+}
+
+#[test]
 fn workflow_service_commands_and_isolated_home_parse() {
     assert!(parse(&["--workflow-home", "F:/isolated", "service", "status"]).is_ok());
     assert!(parse(&["workflow", "apply", "--file", "-"]).is_ok());

@@ -126,8 +126,31 @@ pub fn skill_install(dir: Option<&str>) {
             skill_file(root).to_string_lossy()
         ));
     }
+    // 技能教 agent 用裸命令 `agentwatcher-cli ...`；CLI 本身不在 PATH 时技能
+    // 形同虚设（macOS 源码树场景的高频坑）。安装收尾顺手检查并给出修法。
+    if !cli_reachable_on_path() {
+        human.push_str("提示：PATH 里没有 agentwatcher-cli，跑一次 `agentwatcher-cli install-cli` 把命令装进 PATH，技能里的裸命令才能稳定调用\n");
+    }
     let data = serde_json::json!({ "installed": installed });
     output::finish_success("skill install", data, Some(human));
+}
+
+/// 当前进程 PATH 里能否直接解析到 agentwatcher-cli（不递归找候选目录）。
+fn cli_reachable_on_path() -> bool {
+    let file_name = if cfg!(windows) {
+        "agentwatcher-cli.exe"
+    } else {
+        "agentwatcher-cli"
+    };
+    let separator = if cfg!(windows) { ';' } else { ':' };
+    std::env::var("PATH")
+        .map(|value| {
+            value.split(separator).any(|dir| {
+                let candidate = std::path::Path::new(dir).join(file_name);
+                candidate.is_file()
+            })
+        })
+        .unwrap_or(false)
 }
 
 pub fn skill_list(dir: Option<&str>) {

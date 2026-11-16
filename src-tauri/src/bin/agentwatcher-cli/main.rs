@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+mod install_cli;
 mod output;
 mod scan_cache;
 mod skill;
@@ -59,6 +60,7 @@ fn main() {
             SkillAction::Print => skill::skill_print(),
             SkillAction::Remove { dir } => skill::skill_remove(dir.as_deref()),
         },
+        Commands::InstallCli { dir } => install_cli::install_cli(dir.as_deref()),
         Commands::Suggest { action } => match action {
             SuggestAction::Generate {
                 id,

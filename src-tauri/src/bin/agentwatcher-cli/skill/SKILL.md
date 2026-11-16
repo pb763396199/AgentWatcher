@@ -1,7 +1,7 @@
 ---
 name: agentwatcher
 description: 通过 AgentWatcher CLI 开启、接续和测试持久任务：登记已讨论的 roadmap、领取节点、提交 handoff、读取通知并等待人工确认；也可查询本机 AI 会话、用量、导出接续上下文和生成建议回复。用户说用 AgentWatcher 开任务、沿路线施工、测试工作流或查看会话时使用。
-version: 5
+version: 6
 ---
 
 # AgentWatcher 任务执行与会话查询
@@ -10,7 +10,7 @@ version: 5
 
 用户调用 `$agentwatcher` 并给出任务目标后，由你操作 CLI，用户不需要编写 JSON、手动建测试数据库或点击界面。
 
-1. 先定位 `agentwatcher-cli`，检查 `workflow --help` 含 `next/watch/apply`，再读 `workflow guide`。仅 `--version` 不能证明支持工作流；旧程序报 unknown subcommand 时不能继续套新协议。可用用户指定的安装目录或当前 AgentWatcher 仓库的实际构建产物；不要凭空猜其他仓库路径。
+1. 先定位 `agentwatcher-cli`，检查 `workflow --help` 含 `next/watch/apply`，再读 `workflow guide`。仅 `--version` 不能证明支持工作流；旧程序报 unknown subcommand 时不能继续套新协议。可用用户指定的安装目录或当前 AgentWatcher 仓库的实际构建产物；不要凭空猜其他仓库路径。裸命令不在 PATH 时按候选路径找：`~/.agentwatcher/bin/agentwatcher-cli`、`~/.local/bin/agentwatcher-cli`（macOS/Linux）或安装目录里的 `agentwatcher-cli.exe`（Windows 发布包，与 AgentWatcher.exe 同目录）；找到后建议用户执行一次 `agentwatcher-cli install-cli`（默认装进 `~/.agentwatcher/bin` 并自动把该目录写进 shell rc），重开终端后后续会话直接用裸命令。
 2. 确定真实 workspace、项目和 roadmap 身份。先读 `workflow snapshot` 找已有任务；继续任务必须复用现有身份，不因新会话重复创建。
 3. 新目标先讨论目标、依赖、节点写入范围、验收证据和人应判断什么。用户指定 WayFinder/grilling/brainstorm 时读取它们并完成讨论；缺少关键决策时先讨论，已有明确认可的设计直接沿用。任务拆分应能在一个正常会话完成，不设置施工上下文截止条件。
 4. 将确认后的目标写入 `project.create` 与 `roadmap.publish`。用户明确说启动当前节点后，代码节点先 `node.prepare` 再 `node.launch`；已有手工会话用 `node.claim` 绑定。非代码节点需要实际 `workspace`。请求形态与字段从 `workflow guide` 获取，不自造命令。
@@ -40,7 +40,7 @@ Tauri 工作流窗口只读，不要把按钮或窗口状态当作控制面；�
 两次无进展触发“反思一下，方向对了还是错了，继续深挖还是换个思路”，第三次仍无进展转人。
 上下文规模用于规划，不是施工中断条件。`humanConfirmed:true` 只记录用户在当前会话中已明确给出的授权：可以代为写入已获授权的动作，不能编造授权或扩大路线。用户要求启动隔离测试时可以发布测试路线，但不能默认接受测试 handoff 或启动下游。
 
-先确认命令可用：执行 `agentwatcher-cli --version`。提示找不到命令时，向用户询问 AgentWatcher 的安装目录，可执行文件是目录里的 `agentwatcher-cli.exe`（与 AgentWatcher.exe 同目录），后续命令都带完整路径执行。
+先确认命令可用：执行 `agentwatcher-cli --version`。提示找不到命令时按候选找：`~/.agentwatcher/bin/agentwatcher-cli`、`~/.local/bin/agentwatcher-cli`（macOS/Linux），或向用户询问 AgentWatcher 的安装目录（Windows 发布包里可执行文件与 AgentWatcher.exe 同目录）。macOS/Linux 可让用户执行一次 `agentwatcher-cli install-cli` 自动安装并写 shell rc；此后裸命令稳定可用，未安装前后续命令带完整路径执行。
 
 ## 什么时候用
 
@@ -63,6 +63,7 @@ Tauri 工作流窗口只读，不要把按钮或窗口状态当作控制面；�
 | `agentwatcher-cli suggest generate <id> [--avoid <上一条>] [--model <模型名>] [--effort <档>] [--timeout <秒>] [--engine auto\|sample\|exec] [--via session\|codex] [--session-path <路径>]` | 真实调模型生成一条建议，会产生 token 用量 |
 | `agentwatcher-cli skill list [--dir <路径>]` | 看各宿主技能目录的安装状态 |
 | `agentwatcher-cli skill install [--dir <路径>]` | 把这份技能装进宿主目录，重复执行即覆盖升级 |
+| `agentwatcher-cli install-cli [--dir <路径>]` | 把 CLI 自身复制进 PATH 可达目录（默认 `~/.agentwatcher/bin`，macOS/Linux 自动幂等写 shell rc），重开终端后裸命令稳定可用 |
 
 会话 ID 形如 `opencode:abc123`，从 `session list` 的输出里拿，跨次调用稳定。所有按 ID 查询的命令（show / usage / handoff export / suggest）对 Codex 会话额外接受深链形态 `codex://threads/<uuid>` 与裸 UUID，会自动换算成 `codex:<uuid>`；裸 UUID 一律按 Codex 解释。
 

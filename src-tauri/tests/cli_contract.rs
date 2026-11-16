@@ -214,6 +214,43 @@ fn skill_lifecycle_in_explicit_dir_is_idempotent() {
 }
 
 #[test]
+fn install_cli_copies_binary_and_reports_path_hint() {
+    let dir = std::env::temp_dir().join(format!("awc-install-cli-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let dir_arg = dir.to_string_lossy().into_owned();
+    let file_name = if cfg!(windows) {
+        "agentwatcher-cli.exe"
+    } else {
+        "agentwatcher-cli"
+    };
+    let installed = dir.join(file_name);
+
+    // 安装：信封 ok、文件落盘、体积与当前二进制一致、rcUpdated 如实报告。
+    let (envelope, _stderr, code) = run_cli(&["--format", "json", "install-cli", "--dir", &dir_arg]);
+    assert_eq!(code, Some(0), "install-cli succeeds");
+    assert_eq!(envelope["command"], "install-cli");
+    assert_eq!(envelope["ok"], true);
+    assert!(installed.is_file(), "binary copied to target dir");
+    let source = std::path::PathBuf::from(envelope["data"]["source"].as_str().unwrap());
+    assert!(
+        std::fs::metadata(&installed).unwrap().len()
+            >= std::fs::metadata(&source).unwrap().len().saturating_sub(1024),
+        "copied binary is not truncated"
+    );
+    assert!(
+        envelope["data"]["rcUpdated"].is_boolean(),
+        "rcUpdated is a boolean either way"
+    );
+
+    // 幂等重装：目录已存在、目标可执行文件在位，重跑同样成功。
+    let (envelope, _stderr, code) = run_cli(&["--format", "json", "install-cli", "--dir", &dir_arg]);
+    assert_eq!(code, Some(0));
+    assert_eq!(envelope["ok"], true);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn skill_list_without_dir_reports_host_candidates() {
     // 只读命令，不打真实宿主目录：断言信封形状与状态词表
     let (envelope, _stderr, code) = run_cli(&["--format", "json", "skill", "list"]);
@@ -250,7 +287,11 @@ fn skill_print_and_status_expose_doc_surface() {
     assert_eq!(envelope["command"], "skill print");
     let content = envelope["data"]["content"].as_str().expect("data.content is a string");
     assert!(content.contains("name: agentwatcher"), "doc has frontmatter");
-    assert!(content.contains("version: 5"), "doc carries a version");
+    // 版本号唯一事实源在 frontmatter；测试只验形态，升版不再破这里。
+    assert!(
+        content.contains("version: ") && content.contains("install-cli"),
+        "doc carries a version and the install-cli guidance"
+    );
     assert!(content.contains("## 调技能开任务"), "skill teaches task kickoff");
     assert!(content.contains("### 调技能做验收"), "skill teaches isolated skill-led acceptance");
     assert!(content.contains("suggest generate"), "doc teaches the suggest command");
@@ -263,7 +304,11 @@ fn skill_print_and_status_expose_doc_surface() {
     let (envelope, _stderr, code) = run_cli(&["--format", "json", "skill", "status"]);
     assert_eq!(code, Some(0));
     assert_eq!(envelope["command"], "skill status");
-    assert_eq!(envelope["data"]["docVersion"], "5");
+    // docVersion 跟随 frontmatter，不在这里写死数字。
+    assert!(
+        envelope["data"]["docVersion"].as_str().is_some_and(|v| !v.is_empty() && v != "unknown"),
+        "docVersion reported from frontmatter"
+    );
     let hosts = envelope["data"]["hosts"].as_array().expect("data.hosts is an array");
     assert!(!hosts.is_empty(), "至少有一个宿主候选");
     let valid_actions = ["none", "skill install", "skip"];

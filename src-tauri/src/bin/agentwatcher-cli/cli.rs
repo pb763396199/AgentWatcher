@@ -61,6 +61,12 @@ pub enum Commands {
         #[command(subcommand)]
         action: SkillAction,
     },
+    /// 把 agentwatcher-cli 自身复制进 PATH 可达目录，技能文档的裸命令即可稳定调用
+    InstallCli {
+        /// 安装到指定目录（默认按候选链自动选择）
+        #[arg(long = "dir")]
+        dir: Option<String>,
+    },
     /// 为某个会话生成一条 AI 建议回复（按会话所属 agent 路由生成器）
     Suggest {
         #[command(subcommand)]
