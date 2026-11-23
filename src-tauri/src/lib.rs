@@ -815,7 +815,7 @@ pub struct ScanOptions {
     pub include_zcode: Option<bool>,
     pub include_workbuddy: Option<bool>,
     pub include_playground: Option<bool>,
-pub include_antigravity: Option<bool>,
+    pub include_antigravity: Option<bool>,
     pub workspace_path_blacklist: Option<Vec<String>>,
 }
 
@@ -832,7 +832,7 @@ struct ResolvedScanOptions {
     include_zcode: bool,
     include_workbuddy: bool,
     include_playground: bool,
-include_antigravity: bool,
+    include_antigravity: bool,
     workspace_path_blacklist: Vec<String>,
 }
 
@@ -846,7 +846,7 @@ struct PerformanceProviderCounts {
     opencode: usize,
     zcode: usize,
     workbuddy: usize,
-antigravity: usize,
+    antigravity: usize,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -1239,6 +1239,7 @@ fn session_watch_roots() -> Vec<PathBuf> {
         push_existing_path(&mut roots, user_profile_path.join(".workbuddy").join("projects"));
         let workbuddy_db = user_profile_path.join(".workbuddy").join("workbuddy.db");
         push_existing_path(&mut roots, workbuddy_db.clone());
+        push_existing_path(&mut roots, workbuddy_db.with_extension("db-wal"));
         // Antigravity：挂 conversations（正文库）与清单库/-wal；不挂 ~/.gemini/antigravity
         // 根——根下有 daemon/hub_*.json、presence/ 秒级状态文件，会把防抖刷爆。
         let antigravity_home = user_profile_path.join(".gemini").join("antigravity");
@@ -1545,6 +1546,7 @@ fn lookup_session_via_wide_scan(
         options.include_open_code = Some(provider == "opencode");
         options.include_zcode = Some(provider == "zcode");
         options.include_workbuddy = Some(provider == "workbuddy");
+        options.include_antigravity = Some(provider == "antigravity");
     }
     let _ = scan_time_ms;
     scan_sessions_blocking(Some(options))
@@ -3870,6 +3872,7 @@ fn update_performance_scan_snapshot(sessions: &[AgentSession], duration: Duratio
             "opencode" => provider_counts.opencode += 1,
             "zcode" => provider_counts.zcode += 1,
             "antigravity" => provider_counts.antigravity += 1,
+            "workbuddy" => provider_counts.workbuddy += 1,
             _ => {}
         }
     }
@@ -13091,7 +13094,7 @@ fn resolve_scan_options(options: Option<ScanOptions>) -> ResolvedScanOptions {
         include_zcode: options.include_zcode.unwrap_or(true),
         include_workbuddy: options.include_workbuddy.unwrap_or(true),
         include_playground: options.include_playground.unwrap_or(true),
-include_antigravity: options.include_antigravity.unwrap_or(true),
+        include_antigravity: options.include_antigravity.unwrap_or(true),
         workspace_path_blacklist: options
             .workspace_path_blacklist
             .unwrap_or_else(default_workspace_path_blacklist)
@@ -15710,7 +15713,10 @@ fn antigravity_wire_fields(bytes: &[u8]) -> Vec<(u32, AntigravityWireValue)> {
                 let Ok(length) = usize::try_from(length) else {
                     break;
                 };
-                let Some(chunk) = bytes.get(cursor..cursor + length) else {
+                let Some(end) = cursor.checked_add(length) else {
+                    break;
+                };
+                let Some(chunk) = bytes.get(cursor..end) else {
                     break;
                 };
                 cursor += length;
@@ -15867,10 +15873,8 @@ struct AntigravitySummaryRow {
     workspace_path: Option<String>,
     /// 清单状态列原文（CASCADE_RUN_STATUS_*）。
     run_status: String,
-    killed: bool,
     /// 清单 last_modified_time（UTC 文本）解析出的毫秒，正文库缺失时的兜底。
     last_modified_ms: u64,
-    step_count: u64,
 }
 
 fn antigravity_home_dir() -> Option<PathBuf> {
@@ -15940,19 +15944,16 @@ fn antigravity_summary_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result
             .and_then(|uris| uris.first().cloned())
             .and_then(|uri| antigravity_decode_workspace_uri(&uri))
     });
-    let killed_raw = row.get::<_, Option<i64>>(4)?;
-    let last_modified_text = row.get::<_, Option<String>>(5)?;
+    let last_modified_text = row.get::<_, Option<String>>(4)?;
     Ok(AntigravitySummaryRow {
         conversation_id: row.get(0)?,
         title: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
         workspace_path,
         run_status: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-        killed: killed_raw.unwrap_or(0) != 0,
         last_modified_ms: last_modified_text
             .as_deref()
             .and_then(iso_timestamp_ms)
             .unwrap_or(0),
-        step_count: row.get::<_, Option<i64>>(6)?.unwrap_or(0).max(0) as u64,
     })
 }
 
@@ -15963,20 +15964,48 @@ fn antigravity_candidate_rows(
     scan_time_ms: u64,
 ) -> Vec<AntigravitySummaryRow> {
     // 子会话过滤用 parent_conversation_id 判空，与 ZCode 过滤 subagent_child 同构。
-    let mut statement = match connection.prepare(
-        "select conversation_id, title, workspace_uris, status, killed, last_modified_time, \
-                step_count \
-         from conversation_summaries \
-         where coalesce(killed, 0) = 0 and coalesce(parent_conversation_id, '') = '' \
-         order by last_modified_time desc \
-         limit ?1",
-    ) {
+    // schema 容错：清单表缺 killed / parent_conversation_id 列时（上游版本演进），
+    // 按 pragma_table_info 探测实际列集拼 WHERE，缺列就不做该项过滤，不让整个
+    // provider 静默为空（opencode_session_scan_select 同范式）。
+    let column_exists = |column: &str| {
+        connection
+            .query_row(
+                "select count(*) from pragma_table_info('conversation_summaries') where name = ?1",
+                rusqlite::params![column],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count > 0)
+            .unwrap_or(false)
+    };
+    let has_killed = column_exists("killed");
+    let has_parent = column_exists("parent_conversation_id");
+    let mut where_clauses = Vec::new();
+    if has_killed {
+        where_clauses.push("coalesce(killed, 0) = 0".to_string());
+    }
+    if has_parent {
+        where_clauses.push("coalesce(parent_conversation_id, '') = ''".to_string());
+    }
+    let where_sql = if where_clauses.is_empty() {
+        String::new()
+    } else {
+        format!("where {} ", where_clauses.join(" and "))
+    };
+    let sql = format!(
+        "select conversation_id, title, workspace_uris, status, last_modified_time \
+         from conversation_summaries {}order by last_modified_time desc limit ?1",
+        where_sql
+    );
+    let mut statement = match connection.prepare(&sql) {
         Ok(statement) => statement,
         Err(_) => return Vec::new(),
     };
     let rows = statement
         .query_map(
-            rusqlite::params![ANTIGRAVITY_SESSION_SCAN_LIMIT_MAX],
+            rusqlite::params![sqlite_session_scan_limit(
+                options,
+                ANTIGRAVITY_SESSION_SCAN_LIMIT_MAX
+            ) as i64],
             antigravity_summary_row_from_sql,
         )
         .map(|mapped| mapped.filter_map(Result::ok).collect::<Vec<_>>())
@@ -16024,6 +16053,54 @@ fn antigravity_open_conversation_db(conversation_id: &str) -> Option<Connection>
     open_readonly_sqlite(&db_path, ANTIGRAVITY_SQLITE_BUSY_TIMEOUT_MS)
 }
 
+/// 扫描热路径的会话摘要缓存：键是库路径，值是（db 与 -wal 的较新 mtime，摘要）。
+/// 250ms 防抖的重复重扫只在文件真变过时才重读全表（WorkBuddy 的 mtime 失效预算
+/// 同思路；WAL 写入只动 -wal 的 mtime，键取两者较新值）。
+static ANTIGRAVITY_SUMMARY_CACHE: OnceLock<
+    Mutex<HashMap<String, (u64, AntigravityTailSummary, AntigravityUsageSummary)>>,
+> = OnceLock::new();
+
+fn antigravity_db_freshness_ms(db_path: &Path) -> u64 {
+    let wal_path = db_path.with_extension("db-wal");
+    [db_path, &wal_path]
+        .iter()
+        .filter_map(|path| fs::metadata(path).ok())
+        .filter_map(|meta| meta.modified().ok())
+        .filter_map(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .max()
+        .unwrap_or(0)
+}
+
+/// 带缓存的会话摘要：文件没变（db 与 -wal 的 mtime 都没动）直接回克隆。
+fn antigravity_cached_summary(
+    db_path: &Path,
+) -> Option<(AntigravityTailSummary, AntigravityUsageSummary)> {
+    let cache = ANTIGRAVITY_SUMMARY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = path_to_string(db_path);
+    let freshness = antigravity_db_freshness_ms(db_path);
+    if let Ok(guard) = cache.lock() {
+        if let Some((seen_freshness, tail, usage)) = guard.get(&key) {
+            if *seen_freshness == freshness {
+                return Some((tail.clone(), usage.clone()));
+            }
+        }
+    }
+    let connection = open_readonly_sqlite(db_path, ANTIGRAVITY_SQLITE_BUSY_TIMEOUT_MS)?;
+    let summary = antigravity_summarize_conversation(&connection)?;
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(key, (freshness, summary.0.clone(), summary.1.clone()));
+    }
+    Some(summary)
+}
+
+fn antigravity_cached_summary_for_id(
+    conversation_id: &str,
+) -> Option<(AntigravityTailSummary, AntigravityUsageSummary)> {
+    let db_path = antigravity_conversation_db_path(conversation_id).filter(|path| path.exists())?;
+    antigravity_cached_summary(&db_path)
+}
+
 /// 尾部采样 + 全量计数：一次顺序读 steps 表。
 /// 预览文本只看最后 ANTIGRAVITY_TAIL_STEP_ROWS 行；计数与 token 走全表
 /// （step_payload 是行内小 blob，全表顺序读与 WorkBuddy 全量读 JSONL 同口径）。
@@ -16038,9 +16115,14 @@ fn antigravity_summarize_conversation(
         std::collections::VecDeque::with_capacity(ANTIGRAVITY_TAIL_STEP_ROWS);
     let mut usage = AntigravityUsageSummary::default();
     let mut tool_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-    while let Some(row) = rows.next().ok()? {
-        let step_type: i64 = row.get(0).ok()?;
-        let payload: Vec<u8> = row.get(1).ok()?;
+    while let Some(row) = rows.next().ok().flatten() {
+        // 行级读错（NULL/类型不符）跳过该行：按行降级，不把整个会话的摘要清掉。
+        let Ok(step_type) = row.get::<_, i64>(0) else {
+            continue;
+        };
+        let Ok(payload) = row.get::<_, Vec<u8>>(1) else {
+            continue;
+        };
         let parsed = antigravity_parse_step_payload(&payload);
         match step_type {
             14 => {
@@ -16169,10 +16251,8 @@ fn scan_antigravity_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -
     let candidate_rows = antigravity_candidate_rows(&connection, options, scan_time_ms);
     let mut sessions = Vec::new();
     for row in &candidate_rows {
-        let (tail_summary, usage_summary) =
-            antigravity_open_conversation_db(&row.conversation_id)
-                .and_then(|connection| antigravity_summarize_conversation(&connection))
-                .unwrap_or_default();
+        let (tail_summary, usage_summary) = antigravity_cached_summary_for_id(&row.conversation_id)
+            .unwrap_or_default();
         let usage = antigravity_usage_to_session_usage(&usage_summary);
         if let Some(session) =
             read_antigravity_session_row(row, tail_summary, usage, scan_time_ms, options)
@@ -16314,9 +16394,8 @@ fn lookup_antigravity_session_by_key(scan_time_ms: u64, key: &str) -> Option<Age
             antigravity_summary_row_from_sql,
         )
         .ok()?;
-    let (tail_summary, usage_summary) = antigravity_open_conversation_db(&row.conversation_id)
-        .and_then(|connection| antigravity_summarize_conversation(&connection))
-        .unwrap_or_default();
+    let (tail_summary, usage_summary) =
+        antigravity_cached_summary_for_id(&row.conversation_id).unwrap_or_default();
     read_antigravity_session_row(
         &row,
         tail_summary,
@@ -16328,8 +16407,7 @@ fn lookup_antigravity_session_by_key(scan_time_ms: u64, key: &str) -> Option<Age
 
 /// 悬停懒加载：从 conversations 库直接出用量与工具计数（不落 JSONL 缓存体系）。
 fn antigravity_usage_detail(conversation_id: &str) -> SessionUsageDetail {
-    let detail = antigravity_open_conversation_db(conversation_id)
-        .and_then(|connection| antigravity_summarize_conversation(&connection))
+    let detail = antigravity_cached_summary_for_id(conversation_id)
         .map(|(_, usage)| SessionUsageDetail {
             usage: antigravity_usage_to_session_usage(&usage),
             top_tools: usage
@@ -26850,9 +26928,7 @@ node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
             title: "V27 审查".to_string(),
             workspace_path: Some("f:/AiProject/adt-scene-agent".to_string()),
             run_status: run_status.to_string(),
-            killed: false,
             last_modified_ms: 0,
-            step_count: 10,
         }
     }
 
@@ -26970,7 +27046,6 @@ node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
             rows[0].workspace_path.as_deref(),
             Some("f:/AiProject/adt-scene-agent")
         );
-        assert!(!rows[0].killed);
     }
 
     #[test]

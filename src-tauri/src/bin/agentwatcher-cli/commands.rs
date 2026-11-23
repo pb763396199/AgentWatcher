@@ -43,7 +43,7 @@ fn scan_options(
         include_open_code: None,
         include_zcode: None,
         include_workbuddy: None,
-include_antigravity: None,
+        include_antigravity: None,
         workspace_path_blacklist: None,
     };
     if !provider.is_empty() {
@@ -59,7 +59,7 @@ include_antigravity: None,
         options.include_open_code = picks("opencode");
         options.include_zcode = picks("zcode");
         options.include_workbuddy = picks("workbuddy");
-options.include_antigravity = picks("antigravity");
+        options.include_antigravity = picks("antigravity");
     }
     options
 }
@@ -251,7 +251,7 @@ fn find_session(id: &str) -> Option<AgentSession> {
                 include_open_code: Some(provider == "opencode"),
                 include_zcode: Some(provider == "zcode"),
                 include_workbuddy: Some(provider == "workbuddy"),
-include_antigravity: Some(provider == "antigravity"),
+                include_antigravity: Some(provider == "antigravity"),
                 ..scan_options(&[], None, None, false, false)
             }))
             .into_iter()
@@ -336,7 +336,7 @@ pub fn session_show(id: &str, content: bool) {
 
 fn content_block_for(session: &AgentSession) -> serde_json::Value {
     let provider = session.provider.as_str();
-    if provider == "opencode" || provider == "zcode" {
+    if provider == "opencode" || provider == "zcode" || provider == "antigravity" {
         let request = handoff_request_for(session);
         return match prepare_handoff_source_context_blocking(request) {
             Ok(context) => serde_json::to_value(&context).expect("context always serializes"),
