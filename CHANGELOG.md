@@ -1,6 +1,6 @@
 # Changelog
 
-## 未发布
+## v0.1.12 - 2026-11-23
 
 - 新增第 8 个会话 provider `antigravity`（徽标 AG）：接入 Google Antigravity 桌面端本机数据（`~/.gemini/antigravity`：`conversation_summaries.db` 会话清单 + `conversations/<会话id>.db` 正文）。正文 `steps.step_payload` 是无 schema 的 protobuf，宿主用自研裸 wire-format 遍历器按字段号取值（不引 schema 依赖，字段错位时该项降级为 null 不崩）：状态卡片（waiting=尾部 `ask_question` 未闭合、running=清单 `CASCADE_RUN_STATUS_RUNNING/BUSY/CANCELING` 且内容时间戳 10 分钟内——状态列会滞留，429 停掉的会话实测仍标 RUNNING，超窗按 idle）、悬浮预览（用户/AI 正文）、用量（轮次/模型调用/工具调用全量计数 + token 桶累加 + topTools）、`get_session_usage_detail` 懒加载。官方无会话级深链（`antigravity://` 只用于登录回调），点击返回明确提示（ZCode 同款口径）；接续照 ZCode 强口径导出可读 Markdown 到 `handoff-sources\antigravity\`（正文库是 protobuf 二进制不能直读）；打包带 conversations 库原件与清单行 JSON。CLI：`session list/show/usage` 同步支持（`--provider antigravity`、`antigravity:<会话id>`），技能分发宿主表新增 `~/.gemini/config/skills`。跳过 `killed=1` 与 `parent_conversation_id` 非空的子会话；未装 Antigravity 的机器零工作。
 - 下线 GUI 的工作流总控入口（用户拍板：本阶段以 CLI 跑通闭环为主线，UI 不再做工作流迭代）：移除标题栏「工作流总控」按钮、只读诊断窗（`ui/index.html`）与 `workflow_snapshot` / `workflow_human_action` 两个 tauri command 及其注册；`test:tauri:flow -- workflow` 真实桌面流程同步删除。workflow 服务与全部 CLI 命令不受影响，需要 UI 时从 git 历史恢复。
@@ -49,6 +49,13 @@
 - 技能分发补 WorkBuddy 宿主：`skill.rs` 的候选目录表加入 `~/.workbuddy/skills`，此前只覆盖 ZCode / Claude Code / Codex / 通用 agents / OpenCode，WorkBuddy 的全局技能目录一直没被写入过。内嵌技能文档的 provider 清单与归档口径同时补上 WorkBuddy（`deleted_at` 软删即其归档口径），`--include-archived` 帮助文本同步。
 
 验证：`cargo test --manifest-path src-tauri/Cargo.toml`（lib 148 + CLI 分类 11 + 契约 10）、`npm run test:tauri:flow -- workbuddy-session`、`npx tauri build --no-bundle` 均通过。发布包名与 SHA256 待发版时补。
+
+
+发布包：`AgentWatcher-v0.1.12-windows-x64.zip`
+
+SHA256：`61D942FF1901C649CF50817093C0A3E92ECBBFDD062CA27FB01F8B88B5452663`
+
+验证：`cargo test --manifest-path src-tauri/Cargo.toml`（lib 196 + CLI 单元 8 + 契约 14 + 分类学 21 全通过，含 Antigravity 16 项单测与 lookup 列序回归锁）、`npm run test:tauri:flow -- antigravity-session`（真实 Tauri 壳：真实卡片/徽标 AG/点击明确提示，合入 dev 后复跑通过）、`npm run test:tauri:smoke`、Bridge 语法与 handoff 路由测试、`git diff --check`、`npm run package:exe`；最终 VSIX 重复安装两次仅稳定 ID `agentwatcher.agentwatcher-vscode-session-bridge@0.1.12`（无任何 safe*）；发布目录 EXE 独立启动实证；CLI `session show antigravity:<id>` 真实数据端到端通过。已知限制：Antigravity 的 token 桶语义按字段位置推断（f9 四桶），模型名透出内部枚举原值；等回复（waiting）判定按 protobuf 结构推断，真实 ask_question 样本待日常使用观察；四组合（中英文×明暗）人工界面核验经用户授权跳过（自动流程覆盖中文+默认主题）。
 
 ## v0.1.11 - 2026-11-06
 
