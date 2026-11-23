@@ -15865,6 +15865,11 @@ fn antigravity_parse_step_payload(payload: &[u8]) -> AntigravityStepTail {
 
 // ---- 清单层 ----
 
+/// 清单表共享列清单：候选查询与按 ID 定向查询都用它过同一个行映射器，
+/// 列序错位会让定向查找静默落空（评审黑盒实证过一次）。
+const ANTIGRAVITY_SUMMARY_COLUMNS: &str =
+    "conversation_id, title, workspace_uris, status, last_modified_time";
+
 #[derive(Debug, Clone)]
 struct AntigravitySummaryRow {
     conversation_id: String,
@@ -15992,9 +15997,8 @@ fn antigravity_candidate_rows(
         format!("where {} ", where_clauses.join(" and "))
     };
     let sql = format!(
-        "select conversation_id, title, workspace_uris, status, last_modified_time \
-         from conversation_summaries {}order by last_modified_time desc limit ?1",
-        where_sql
+        "select {} from conversation_summaries {}order by last_modified_time desc limit ?1",
+        ANTIGRAVITY_SUMMARY_COLUMNS, where_sql
     );
     let mut statement = match connection.prepare(&sql) {
         Ok(statement) => statement,
@@ -16382,11 +16386,10 @@ fn lookup_antigravity_session_by_key(scan_time_ms: u64, key: &str) -> Option<Age
     let db_path = antigravity_summaries_db_path().filter(|path| path.exists())?;
     let connection = open_readonly_sqlite(&db_path, ANTIGRAVITY_SQLITE_BUSY_TIMEOUT_MS)?;
     let mut statement = connection
-        .prepare(
-            "select conversation_id, title, workspace_uris, status, killed, last_modified_time, \
-                    step_count \
-             from conversation_summaries where conversation_id = ?1",
-        )
+        .prepare(&format!(
+            "select {} from conversation_summaries where conversation_id = ?1",
+            ANTIGRAVITY_SUMMARY_COLUMNS
+        ))
         .ok()?;
     let row = statement
         .query_row(
@@ -27044,6 +27047,37 @@ node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
         assert_eq!(ids, vec!["alive-2", "alive-1"]);
         assert_eq!(
             rows[0].workspace_path.as_deref(),
+            Some("f:/AiProject/adt-scene-agent")
+        );
+    }
+
+    #[test]
+    fn antigravity_lookup_select_matches_shared_mapper() {
+        // 回归锁：定向查询与候选查询共享行映射器，列清单错位会让
+        // session show 对窗口外会话静默报 not found（评审黑盒实证过）。
+        let connection = antigravity_memory_summaries();
+        agy_insert_summary(
+            &connection,
+            "lookup-1",
+            "CASCADE_RUN_STATUS_IDLE",
+            0,
+            "",
+            "2026-11-23 01:00:00.0000000+00:00",
+        );
+        let lookup_sql = format!(
+            "select {} from conversation_summaries where conversation_id = ?1",
+            ANTIGRAVITY_SUMMARY_COLUMNS
+        );
+        let row = connection
+            .prepare(&lookup_sql)
+            .unwrap()
+            .query_row(rusqlite::params!["lookup-1"], antigravity_summary_row_from_sql)
+            .unwrap();
+        assert_eq!(row.conversation_id, "lookup-1");
+        assert_eq!(row.run_status, "CASCADE_RUN_STATUS_IDLE");
+        assert!(row.last_modified_ms > 0);
+        assert_eq!(
+            row.workspace_path.as_deref(),
             Some("f:/AiProject/adt-scene-agent")
         );
     }
