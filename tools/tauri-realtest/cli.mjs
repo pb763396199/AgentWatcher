@@ -69,6 +69,12 @@ const aliasToFlow = new Map([
   ['wb', 'workbuddy-session'],
   ['workbuddy会话', 'workbuddy-session'],
   ['workbuddy卡片', 'workbuddy-session'],
+  ['antigravity-session', 'antigravity-session'],
+  ['antigravity-card', 'antigravity-session'],
+  ['antigravity', 'antigravity-session'],
+  ['agy', 'antigravity-session'],
+  ['antigravity会话', 'antigravity-session'],
+  ['antigravity卡片', 'antigravity-session'],
   ['settings-performance', 'settings-performance'],
   ['settings-perf', 'settings-performance'],
   ['设置性能', 'settings-performance'],
@@ -97,6 +103,7 @@ const flowDisplay = {
   'zcode-session': 'ZCode 会话卡片流程',
   'zcode-handoff-context': 'ZCode 接续上下文流程',
   'workbuddy-session': 'WorkBuddy 会话卡片流程',
+  'antigravity-session': 'Antigravity 会话卡片流程',
   'settings-performance': '设置切换性能流程',
   'session-package': '会话打包跨电脑交接流程',
   filtering: '主面板筛选流程',
@@ -209,6 +216,8 @@ try {
       await runStep('点击真实 ZCode 会话卡片（TUI 恢复）', () => runZcodeSessionFlow());
     } else if (flow === 'workbuddy-session') {
       await runStep('点击真实 WorkBuddy 会话卡片（深链跳转）', () => runWorkBuddySessionFlow());
+    } else if (flow === 'antigravity-session') {
+      await runStep('点击真实 Antigravity 会话卡片（明确提示不支持跳转）', () => runAntigravitySessionFlow());
     } else if (flow === 'zcode-handoff-context') {
       await runStep('验证 ZCode 接续 Prompt 可读取来源文件', () => runZcodeHandoffContextFlow());
     } else if (flow === 'opencode-handoff-context') {
@@ -1218,6 +1227,65 @@ async function runWorkBuddySessionFlow() {
 
   return {
     点击目标: '.lane .session-card[data-provider="workbuddy"]',
+    卡片: cardInfo,
+    徽标: badge,
+    Toast: toastText,
+    截图: screenshot,
+  };
+}
+
+async function runAntigravitySessionFlow() {
+  const page = await getMainPage();
+  await assertTauriPage(page, '主窗口');
+
+  const includeAntigravity = page.locator('#includeAntigravity');
+  if (await includeAntigravity.count()) {
+    const enabled = await includeAntigravity.isChecked().catch(() => true);
+    if (!enabled) {
+      await page.locator('#settingsToggle').click();
+      await includeAntigravity.check();
+      await page.waitForTimeout(500);
+    }
+  }
+
+  await page.waitForFunction(() => {
+    return Array.from(document.querySelectorAll('.lane .session-card'))
+      .some(card => card.dataset.provider === 'antigravity');
+  }, null, { timeout: 30000 });
+
+  const card = page.locator('.lane .session-card[data-provider="antigravity"]').first();
+  await card.scrollIntoViewIfNeeded();
+  const cardInfo = await card.evaluate(element => ({
+    sessionId: element.dataset.sessionId || '',
+    workspace: element.dataset.workspaceLabel || element.dataset.workspace || '',
+    workspacePath: element.dataset.workspacePath || element.dataset.open || '',
+    status: element.dataset.status || '',
+    title: element.dataset.sessionTitle || element.querySelector('.session-title')?.textContent || '',
+    文本片段: element.innerText.slice(0, 180),
+  }));
+  const badge = await card.locator('.provider').first().textContent().catch(() => '');
+  if (!/AG/i.test(badge || '')) {
+    throw new Error(`Antigravity 卡片徽标异常：${badge}`);
+  }
+
+  await page.locator('#toast').evaluate(element => {
+    element.textContent = '';
+    element.classList.remove('show', 'error');
+  });
+  await card.click();
+  // 官方无会话级深链：点击必须返回明确的「暂不支持」提示（不许静默）
+  await page.waitForFunction(() => {
+    const text = document.querySelector('#toast')?.textContent || '';
+    return text && !/正在打开会话|Opening session/i.test(text);
+  }, null, { timeout: 30000 });
+  const toastText = await page.locator('#toast').textContent().catch(() => '');
+  if (!/Antigravity session jump is not supported yet/i.test(toastText)) {
+    throw new Error(`Antigravity 卡片点击未返回「跳转暂不支持」提示：${toastText}`);
+  }
+  const screenshot = await saveScreenshot(page, 'antigravity-card-after-click.png');
+
+  return {
+    点击目标: '.lane .session-card[data-provider="antigravity"]',
     卡片: cardInfo,
     徽标: badge,
     Toast: toastText,

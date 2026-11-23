@@ -8,6 +8,7 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - OpenCode 会话
 - ZCode 会话
 - WorkBuddy 桌面会话
+- Antigravity 桌面会话
 - 会话用量展示（实验）：卡片紧凑用量行与悬浮预览「用量」区块，token/轮次/工具/模型/时长随扫描源能力而定，缺项显示 —。
 
 当前发布版本：v0.1.11。仓库使用 Tauri 2 作为桌面应用壳，前端入口 [ui/index.html](ui/index.html) 是唯一 UI 源文件。AgentWatcher 主仓库保持零插件可启动、构建和测试，外部插件通过独立 `*.awplugin` 描述文件发现和启用。
@@ -45,16 +46,17 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - 接入 OpenCode 和 Copilot CLI 独立会话来源，provider 筛选、状态卡片和数量配额彼此独立。
 - 接入 ZCode 会话来源（本机 `~/.zcode/cli/db/db.sqlite`）：状态卡片、悬浮预览、接续上下文导出可用；点击跳转暂不实现（ZCode 官方无会话级深链，桌面发行版不含 TUI 运行时，点击返回明确提示）。
 - 接入 WorkBuddy 桌面会话来源（本机 `~/.workbuddy`：`workbuddy.db` 元数据 + `projects` 正文 JSONL）：状态卡片、悬浮预览、用量（token/上下文占用/credits）可用；点击经 `workbuddy://chat/<会话id>` 深链跳回 WorkBuddy 对应会话。playground 会话默认纳入，可在设置里关闭。
+- 接入 Antigravity（Google 智能体开发平台）会话来源（本机 `~/.gemini/antigravity`：`conversation_summaries.db` 清单 + `conversations/<会话id>.db` 正文，protobuf payload 裸解析）：状态卡片、悬浮预览、用量（轮次/工具调用/token 桶）可用；官方无会话级深链，点击返回明确提示，接续导出与打包可用。
 - 扫描上限按 provider 分别计算，避免高数量来源挤掉其他 provider。
 - 支持工作区路径黑名单，默认过滤 `%TEMP%` 下的临时测试会话。
 
 ## 技术方向
 
-使用 Tauri 2 实现轻量桌面壳，前端由 [ui/index.html](ui/index.html) 提供。宿主统一聚合 Copilot、Copilot CLI、Claude Code、Codex、OpenCode、ZCode 和 WorkBuddy 会话；VS Code 内会话通过 Bridge 精确跳转，ZCode 会话支持扫描、预览与接续上下文导出（跳转暂不实现），WorkBuddy 会话经其注册的 `workbuddy://` 协议跳转，外部插件通过描述文件贡献工作流和设置动作。
+使用 Tauri 2 实现轻量桌面壳，前端由 [ui/index.html](ui/index.html) 提供。宿主统一聚合 Copilot、Copilot CLI、Claude Code、Codex、OpenCode、ZCode、WorkBuddy 和 Antigravity 会话；VS Code 内会话通过 Bridge 精确跳转，ZCode 会话支持扫描、预览与接续上下文导出（跳转暂不实现），WorkBuddy 会话经其注册的 `workbuddy://` 协议跳转，外部插件通过描述文件贡献工作流和设置动作。
 
 ## 功能特性
 
-- **实时监控**：自动扫描 Copilot、Copilot CLI、Claude Code、Codex、OpenCode、ZCode 和 WorkBuddy 的 workspace sessions
+- **实时监控**：自动扫描 Copilot、Copilot CLI、Claude Code、Codex、OpenCode、ZCode、WorkBuddy 和 Antigravity 的 workspace sessions
 - **状态分类**：按 waiting（待回复）、running（运行中）、idle（闲置）分类显示
 - **一键跳转**：点击卡片直接打开对应的 VS Code session
 - **悬浮预览**：悬停卡片右下角展开按钮显示最近用户输入和 AI 正文摘要，预览窗口可 resize 并记忆尺寸
@@ -64,6 +66,7 @@ AgentWatcher 是一个 Windows 桌面悬浮小工具，目标是像输入法候�
 - **OpenCode 会话接入**：读取本机 OpenCode 数据库，支持状态、预览、打开和 handoff
 - **ZCode 会话接入**：读取本机 ZCode 会话库，支持状态、预览和作为接续来源导出上下文（跳转暂不实现）
 - **WorkBuddy 会话接入**：读取本机 WorkBuddy 桌面端数据（SQLite 元数据 + 正文 JSONL），支持状态卡片、悬浮预览、用量展示（token 求和、上下文占用、credits）、深链跳转和会话打包交接，也可作为接续来源（不作接续目标）
+- **Antigravity 会话接入**：读取本机 Antigravity 桌面端数据（SQLite 清单 + conversations 库 protobuf 正文），支持状态卡片、悬浮预览、用量展示（轮次/工具调用/token）、接续来源导出（Markdown）和会话打包交接；官方无会话级深链，点击返回明确提示
 - **AI 命令行**：随发布包附带 `agentwatcher-cli.exe`，AI 助手和终端用户不启动 GUI 即可查询会话、用量并导出接续上下文，输出机器可解析的 JSON 信封（详见下文「AI 命令行」一节）
 - **独立 Copilot CLI provider**：独立筛选、配额和标识，不与 VS Code Copilot 合并
 - **VS Code 连接组件**：首次启动自动安装连接组件，实现精确 session 跳转、handoff 路由和 ack 成功确认
@@ -141,7 +144,7 @@ npm run dev:ui
 | `agentwatcher-cli session show <id> [--content]` | 查看单个会话详情（同悬浮预览级）；`--content` 才带正文内容 |
 | `agentwatcher-cli session usage <id>` | 查看用量明细：token、上下文、轮次、工具调用、模型、成本、topTools |
 | `agentwatcher-cli handoff export <id>` | 导出源会话上下文 Markdown，落盘位置与 GUI 接续面板一致 |
-| `agentwatcher-cli skill install [--dir <目录>]` | 把 AgentWatcher 用法技能装进本机 AI 宿主（ZCode / Claude Code / Codex / 通用 agents 目录 / OpenCode / WorkBuddy，只装已安装的宿主），AI 装完即会使用本 CLI；重复执行覆盖升级 |
+| `agentwatcher-cli skill install [--dir <目录>]` | 把 AgentWatcher 用法技能装进本机 AI 宿主（ZCode / Claude Code / Codex / 通用 agents 目录 / OpenCode / WorkBuddy / Antigravity，只装已安装的宿主），AI 装完即会使用本 CLI；重复执行覆盖升级 |
 | `agentwatcher-cli skill list [--dir <目录>]` | 查看各宿主技能目录的安装状态 |
 | `agentwatcher-cli skill remove [--dir <目录>]` | 移除已装的用法技能 |
 
@@ -175,7 +178,7 @@ CLI 进程不启动任何常驻后台服务：Codex 会话走本地会话文件�
 
 ### 给 AI 宿主装用法技能
 
-技能文档内嵌在 `agentwatcher-cli.exe` 里，`skill install` 会把它写到本机已安装宿主的技能目录（`~/.zcode/skills`、`~/.claude/skills`、`~/.agents/skills`、`~/.codex/skills`、`~/.config/opencode/skill`、`~/.workbuddy/skills`，目录存在才装）。装完后 ZCode、Claude Code、WorkBuddy 等宿主里的 AI 助手会自动知道怎么用这套 CLI。升级 AgentWatcher 后重跑一次 `skill install` 即可更新技能内容；`--dir <目录>` 可装到任意位置。
+技能文档内嵌在 `agentwatcher-cli.exe` 里，`skill install` 会把它写到本机已安装宿主的技能目录（`~/.zcode/skills`、`~/.claude/skills`、`~/.agents/skills`、`~/.codex/skills`、`~/.config/opencode/skill`、`~/.workbuddy/skills`、`~/.gemini/config/skills`（Antigravity），目录存在才装）。装完后 ZCode、Claude Code、WorkBuddy 等宿主里的 AI 助手会自动知道怎么用这套 CLI。升级 AgentWatcher 后重跑一次 `skill install` 即可更新技能内容；`--dir <目录>` 可装到任意位置。
 
 ## VS Code 连接组件
 
