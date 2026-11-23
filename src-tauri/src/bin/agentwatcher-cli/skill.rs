@@ -63,6 +63,8 @@ fn candidate_roots() -> Vec<(&'static str, PathBuf)> {
         ("workbuddy", home.join(".workbuddy").join("skills")),
         ("copilot", home.join(".copilot").join("skills")),
         ("opencode", home.join(".config").join("opencode").join("skill")),
+        // Antigravity 的用户级技能目录（~/.gemini/config/skills，与 Gemini CLI 可能共享）。
+        ("antigravity", home.join(".gemini").join("config").join("skills")),
     ]
 }
 

@@ -165,7 +165,7 @@ pub enum ImagegenAction {
 pub enum SuggestAction {
     /// 生成建议并输出结构化结果；会真实调用该 agent 的模型
     Generate {
-        /// 会话 ID，支持 codex:<uuid>、codex://threads/<uuid>、zcode:<id>、workbuddy:<id>、opencode:<id>
+        /// 会话 ID，支持 codex:<uuid>、codex://threads/<uuid>、zcode:<id>、workbuddy:<id>、opencode:<id>、antigravity:<id>
         id: String,
         /// 带着上一条建议要求避开，用于「换一个」
         #[arg(long = "avoid")]
@@ -191,7 +191,7 @@ pub enum SuggestAction {
     },
     /// 只组装上下文与提示词，不调用模型、不写盘，用于核对 v5 prompt
     Prompt {
-        /// 会话 ID，支持 codex:<uuid>、codex://threads/<uuid>、zcode:<id>、workbuddy:<id>、opencode:<id>
+        /// 会话 ID，支持 codex:<uuid>、codex://threads/<uuid>、zcode:<id>、workbuddy:<id>、opencode:<id>、antigravity:<id>
         id: String,
     },
 }
@@ -200,7 +200,7 @@ pub enum SuggestAction {
 pub enum SessionAction {
     /// 列出会话元数据：状态、标题、工作区、provider、时间
     List {
-        /// 只看这些 provider：copilot、copilot-cli、claude、codex、opencode、zcode、workbuddy，可重复给
+        /// 只看这些 provider：copilot、copilot-cli、claude、codex、opencode、zcode、workbuddy、antigravity，可重复给
         #[arg(long = "provider")]
         provider: Vec<String>,
         /// 只看这个状态：waiting、running、idle

@@ -43,6 +43,7 @@ fn scan_options(
         include_open_code: None,
         include_zcode: None,
         include_workbuddy: None,
+include_antigravity: None,
         workspace_path_blacklist: None,
     };
     if !provider.is_empty() {
@@ -58,6 +59,7 @@ fn scan_options(
         options.include_open_code = picks("opencode");
         options.include_zcode = picks("zcode");
         options.include_workbuddy = picks("workbuddy");
+options.include_antigravity = picks("antigravity");
     }
     options
 }
@@ -249,6 +251,7 @@ fn find_session(id: &str) -> Option<AgentSession> {
                 include_open_code: Some(provider == "opencode"),
                 include_zcode: Some(provider == "zcode"),
                 include_workbuddy: Some(provider == "workbuddy"),
+include_antigravity: Some(provider == "antigravity"),
                 ..scan_options(&[], None, None, false, false)
             }))
             .into_iter()
@@ -277,6 +280,7 @@ const KNOWN_PROVIDERS: &[&str] = &[
     "opencode",
     "zcode",
     "workbuddy",
+    "antigravity",
 ];
 
 fn handoff_request_for(session: &AgentSession) -> HandoffSourceContextRequest {

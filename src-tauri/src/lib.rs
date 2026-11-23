@@ -815,6 +815,7 @@ pub struct ScanOptions {
     pub include_zcode: Option<bool>,
     pub include_workbuddy: Option<bool>,
     pub include_playground: Option<bool>,
+pub include_antigravity: Option<bool>,
     pub workspace_path_blacklist: Option<Vec<String>>,
 }
 
@@ -831,6 +832,7 @@ struct ResolvedScanOptions {
     include_zcode: bool,
     include_workbuddy: bool,
     include_playground: bool,
+include_antigravity: bool,
     workspace_path_blacklist: Vec<String>,
 }
 
@@ -844,6 +846,7 @@ struct PerformanceProviderCounts {
     opencode: usize,
     zcode: usize,
     workbuddy: usize,
+antigravity: usize,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -1236,7 +1239,13 @@ fn session_watch_roots() -> Vec<PathBuf> {
         push_existing_path(&mut roots, user_profile_path.join(".workbuddy").join("projects"));
         let workbuddy_db = user_profile_path.join(".workbuddy").join("workbuddy.db");
         push_existing_path(&mut roots, workbuddy_db.clone());
-        push_existing_path(&mut roots, workbuddy_db.with_extension("db-wal"));
+        // Antigravity：挂 conversations（正文库）与清单库/-wal；不挂 ~/.gemini/antigravity
+        // 根——根下有 daemon/hub_*.json、presence/ 秒级状态文件，会把防抖刷爆。
+        let antigravity_home = user_profile_path.join(".gemini").join("antigravity");
+        push_existing_path(&mut roots, antigravity_home.join("conversations"));
+        let antigravity_summaries = antigravity_home.join("conversation_summaries.db");
+        push_existing_path(&mut roots, antigravity_summaries.clone());
+        push_existing_path(&mut roots, antigravity_summaries.with_extension("db-wal"));
         for codex_path in [
             codex_home.join("sessions"),
             codex_home.join("archived_sessions"),
@@ -1451,6 +1460,9 @@ pub fn scan_sessions_blocking(options: Option<ScanOptions>) -> Vec<AgentSession>
     if options.include_zcode {
         sessions.extend(scan_zcode_sessions(scan_time_ms, &options));
     }
+    if options.include_antigravity {
+        sessions.extend(scan_antigravity_sessions(scan_time_ms, &options));
+    }
     if options.include_workbuddy {
         sessions.extend(scan_workbuddy_sessions(scan_time_ms, &options));
     }
@@ -1480,7 +1492,7 @@ pub fn lookup_session_full_history(id: &str) -> Option<AgentSession> {
         return lookup_session_via_wide_scan(scan_time_ms, trimmed, "copilot-cli");
     }
     for provider in [
-        "zcode", "opencode", "workbuddy", "codex", "copilot", "claude",
+        "zcode", "opencode", "workbuddy", "antigravity", "codex", "copilot", "claude",
     ] {
         let Some(key) = trimmed.strip_prefix(&format!("{provider}:")) else {
             continue;
@@ -1489,6 +1501,7 @@ pub fn lookup_session_full_history(id: &str) -> Option<AgentSession> {
             "zcode" => lookup_zcode_session_by_key(scan_time_ms, key),
             "opencode" => lookup_opencode_session_by_key(scan_time_ms, key),
             "workbuddy" => lookup_workbuddy_session_by_key(scan_time_ms, key),
+            "antigravity" => lookup_antigravity_session_by_key(scan_time_ms, key),
             "codex" => lookup_codex_session_by_key(scan_time_ms, key),
             other => lookup_session_via_wide_scan(scan_time_ms, trimmed, other),
         };
@@ -1509,6 +1522,7 @@ fn full_history_scan_options() -> ScanOptions {
         include_open_code: None,
         include_zcode: None,
         include_workbuddy: None,
+        include_antigravity: None,
         workspace_path_blacklist: None,
     }
 }
@@ -3312,6 +3326,9 @@ pub fn session_usage_detail(id: String) -> SessionUsageDetail {
     if let Some(session_id) = trimmed.strip_prefix("opencode:") {
         return opencode_usage_detail(session_id);
     }
+    if let Some(session_id) = trimmed.strip_prefix("antigravity:") {
+        return antigravity_usage_detail(session_id);
+    }
     if let Some(session_id) = trimmed.strip_prefix("workbuddy:") {
         let mut detail = jsonl_usage_detail_for_session(trimmed).map_or_else(
             || SessionUsageDetail { usage: None, top_tools: Vec::new() },
@@ -3852,7 +3869,7 @@ fn update_performance_scan_snapshot(sessions: &[AgentSession], duration: Duratio
             "codex" => provider_counts.codex += 1,
             "opencode" => provider_counts.opencode += 1,
             "zcode" => provider_counts.zcode += 1,
-            "workbuddy" => provider_counts.workbuddy += 1,
+            "antigravity" => provider_counts.antigravity += 1,
             _ => {}
         }
     }
@@ -4250,6 +4267,9 @@ fn open_session(session: OpenSessionRequest) -> Result<(), String> {
     if clean_option(session.provider.as_deref()) == Some("zcode") {
         return open_zcode_session(&session);
     }
+    if clean_option(session.provider.as_deref()) == Some("antigravity") {
+        return open_antigravity_session(&session);
+    }
     if clean_option(session.provider.as_deref()) == Some("workbuddy") {
         return open_workbuddy_session(&session);
     }
@@ -4316,6 +4336,9 @@ pub fn prepare_handoff_source_context_blocking(
     let provider = clean_option(request.provider.as_deref()).unwrap_or("unknown");
     if provider == "opencode" {
         return prepare_opencode_handoff_source_context(&request);
+    }
+    if provider == "antigravity" {
+        return prepare_antigravity_handoff_source_context(&request);
     }
     if provider == "zcode" {
         return prepare_zcode_handoff_source_context(&request);
@@ -4578,6 +4601,7 @@ fn collect_session_package_entries(
             sqlite_session_package_entries("zcode", &db_path, &key)
         }
         "workbuddy" => workbuddy_package_entries(request),
+        "antigravity" => antigravity_package_entries(request),
         other => Err(format!("Unsupported session package provider: {}", other)),
     }
 }
@@ -13029,6 +13053,7 @@ fn resolve_scan_options(options: Option<ScanOptions>) -> ResolvedScanOptions {
         include_open_code: None,
         include_zcode: None,
         include_workbuddy: None,
+        include_antigravity: None,
         include_playground: None,
         workspace_path_blacklist: None,
     });
@@ -13066,6 +13091,7 @@ fn resolve_scan_options(options: Option<ScanOptions>) -> ResolvedScanOptions {
         include_zcode: options.include_zcode.unwrap_or(true),
         include_workbuddy: options.include_workbuddy.unwrap_or(true),
         include_playground: options.include_playground.unwrap_or(true),
+include_antigravity: options.include_antigravity.unwrap_or(true),
         workspace_path_blacklist: options
             .workspace_path_blacklist
             .unwrap_or_else(default_workspace_path_blacklist)
@@ -15615,6 +15641,920 @@ fn open_workbuddy_session(session: &OpenSessionRequest) -> Result<(), String> {
             "WorkBuddy session launch failed ({error}): 无法通过 workbuddy:// 协议拉起 \
              WorkBuddy，请确认桌面端已安装并关联了该协议"
         )
+    })
+}
+
+// ---------- Antigravity 桌面端 provider ----------
+// 数据根：`~/.gemini/antigravity`（Gemini 系数据目录；%APPDATA%\Antigravity 只是
+// Electron 壳的浏览器缓存，%LOCALAPPDATA%\antigravity 是安装目录，都没有会话数据）。
+// 清单：`conversation_summaries.db` 的 conversation_summaries 表（标题/工作区/状态列）。
+// 正文：`conversations\<conversation_id>.db` 的 steps 表，step_payload 是无 schema 的
+// protobuf——用裸 wire-format 遍历器按字段号取值，不引 schema 依赖；字段映射的证据
+// 见任务「AgentWatcher-支持-Antigravity-Provider」的设计记录（2026-11-23 本机实测）。
+// 跳转：官方无会话级深链（antigravity:// 只用于 OAuth 回调），返回明确提示。
+
+const ANTIGRAVITY_SQLITE_BUSY_TIMEOUT_MS: u64 = 500;
+/// 单轮候选行上限（与 WORKBUDDY/ZCODE_SESSION_SCAN_LIMIT_MAX 同档；全历史模式放宽）。
+const ANTIGRAVITY_SESSION_SCAN_LIMIT_MAX: usize = 240;
+/// conversations 库尾部采样行数（与 OpenCode 24 行口径一致），只服务预览文本。
+const ANTIGRAVITY_TAIL_STEP_ROWS: usize = 24;
+
+// ---- protobuf wire-format 裸遍历器（纯函数，无 schema 依赖） ----
+// 只做「按字段号取值」这一件事：varint、长度前缀两种线型；跳过 32/64 位固定线型。
+// 长度越界或线型未知时截断剩余字段——上游改字段号时取不到值返回 None，不 panic。
+
+#[derive(Debug, Clone, PartialEq)]
+enum AntigravityWireValue {
+    Varint(u64),
+    Bytes(Vec<u8>),
+}
+
+fn antigravity_wire_read_varint(bytes: &[u8], cursor: &mut usize) -> Option<u64> {
+    let mut value: u64 = 0;
+    let mut shift = 0u32;
+    loop {
+        let byte = *bytes.get(*cursor)?;
+        *cursor += 1;
+        value |= u64::from(byte & 0x7f).checked_shl(shift)?;
+        if byte & 0x80 == 0 {
+            return Some(value);
+        }
+        shift += 7;
+        if shift >= 64 {
+            return None;
+        }
+    }
+}
+
+/// 顺序扫一遍 wire 格式返回 (field, value) 序列；解析异常处截断。
+fn antigravity_wire_fields(bytes: &[u8]) -> Vec<(u32, AntigravityWireValue)> {
+    let mut fields = Vec::new();
+    let mut cursor = 0usize;
+    while cursor < bytes.len() {
+        let Some(tag) = antigravity_wire_read_varint(bytes, &mut cursor) else {
+            break;
+        };
+        let field = u32::try_from(tag >> 3).unwrap_or(0);
+        if field == 0 {
+            break;
+        }
+        match tag & 7 {
+            0 => match antigravity_wire_read_varint(bytes, &mut cursor) {
+                Some(value) => fields.push((field, AntigravityWireValue::Varint(value))),
+                None => break,
+            },
+            2 => {
+                let Some(length) = antigravity_wire_read_varint(bytes, &mut cursor) else {
+                    break;
+                };
+                let Ok(length) = usize::try_from(length) else {
+                    break;
+                };
+                let Some(chunk) = bytes.get(cursor..cursor + length) else {
+                    break;
+                };
+                cursor += length;
+                fields.push((field, AntigravityWireValue::Bytes(chunk.to_vec())));
+            }
+            5 => {
+                cursor += 4;
+            }
+            1 => {
+                cursor += 8;
+            }
+            _ => break,
+        }
+    }
+    fields
+}
+
+fn antigravity_wire_first_bytes(bytes: &[u8], field: u32) -> Option<Vec<u8>> {
+    antigravity_wire_fields(bytes)
+        .into_iter()
+        .find(|(seen_field, _)| *seen_field == field)
+        .and_then(|(_, value)| match value {
+            AntigravityWireValue::Bytes(chunk) => Some(chunk),
+            _ => None,
+        })
+}
+
+fn antigravity_wire_all_bytes(bytes: &[u8], field: u32) -> Vec<Vec<u8>> {
+    antigravity_wire_fields(bytes)
+        .into_iter()
+        .filter(|(seen_field, _)| *seen_field == field)
+        .filter_map(|(_, value)| match value {
+            AntigravityWireValue::Bytes(chunk) => Some(chunk),
+            _ => None,
+        })
+        .collect()
+}
+
+fn antigravity_wire_first_u64(bytes: &[u8], field: u32) -> Option<u64> {
+    antigravity_wire_fields(bytes)
+        .into_iter()
+        .find(|(seen_field, _)| *seen_field == field)
+        .and_then(|(_, value)| match value {
+            AntigravityWireValue::Varint(value) => Some(value),
+            _ => None,
+        })
+}
+
+fn antigravity_wire_first_string(bytes: &[u8], field: u32) -> Option<String> {
+    antigravity_wire_first_bytes(bytes, field).and_then(|chunk| String::from_utf8(chunk).ok())
+}
+
+/// steps 元数据（字段 5）里的时间戳：f1 秒 + f2 纳秒 → 毫秒。
+fn antigravity_step_timestamp_ms(meta: &[u8]) -> u64 {
+    let seconds = antigravity_wire_first_u64(meta, 1).unwrap_or(0);
+    let nanos = antigravity_wire_first_u64(meta, 2).unwrap_or(0);
+    seconds.saturating_mul(1000).saturating_add(nanos / 1_000_000)
+}
+
+// ---- steps 解析：字段号映射见任务设计记录 ----
+// 14 用户轮（正文 f19.f2）、15 模型轮（正文 f20.f3*、工具调用 f20.f7*、用量 f9）、
+// 132 工具调用加结果（调用名 f5.f4.f2）、17 模型报错、101 通知。
+
+#[derive(Debug, Clone, Default)]
+struct AntigravityStepTail {
+    step_type: Option<u64>,
+    user_text: Option<String>,
+    model_text: Option<String>,
+    tool_names: Vec<String>,
+    ask_question_called: bool,
+    content_ms: u64,
+    token_input: Option<u64>,
+    token_output: Option<u64>,
+    token_cached: Option<u64>,
+    token_thoughts: Option<u64>,
+    model_enum: Option<u64>,
+}
+
+fn antigravity_parse_step_payload(payload: &[u8]) -> AntigravityStepTail {
+    let mut tail = AntigravityStepTail {
+        step_type: antigravity_wire_first_u64(payload, 1),
+        ..AntigravityStepTail::default()
+    };
+    if let Some(meta) = antigravity_wire_first_bytes(payload, 5) {
+        tail.content_ms = antigravity_step_timestamp_ms(&meta);
+    }
+    match tail.step_type {
+        Some(14) => {
+            if let Some(user_message) = antigravity_wire_first_bytes(payload, 19) {
+                tail.user_text = antigravity_wire_first_string(&user_message, 2)
+                    .map(|text| text.trim().to_string())
+                    .filter(|text| !text.is_empty());
+            }
+        }
+        Some(15) => {
+            if let Some(content) = antigravity_wire_first_bytes(payload, 20) {
+                let mut parts: Vec<String> = Vec::new();
+                for chunk in antigravity_wire_all_bytes(&content, 3) {
+                    if let Ok(text) = String::from_utf8(chunk) {
+                        let text = text.trim();
+                        if !text.is_empty() {
+                            parts.push(text.to_string());
+                        }
+                    }
+                }
+                if !parts.is_empty() {
+                    tail.model_text = Some(parts.join("\n\n"));
+                }
+                for call in antigravity_wire_all_bytes(&content, 7) {
+                    if let Some(name) = antigravity_wire_first_string(&call, 2) {
+                        let name = name.trim().to_string();
+                        if name.is_empty() {
+                            continue;
+                        }
+                        if name == "ask_question" {
+                            tail.ask_question_called = true;
+                        }
+                        tail.tool_names.push(name);
+                    }
+                }
+            }
+            if let Some(usage) = antigravity_wire_first_bytes(payload, 9) {
+                tail.model_enum = antigravity_wire_first_u64(&usage, 1);
+                tail.token_input = antigravity_wire_first_u64(&usage, 2);
+                tail.token_output = antigravity_wire_first_u64(&usage, 3);
+                tail.token_cached = antigravity_wire_first_u64(&usage, 5);
+                tail.token_thoughts = antigravity_wire_first_u64(&usage, 6);
+            }
+        }
+        Some(132) => {
+            if let Some(meta) = antigravity_wire_first_bytes(payload, 5) {
+                if let Some(call) = antigravity_wire_first_bytes(&meta, 4) {
+                    if let Some(name) = antigravity_wire_first_string(&call, 2) {
+                        let name = name.trim().to_string();
+                        if !name.is_empty() {
+                            tail.tool_names.push(name);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    tail
+}
+
+// ---- 清单层 ----
+
+#[derive(Debug, Clone)]
+struct AntigravitySummaryRow {
+    conversation_id: String,
+    title: String,
+    /// workspace_uris[0] 解码后的盘符路径（f:/x/y 形态，展示时统一转反斜杠）。
+    workspace_path: Option<String>,
+    /// 清单状态列原文（CASCADE_RUN_STATUS_*）。
+    run_status: String,
+    killed: bool,
+    /// 清单 last_modified_time（UTC 文本）解析出的毫秒，正文库缺失时的兜底。
+    last_modified_ms: u64,
+    step_count: u64,
+}
+
+fn antigravity_home_dir() -> Option<PathBuf> {
+    user_home().map(|home| home.join(".gemini").join("antigravity"))
+}
+
+fn antigravity_summaries_db_path() -> Option<PathBuf> {
+    antigravity_home_dir().map(|home| home.join("conversation_summaries.db"))
+}
+
+fn antigravity_conversation_db_path(conversation_id: &str) -> Option<PathBuf> {
+    let id = conversation_id.trim();
+    if id.is_empty() || id.contains(['/', '\\', ':']) {
+        return None;
+    }
+    antigravity_home_dir().map(|home| home.join("conversations").join(format!("{id}.db")))
+}
+
+/// `file:///f%3A/AiProject/x` → `f:/AiProject/x`（percent 解码 + 去掉 file:/// 前缀）。
+fn antigravity_decode_workspace_uri(uri: &str) -> Option<String> {
+    let decoded = antigravity_percent_decode(uri);
+    let rest = decoded
+        .strip_prefix("file:///")
+        .or_else(|| decoded.strip_prefix("file://"))?;
+    let rest = rest.trim_start_matches('/');
+    let rest = rest.strip_prefix("localhost/").unwrap_or(rest);
+    if rest.is_empty() {
+        return None;
+    }
+    // 盘符形态 f:/x/y 保留正斜杠，展示层统一走 workspace_path_display。
+    Some(rest.to_string())
+}
+
+fn antigravity_percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let hex = |byte: u8| {
+                match byte {
+                    b'0'..=b'9' => byte - b'0',
+                    b'a'..=b'f' => byte - b'a' + 10,
+                    b'A'..=b'F' => byte - b'A' + 10,
+                    _ => 0xff,
+                }
+            };
+            let high = hex(bytes[index + 1]);
+            let low = hex(bytes[index + 2]);
+            if high != 0xff && low != 0xff {
+                out.push(high * 16 + low);
+                index += 3;
+                continue;
+            }
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn antigravity_summary_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<AntigravitySummaryRow> {
+    let workspace_uris: Option<String> = row.get(2)?;
+    let workspace_path = workspace_uris.as_deref().and_then(|uris_text| {
+        serde_json::from_str::<Vec<String>>(uris_text)
+            .ok()
+            .and_then(|uris| uris.first().cloned())
+            .and_then(|uri| antigravity_decode_workspace_uri(&uri))
+    });
+    let killed_raw = row.get::<_, Option<i64>>(4)?;
+    let last_modified_text = row.get::<_, Option<String>>(5)?;
+    Ok(AntigravitySummaryRow {
+        conversation_id: row.get(0)?,
+        title: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+        workspace_path,
+        run_status: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+        killed: killed_raw.unwrap_or(0) != 0,
+        last_modified_ms: last_modified_text
+            .as_deref()
+            .and_then(iso_timestamp_ms)
+            .unwrap_or(0),
+        step_count: row.get::<_, Option<i64>>(6)?.unwrap_or(0).max(0) as u64,
+    })
+}
+
+/// 候选行 = 未被杀死、非子会话（battle/智能体分支）的行，按活跃时间倒序取前 N。
+fn antigravity_candidate_rows(
+    connection: &Connection,
+    options: &ResolvedScanOptions,
+    scan_time_ms: u64,
+) -> Vec<AntigravitySummaryRow> {
+    // 子会话过滤用 parent_conversation_id 判空，与 ZCode 过滤 subagent_child 同构。
+    let mut statement = match connection.prepare(
+        "select conversation_id, title, workspace_uris, status, killed, last_modified_time, \
+                step_count \
+         from conversation_summaries \
+         where coalesce(killed, 0) = 0 and coalesce(parent_conversation_id, '') = '' \
+         order by last_modified_time desc \
+         limit ?1",
+    ) {
+        Ok(statement) => statement,
+        Err(_) => return Vec::new(),
+    };
+    let rows = statement
+        .query_map(
+            rusqlite::params![ANTIGRAVITY_SESSION_SCAN_LIMIT_MAX],
+            antigravity_summary_row_from_sql,
+        )
+        .map(|mapped| mapped.filter_map(Result::ok).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let window_ms = options.active_window_ms;
+    rows.into_iter()
+        .filter(|row| {
+            // 活跃窗口兜底用清单时间；正文库存在时 read_..._row 会用内容时间戳覆盖。
+            row.last_modified_ms == 0
+                || scan_time_ms.saturating_sub(row.last_modified_ms) <= window_ms
+        })
+        .collect()
+}
+
+// ---- 正文层：尾部采样出预览与状态信号，全量轻扫出用量 ----
+
+#[derive(Debug, Clone, Default)]
+struct AntigravityTailSummary {
+    last_user_message: Option<String>,
+    last_ai_message: Option<String>,
+    latest_event_ms: u64,
+    ask_question_pending: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+struct AntigravityUsageSummary {
+    user_turns: u32,
+    model_calls: u32,
+    tool_calls: u32,
+    token_input: u64,
+    token_output: u64,
+    token_cached: u64,
+    token_thoughts: u64,
+    has_tokens: bool,
+    models: Vec<String>,
+    turn_timestamps_ms: Vec<u64>,
+    first_event_ms: u64,
+    last_event_ms: u64,
+    top_tools: Vec<(String, u32)>,
+}
+
+/// 打开某个会话的 conversations 库（不存在时 None，调用方降级）。
+fn antigravity_open_conversation_db(conversation_id: &str) -> Option<Connection> {
+    let db_path = antigravity_conversation_db_path(conversation_id).filter(|path| path.exists())?;
+    open_readonly_sqlite(&db_path, ANTIGRAVITY_SQLITE_BUSY_TIMEOUT_MS)
+}
+
+/// 尾部采样 + 全量计数：一次顺序读 steps 表。
+/// 预览文本只看最后 ANTIGRAVITY_TAIL_STEP_ROWS 行；计数与 token 走全表
+/// （step_payload 是行内小 blob，全表顺序读与 WorkBuddy 全量读 JSONL 同口径）。
+fn antigravity_summarize_conversation(
+    connection: &Connection,
+) -> Option<(AntigravityTailSummary, AntigravityUsageSummary)> {
+    let mut statement = connection
+        .prepare("select step_type, step_payload from steps order by idx")
+        .ok()?;
+    let mut rows = statement.query([]).ok()?;
+    let mut tail_rows: std::collections::VecDeque<(i64, Vec<u8>)> =
+        std::collections::VecDeque::with_capacity(ANTIGRAVITY_TAIL_STEP_ROWS);
+    let mut usage = AntigravityUsageSummary::default();
+    let mut tool_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    while let Some(row) = rows.next().ok()? {
+        let step_type: i64 = row.get(0).ok()?;
+        let payload: Vec<u8> = row.get(1).ok()?;
+        let parsed = antigravity_parse_step_payload(&payload);
+        match step_type {
+            14 => {
+                usage.user_turns += 1;
+                if parsed.content_ms > 0 {
+                    usage.turn_timestamps_ms.push(parsed.content_ms);
+                }
+            }
+            15 => {
+                usage.model_calls += 1;
+                if let (Some(input), Some(output)) = (parsed.token_input, parsed.token_output) {
+                    usage.token_input = usage.token_input.saturating_add(input);
+                    usage.token_output = usage.token_output.saturating_add(output);
+                    usage.has_tokens = true;
+                }
+                if let Some(cached) = parsed.token_cached {
+                    usage.token_cached = usage.token_cached.saturating_add(cached);
+                }
+                if let Some(thoughts) = parsed.token_thoughts {
+                    usage.token_thoughts = usage.token_thoughts.saturating_add(thoughts);
+                }
+                if let Some(model_enum) = parsed.model_enum {
+                    let label = model_enum.to_string();
+                    if !usage.models.contains(&label) {
+                        usage.models.push(label);
+                    }
+                }
+                if parsed.content_ms > 0 {
+                    usage.turn_timestamps_ms.push(parsed.content_ms);
+                }
+            }
+            _ => {}
+        }
+        for name in &parsed.tool_names {
+            *tool_counts.entry(name.clone()).or_insert(0) += 1;
+            usage.tool_calls += 1;
+        }
+        if parsed.content_ms > 0 {
+            if usage.first_event_ms == 0 || parsed.content_ms < usage.first_event_ms {
+                usage.first_event_ms = parsed.content_ms;
+            }
+            if parsed.content_ms > usage.last_event_ms {
+                usage.last_event_ms = parsed.content_ms;
+            }
+        }
+        tail_rows.push_back((step_type, payload));
+        if tail_rows.len() > ANTIGRAVITY_TAIL_STEP_ROWS {
+            tail_rows.pop_front();
+        }
+    }
+    let mut top_tools: Vec<(String, u32)> = tool_counts.into_iter().collect();
+    top_tools.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    top_tools.truncate(8);
+    usage.top_tools = top_tools;
+
+    // 尾部状态信号：按顺序找最后一个 ask_question 模型轮与最后一个用户轮的先后。
+    let mut summary = AntigravityTailSummary::default();
+    let mut last_ask_question_index: Option<usize> = None;
+    let mut last_user_index: Option<usize> = None;
+    for (position, (step_type, payload)) in tail_rows.iter().enumerate() {
+        let parsed = antigravity_parse_step_payload(payload);
+        if parsed.content_ms > summary.latest_event_ms {
+            summary.latest_event_ms = parsed.content_ms;
+        }
+        match *step_type {
+            14 => {
+                last_user_index = Some(position);
+                if let Some(text) = parsed.user_text {
+                    summary.last_user_message = Some(text);
+                }
+            }
+            15 => {
+                if let Some(text) = parsed.model_text {
+                    summary.last_ai_message = Some(text);
+                }
+                if parsed.ask_question_called {
+                    last_ask_question_index = Some(position);
+                }
+            }
+            _ => {}
+        }
+    }
+    summary.ask_question_pending = match (last_ask_question_index, last_user_index) {
+        (Some(ask_index), Some(user_index)) => ask_index > user_index,
+        (Some(_), None) => true,
+        _ => false,
+    };
+    Some((summary, usage))
+}
+
+fn antigravity_usage_to_session_usage(usage: &AntigravityUsageSummary) -> Option<SessionUsage> {
+    if usage.user_turns == 0 && usage.model_calls == 0 && !usage.has_tokens {
+        return None;
+    }
+    let mut turn_timestamps = usage.turn_timestamps_ms.clone();
+    turn_timestamps.sort_unstable();
+    Some(SessionUsage {
+        total_input_tokens: Some(usage.token_input),
+        cached_input_tokens: (usage.token_cached > 0).then_some(usage.token_cached),
+        total_output_tokens: Some(usage.token_output),
+        context_tokens: None,
+        context_window_tokens: None,
+        user_turns: Some(usage.user_turns),
+        tool_calls: Some(usage.tool_calls),
+        model_calls: Some(usage.model_calls),
+        // 模型编号是 Antigravity 的内部枚举值（如 1402），官方没有公开名字表，
+        // 先按原值透出，等有名字表再映射。
+        models: usage.models.clone(),
+        duration_ms: (usage.first_event_ms > 0)
+            .then(|| usage.last_event_ms.saturating_sub(usage.first_event_ms)),
+        active_duration_ms: active_duration_ms_from_timestamps(&turn_timestamps),
+        cost_usd: None,
+        copilot_credits: None,
+    })
+}
+
+fn scan_antigravity_sessions(scan_time_ms: u64, options: &ResolvedScanOptions) -> Vec<AgentSession> {
+    let Some(db_path) = antigravity_summaries_db_path().filter(|path| path.exists()) else {
+        return Vec::new();
+    };
+    let Some(connection) =
+        open_readonly_sqlite(&db_path, ANTIGRAVITY_SQLITE_BUSY_TIMEOUT_MS)
+    else {
+        return Vec::new();
+    };
+    let candidate_rows = antigravity_candidate_rows(&connection, options, scan_time_ms);
+    let mut sessions = Vec::new();
+    for row in &candidate_rows {
+        let (tail_summary, usage_summary) =
+            antigravity_open_conversation_db(&row.conversation_id)
+                .and_then(|connection| antigravity_summarize_conversation(&connection))
+                .unwrap_or_default();
+        let usage = antigravity_usage_to_session_usage(&usage_summary);
+        if let Some(session) =
+            read_antigravity_session_row(row, tail_summary, usage, scan_time_ms, options)
+        {
+            sessions.push(session);
+            if sessions.len() >= options.max_sessions {
+                break;
+            }
+        }
+    }
+    sessions
+}
+
+fn read_antigravity_session_row(
+    row: &AntigravitySummaryRow,
+    tail_summary: AntigravityTailSummary,
+    usage: Option<SessionUsage>,
+    scan_time_ms: u64,
+    options: &ResolvedScanOptions,
+) -> Option<AgentSession> {
+
+    let workspace_path = clean_option(row.workspace_path.as_deref()).map(workspace_path_display);
+    let workspace_hint = workspace_path
+        .as_deref()
+        .and_then(|path_text| path_segments_basename(&workspace_path_segments(path_text)))
+        .unwrap_or_else(|| "Antigravity".to_string());
+    let title = clean_option(Some(row.title.as_str()))
+        .and_then(title_candidate_from_text)
+        .or_else(|| {
+            tail_summary
+                .last_user_message
+                .as_deref()
+                .and_then(title_candidate_from_text)
+        })
+        .unwrap_or_else(|| fallback_session_title("Antigravity", &workspace_hint, &row.conversation_id));
+
+    // 新鲜度与状态都用内容时间戳；清单 last_modified_time 只做正文库缺失时的兜底——
+    // 状态列会滞留（本机实测 429 停掉的会话仍标 RUNNING），库行时间不可信。
+    let latest_content_ms = tail_summary.latest_event_ms;
+    let updated_ms = if latest_content_ms > 0 {
+        latest_content_ms
+    } else {
+        row.last_modified_ms
+    };
+    if !is_active_session(updated_ms, scan_time_ms, options) {
+        return None;
+    }
+    let running_by_status = matches!(
+        row.run_status.as_str(),
+        "CASCADE_RUN_STATUS_RUNNING" | "CASCADE_RUN_STATUS_BUSY" | "CASCADE_RUN_STATUS_CANCELING"
+    );
+    let status = if tail_summary.ask_question_pending {
+        // 显式问用户才算等回复：尾部最后一个模型轮调用了 ask_question 且之后没有新用户轮。
+        "waiting".to_string()
+    } else if running_by_status
+        && scan_time_ms.saturating_sub(updated_ms) <= STATUS_RECENT_CONTENT_WINDOW_MS
+    {
+        "running".to_string()
+    } else {
+        "idle".to_string()
+    };
+
+    let workspace_identity = build_workspace_identity(
+        "antigravity",
+        &row.conversation_id,
+        &workspace_hint,
+        workspace_path.as_deref(),
+        None,
+        None,
+    );
+    let mut todo_ids = Vec::new();
+    collect_todo_ids_from_text(&title, &mut todo_ids);
+    collect_todo_ids_from_text(
+        tail_summary.last_user_message.as_deref().unwrap_or(""),
+        &mut todo_ids,
+    );
+    let (last_user_message, last_user_message_truncated) =
+        apply_user_preview_budget(tail_summary.last_user_message);
+    let (last_ai_message, last_ai_message_truncated, last_ai_message_excerpt_kind) =
+        apply_ai_preview_budget(tail_summary.last_ai_message);
+    let plugin_workflow = detect_plugin_workflow_session_marker(
+        "antigravity",
+        &[last_user_message.as_deref(), last_ai_message.as_deref()],
+    );
+    let message_count = usage
+        .as_ref()
+        .map(|usage| usage.user_turns.unwrap_or(0) + usage.model_calls.unwrap_or(0))
+        .unwrap_or(0);
+
+    Some(AgentSession {
+        id: format!("antigravity:{}", row.conversation_id),
+        provider: "antigravity".to_string(),
+        provider_label: "AG".to_string(),
+        title,
+        workspace: workspace_identity.name.clone(),
+        workspace_path,
+        workspace_key: workspace_identity.key,
+        workspace_name: workspace_identity.name,
+        workspace_label: workspace_identity.label,
+        workspace_group: workspace_identity.group,
+        workspace_discriminator: workspace_identity.discriminator,
+        session_path: antigravity_conversation_db_path(&row.conversation_id)
+            .map(|path| path_to_string(&path)),
+        session_resource: None,
+        status,
+        time_label: time_label(updated_ms, scan_time_ms),
+        updated_ms,
+        message_count,
+        last_user_message,
+        last_user_message_truncated,
+        last_ai_message,
+        last_ai_message_truncated,
+        last_ai_message_excerpt_kind,
+        branch: None,
+        todo_ids,
+        plugin_workflow,
+        usage,
+    })
+}
+
+/// CLI 的定向兜底：按会话 ID 直查清单行（含窗口外行），全历史口径映射。
+fn lookup_antigravity_session_by_key(scan_time_ms: u64, key: &str) -> Option<AgentSession> {
+    let conversation_id = key.trim();
+    if conversation_id.is_empty() {
+        return None;
+    }
+    let db_path = antigravity_summaries_db_path().filter(|path| path.exists())?;
+    let connection = open_readonly_sqlite(&db_path, ANTIGRAVITY_SQLITE_BUSY_TIMEOUT_MS)?;
+    let mut statement = connection
+        .prepare(
+            "select conversation_id, title, workspace_uris, status, killed, last_modified_time, \
+                    step_count \
+             from conversation_summaries where conversation_id = ?1",
+        )
+        .ok()?;
+    let row = statement
+        .query_row(
+            rusqlite::params![conversation_id],
+            antigravity_summary_row_from_sql,
+        )
+        .ok()?;
+    let (tail_summary, usage_summary) = antigravity_open_conversation_db(&row.conversation_id)
+        .and_then(|connection| antigravity_summarize_conversation(&connection))
+        .unwrap_or_default();
+    read_antigravity_session_row(
+        &row,
+        tail_summary,
+        antigravity_usage_to_session_usage(&usage_summary),
+        scan_time_ms,
+        &full_history_resolved_options(),
+    )
+}
+
+/// 悬停懒加载：从 conversations 库直接出用量与工具计数（不落 JSONL 缓存体系）。
+fn antigravity_usage_detail(conversation_id: &str) -> SessionUsageDetail {
+    let detail = antigravity_open_conversation_db(conversation_id)
+        .and_then(|connection| antigravity_summarize_conversation(&connection))
+        .map(|(_, usage)| SessionUsageDetail {
+            usage: antigravity_usage_to_session_usage(&usage),
+            top_tools: usage
+                .top_tools
+                .into_iter()
+                .map(|(name, count)| UsageToolCount { name, count })
+                .collect(),
+        });
+    detail.unwrap_or(SessionUsageDetail {
+        usage: None,
+        top_tools: Vec::new(),
+    })
+}
+
+fn open_antigravity_session(session: &OpenSessionRequest) -> Result<(), String> {
+    let _ = raw_request_session_id(session.id.as_deref());
+    let _ = clean_option(session.workspace_path.as_deref());
+    // 跳转暂不实现：antigravity:// 协议只用于 OAuth 登录回调，官方无会话级深链
+    // （社区实测按会话 ID 拼深链打不开）。扫描/悬浮预览/接续导出不受影响。
+    Err("Antigravity session jump is not supported yet: 官方暂无会话级深链；悬浮预览与接续上下文导出可用".to_string())
+}
+
+/// 接续来源：整个会话解码成 Markdown 落 handoff-sources\antigravity\（ZCode 同款强口径——
+/// 正文库是 protobuf 二进制，不能像 WorkBuddy 那样直接给原始文件路径）。
+fn prepare_antigravity_handoff_source_context(
+    request: &HandoffSourceContextRequest,
+) -> Result<HandoffSourceContext, String> {
+    let session_id = raw_request_session_id(request.id.as_deref())
+        .map(str::to_string)
+        .ok_or_else(|| "Missing Antigravity source session id".to_string())?;
+    let connection = antigravity_open_conversation_db(&session_id)
+        .ok_or_else(|| format!("Antigravity conversation database not found for {session_id}"))?;
+    let (messages, latest_ms) = antigravity_collect_handoff_messages(&connection)?;
+    let markdown = render_antigravity_handoff_markdown(
+        &session_id,
+        clean_option(request.title.as_deref()),
+        clean_option(request.workspace_path.as_deref()),
+        &messages,
+    );
+    let timestamp_ms = if latest_ms > 0 {
+        latest_ms
+    } else {
+        current_time_ms()
+    };
+    let path = write_handoff_source_markdown("antigravity", &session_id, timestamp_ms, &markdown)?;
+    let inline_summary = handoff_inline_summary("Antigravity", &session_id, &messages);
+    Ok(HandoffSourceContext {
+        provider: "antigravity".to_string(),
+        session_id: Some(session_id),
+        primary_source_file: Some(path_to_cli_string(&path)),
+        inline_summary,
+        message_count: messages.len() as u32,
+        warning: None,
+    })
+}
+
+/// 全量读 steps 解码成接续转写（用户/AI 轮正文 + 工具调用名），
+/// 返回消息列表与最后内容时间戳。Connection 由调用方注入（测试用内存库）。
+fn antigravity_collect_handoff_messages(
+    connection: &Connection,
+) -> Result<(Vec<HandoffTranscriptMessage>, u64), String> {
+    let mut statement = connection
+        .prepare("select step_type, step_payload from steps order by idx")
+        .map_err(|error| format!("Failed to prepare Antigravity steps query: {}", error))?;
+    let mut rows = statement
+        .query([])
+        .map_err(|error| format!("Failed to read Antigravity steps: {}", error))?;
+
+    let mut messages: Vec<HandoffTranscriptMessage> = Vec::new();
+    let mut latest_ms = 0u64;
+    while let Some(row) = rows.next().map_err(|error| {
+        format!("Failed to advance Antigravity steps cursor: {}", error)
+    })? {
+        let step_type: i64 = row.get(0).map_err(|error| {
+            format!("Failed to read Antigravity step type: {}", error)
+        })?;
+        let payload: Vec<u8> = row.get(1).map_err(|error| {
+            format!("Failed to read Antigravity step payload: {}", error)
+        })?;
+        let parsed = antigravity_parse_step_payload(&payload);
+        latest_ms = latest_ms.max(parsed.content_ms);
+        match step_type {
+            14 => {
+                if let Some(text) = parsed.user_text {
+                    messages.push(HandoffTranscriptMessage {
+                        id: format!("step-{}", messages.len()),
+                        role: "user".to_string(),
+                        time_ms: parsed.content_ms,
+                        parts: vec![HandoffTranscriptPart {
+                            label: "text".to_string(),
+                            text,
+                        }],
+                    });
+                }
+            }
+            15 => {
+                let mut parts = Vec::new();
+                if let Some(text) = parsed.model_text {
+                    parts.push(HandoffTranscriptPart {
+                        label: "text".to_string(),
+                        text,
+                    });
+                }
+                for name in parsed.tool_names {
+                    parts.push(HandoffTranscriptPart {
+                        label: "tool".to_string(),
+                        text: name,
+                    });
+                }
+                if !parts.is_empty() {
+                    messages.push(HandoffTranscriptMessage {
+                        id: format!("step-{}", messages.len()),
+                        role: "assistant".to_string(),
+                        time_ms: parsed.content_ms,
+                        parts,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok((messages, latest_ms))
+}
+
+fn render_antigravity_handoff_markdown(
+    session_id: &str,
+    title: Option<&str>,
+    workspace: Option<&str>,
+    messages: &[HandoffTranscriptMessage],
+) -> String {
+    let mut markdown = String::from("# Antigravity source session export\n\n");
+    markdown.push_str(&format!("- Session ID: {}\n", session_id));
+    if let Some(title) = title {
+        markdown.push_str(&format!("- Title: {}\n", title));
+    }
+    if let Some(workspace) = workspace {
+        markdown.push_str(&format!("- Workspace: {}\n", workspace));
+    }
+    markdown.push_str(&format!("- Exported messages: {}\n\n", messages.len()));
+    markdown.push_str("## Transcript\n\n");
+    for message in messages {
+        let heading = if message.role == "user" {
+            "User"
+        } else {
+            "Assistant"
+        };
+        markdown.push_str(&format!("### {} ({})\n\n", heading, message.id));
+        for part in &message.parts {
+            if part.label == "text" {
+                markdown.push_str(&part.text);
+                markdown.push_str("\n\n");
+            } else {
+                markdown.push_str(&format!("- tool call: {}\n", part.text));
+            }
+        }
+    }
+    markdown
+}
+
+/// Antigravity 打包：conversations\<id>.db 原件 + 清单行 NDJSON 落 raw/antigravity/。
+fn antigravity_package_entries(
+    request: &HandoffSourceContextRequest,
+) -> Result<Vec<SessionPackageEntry>, String> {
+    let key = package_session_key(request, "antigravity")?;
+    let conversation_db = antigravity_conversation_db_path(&key)
+        .filter(|path| path.is_file())
+        .ok_or_else(|| {
+            format!(
+                "Antigravity conversation database not found for {key} under ~/.gemini/antigravity/conversations"
+            )
+        })?;
+    let mut entries = vec![SessionPackageEntry {
+        zip_path: format!("raw/antigravity/{key}.db"),
+        source_path: Some(path_to_string(&conversation_db)),
+        source_kind: "file",
+        payload: SessionPackagePayload::File(conversation_db),
+    }];
+    if let Some(summaries_db) = antigravity_summaries_db_path().filter(|path| path.exists()) {
+        if let Some(connection) =
+            open_readonly_sqlite(&summaries_db, ANTIGRAVITY_SQLITE_BUSY_TIMEOUT_MS)
+        {
+            if let Some(entry) = antigravity_package_summary_entry(&connection, &summaries_db, &key)
+            {
+                entries.push(entry);
+            }
+        }
+    }
+    Ok(entries)
+}
+
+/// 打包里的清单行快照：conversation_summaries 表的行导出成 JSON。
+fn antigravity_package_summary_entry(
+    connection: &Connection,
+    summaries_db: &Path,
+    key: &str,
+) -> Option<SessionPackageEntry> {
+    let mut statement = connection
+        .prepare(
+            "select conversation_id, title, workspace_uris, status, killed, \
+                    last_modified_time, step_count, project_id, not_fully_idle \
+             from conversation_summaries where conversation_id = ?1",
+        )
+        .ok()?;
+    let row = statement
+        .query_row(rusqlite::params![key], |row| {
+            Ok(serde_json::json!({
+                "conversationId": row.get::<_, String>(0)?,
+                "title": row.get::<_, Option<String>>(1)?,
+                "workspaceUris": row.get::<_, Option<String>>(2)?,
+                "status": row.get::<_, Option<String>>(3)?,
+                "killed": row.get::<_, Option<i64>>(4)?,
+                "lastModifiedTime": row.get::<_, Option<String>>(5)?,
+                "stepCount": row.get::<_, Option<i64>>(6)?,
+                "projectId": row.get::<_, Option<String>>(7)?,
+                "notFullyIdle": row.get::<_, Option<i64>>(8)?,
+            })
+            .to_string())
+        })
+        .ok()?;
+    Some(SessionPackageEntry {
+        zip_path: format!("raw/antigravity/{key}-summary.json"),
+        source_path: Some(path_to_string(summaries_db)),
+        source_kind: "generated",
+        payload: SessionPackagePayload::Bytes(row.into_bytes()),
     })
 }
 
@@ -20063,6 +21003,7 @@ mod tests {
             include_open_code: None,
             include_zcode: None,
             include_workbuddy: None,
+            include_antigravity: None,
             workspace_path_blacklist: None,
         }));
 
@@ -20083,6 +21024,7 @@ mod tests {
             include_open_code: None,
             include_zcode: None,
             include_workbuddy: None,
+            include_antigravity: None,
             workspace_path_blacklist: None,
         }));
 
@@ -20230,6 +21172,7 @@ mod tests {
             include_open_code: None,
             include_zcode: None,
             include_workbuddy: None,
+            include_antigravity: None,
             workspace_path_blacklist: Some(Vec::new()),
         }));
         assert!(explicit_empty.workspace_path_blacklist.is_empty());
@@ -20251,6 +21194,7 @@ mod tests {
             include_open_code: Some(false),
             include_zcode: Some(false),
             include_workbuddy: None,
+            include_antigravity: None,
             workspace_path_blacklist: None,
         }));
 
@@ -20273,6 +21217,7 @@ mod tests {
             include_open_code: None,
             include_zcode: Some(false),
             include_workbuddy: None,
+            include_antigravity: None,
             workspace_path_blacklist: None,
         }));
 
@@ -20311,6 +21256,7 @@ mod tests {
             include_open_code: Some(false),
             include_zcode: Some(true),
             include_workbuddy: None,
+            include_antigravity: None,
             workspace_path_blacklist: None,
         }));
 
@@ -20903,6 +21849,7 @@ mod tests {
             include_open_code: Some(false),
             include_zcode: Some(false),
             include_workbuddy: None,
+            include_antigravity: None,
             workspace_path_blacklist: None,
         }));
         let session = read_codex_jsonl_session(&session_path, scan_time_ms, &options).unwrap();
@@ -20990,6 +21937,7 @@ mod tests {
             include_open_code: Some(false),
             include_zcode: Some(false),
             include_workbuddy: None,
+            include_antigravity: None,
             workspace_path_blacklist: None,
         }));
 
@@ -21212,6 +22160,7 @@ node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
             include_open_code: Some(true),
             include_zcode: Some(false),
             include_workbuddy: None,
+            include_antigravity: None,
             workspace_path_blacklist: None,
         }));
 
@@ -21485,6 +22434,7 @@ node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
             include_open_code: Some(true),
             include_zcode: Some(false),
             include_workbuddy: None,
+            include_antigravity: None,
             workspace_path_blacklist: None,
         }));
         let start = Instant::now();
@@ -21570,6 +22520,7 @@ node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
             include_open_code: Some(false),
             include_zcode: Some(false),
             include_workbuddy: None,
+            include_antigravity: None,
             workspace_path_blacklist: None,
         }));
         let thread = json!({
@@ -21658,6 +22609,7 @@ node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
             include_open_code: Some(false),
             include_zcode: Some(false),
             include_workbuddy: None,
+            include_antigravity: None,
             workspace_path_blacklist: None,
         }));
         let thread = json!({
@@ -21714,6 +22666,7 @@ node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
             include_open_code: Some(false),
             include_zcode: Some(false),
             include_workbuddy: None,
+            include_antigravity: None,
             workspace_path_blacklist: None,
         }));
         let thread = json!({
@@ -21749,6 +22702,7 @@ node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
             include_open_code: Some(false),
             include_zcode: Some(false),
             include_workbuddy: None,
+            include_antigravity: None,
             workspace_path_blacklist: None,
         }));
         let thread = json!({
@@ -21857,6 +22811,7 @@ node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
             include_open_code: Some(false),
             include_zcode: Some(false),
             include_workbuddy: None,
+            include_antigravity: None,
             workspace_path_blacklist: None,
         }));
         let sessions = scan_copilot_cli_sessions_from_connection(
@@ -21921,6 +22876,7 @@ node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
             include_open_code: Some(false),
             include_zcode: Some(false),
             include_workbuddy: None,
+            include_antigravity: None,
             workspace_path_blacklist: None,
         }));
 
@@ -21969,6 +22925,7 @@ node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
             include_open_code: Some(false),
             include_zcode: Some(false),
             include_workbuddy: None,
+            include_antigravity: None,
             workspace_path_blacklist: None,
         }));
 
@@ -22706,6 +23663,7 @@ node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
                 include_open_code: None,
                 include_zcode: None,
                 include_workbuddy: None,
+                include_antigravity: None,
                 workspace_path_blacklist: None,
             }
         }
@@ -23989,6 +24947,7 @@ node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
             include_open_code: Some(false),
             include_zcode: Some(false),
             include_workbuddy: Some(true),
+            include_antigravity: Some(false),
             workspace_path_blacklist: None,
         }
     }
@@ -25702,4 +26661,520 @@ node     72592 pengbo   22u  IPv6  0x9abc      0t0  TCP [::1]:51511 (LISTEN)
         assert_eq!(parsed["outcome"], "failed");
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    // ---------- Antigravity provider 测试 ----------
+
+    fn scan_options_antigravity_only() -> ScanOptions {
+        ScanOptions {
+            include_playground: None,
+            max_sessions: None,
+            active_window_days: None,
+            hide_archived: None,
+            include_copilot: Some(false),
+            include_copilot_cli: Some(false),
+            include_claude: Some(false),
+            include_codex: Some(false),
+            include_open_code: Some(false),
+            include_zcode: Some(false),
+            include_workbuddy: Some(false),
+            include_antigravity: Some(true),
+            workspace_path_blacklist: None,
+        }
+    }
+
+    // ---- protobuf 测试编码器（与生产解析器互为往返校验） ----
+
+    fn agy_varint(value: u64) -> Vec<u8> {
+        let mut value = value;
+        let mut out = Vec::new();
+        loop {
+            let mut byte = (value & 0x7f) as u8;
+            value >>= 7;
+            if value != 0 {
+                byte |= 0x80;
+            }
+            out.push(byte);
+            if value == 0 {
+                return out;
+            }
+        }
+    }
+
+    fn agy_field_bytes(field: u32, data: &[u8]) -> Vec<u8> {
+        let mut out = agy_varint((u64::from(field) << 3) | 2);
+        out.extend(agy_varint(data.len() as u64));
+        out.extend_from_slice(data);
+        out
+    }
+
+    fn agy_field_str(field: u32, text: &str) -> Vec<u8> {
+        agy_field_bytes(field, text.as_bytes())
+    }
+
+    fn agy_field_u64(field: u32, value: u64) -> Vec<u8> {
+        let mut out = agy_varint(u64::from(field) << 3);
+        out.extend(agy_varint(value));
+        out
+    }
+
+    /// 类型 14 用户轮：f5 时间戳 + f19.f2 正文。
+    fn agy_user_step(text: &str, seconds: u64) -> Vec<u8> {
+        let meta = [agy_field_u64(1, seconds), agy_field_u64(2, 0)].concat();
+        [
+            agy_field_u64(1, 14),
+            agy_field_bytes(5, &meta),
+            agy_field_bytes(19, &agy_field_str(2, text)),
+        ]
+        .concat()
+    }
+
+    /// 类型 15 模型轮：f5 时间戳 + f20（f3 文本段 × f7 工具调用）+ f9 用量。
+    fn agy_model_step(
+        texts: &[&str],
+        tools: &[&str],
+        tokens: Option<(u64, u64, u64, u64, u64)>,
+        seconds: u64,
+    ) -> Vec<u8> {
+        let meta = [agy_field_u64(1, seconds), agy_field_u64(2, 0)].concat();
+        let mut content = Vec::new();
+        for text in texts {
+            content.extend(agy_field_str(3, text));
+        }
+        for tool in tools {
+            content.extend(agy_field_bytes(7, &agy_field_str(2, tool)));
+        }
+        let mut out = [
+            agy_field_u64(1, 15),
+            agy_field_bytes(5, &meta),
+            agy_field_bytes(20, &content),
+        ]
+        .concat();
+        if let Some((model, input, output, cached, thoughts)) = tokens {
+            let usage = [
+                agy_field_u64(1, model),
+                agy_field_u64(2, input),
+                agy_field_u64(3, output),
+                agy_field_u64(5, cached),
+                agy_field_u64(6, thoughts),
+            ]
+            .concat();
+            out.extend(agy_field_bytes(9, &usage));
+        }
+        out
+    }
+
+    /// 类型 132 工具调用加结果：f5.f4.f2 工具名。
+    fn agy_tool_result_step(name: &str) -> Vec<u8> {
+        let call = agy_field_str(2, name);
+        let meta = agy_field_bytes(4, &call);
+        [agy_field_u64(1, 132), agy_field_bytes(5, &meta)].concat()
+    }
+
+    fn antigravity_memory_conversation() -> Connection {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute(
+                "create table steps (
+                    idx integer primary key,
+                    step_type integer,
+                    status integer,
+                    has_subtrajectory integer,
+                    metadata blob,
+                    error_details blob,
+                    permissions blob,
+                    task_details blob,
+                    render_info blob,
+                    step_payload blob,
+                    step_format integer
+                )",
+                [],
+            )
+            .unwrap();
+        connection
+    }
+
+    fn agy_insert_step(connection: &Connection, step_type: i64, payload: &[u8]) {
+        connection
+            .execute(
+                "insert into steps (step_type, step_payload) values (?1, ?2)",
+                rusqlite::params![step_type, payload],
+            )
+            .unwrap();
+    }
+
+    fn antigravity_memory_summaries() -> Connection {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute(
+                "create table conversation_summaries (
+                    conversation_id text primary key,
+                    title text,
+                    workspace_uris text,
+                    status text,
+                    killed numeric,
+                    last_modified_time datetime,
+                    step_count integer,
+                    project_id text,
+                    not_fully_idle numeric,
+                    parent_conversation_id text default ''
+                )",
+                [],
+            )
+            .unwrap();
+        connection
+    }
+
+    fn agy_insert_summary(
+        connection: &Connection,
+        id: &str,
+        status: &str,
+        killed: i64,
+        parent: &str,
+        modified: &str,
+    ) {
+        connection
+            .execute(
+                "insert into conversation_summaries \
+                 (conversation_id, title, workspace_uris, status, killed, last_modified_time, \
+                  step_count, parent_conversation_id) \
+                 values (?1, 'V27 审查', '[\"file:///f%3A/AiProject/adt-scene-agent\"]', \
+                         ?2, ?3, ?4, 10, ?5)",
+                rusqlite::params![id, status, killed, modified, parent],
+            )
+            .unwrap();
+    }
+
+    fn agy_summary_row(id: &str, run_status: &str) -> AntigravitySummaryRow {
+        AntigravitySummaryRow {
+            conversation_id: id.to_string(),
+            title: "V27 审查".to_string(),
+            workspace_path: Some("f:/AiProject/adt-scene-agent".to_string()),
+            run_status: run_status.to_string(),
+            killed: false,
+            last_modified_ms: 0,
+            step_count: 10,
+        }
+    }
+
+    #[test]
+    fn antigravity_wire_roundtrip_varint() {
+        for value in [0u64, 1, 127, 128, 300, 16_383, u64::MAX] {
+            let encoded = agy_varint(value);
+            let mut cursor = 0usize;
+            assert_eq!(
+                antigravity_wire_read_varint(&encoded, &mut cursor),
+                Some(value)
+            );
+            assert_eq!(cursor, encoded.len());
+        }
+    }
+
+    #[test]
+    fn antigravity_parse_step_user_text() {
+        let payload = agy_user_step("继续 review 那个方案", 1_795_398_370);
+        let parsed = antigravity_parse_step_payload(&payload);
+        assert_eq!(parsed.step_type, Some(14));
+        assert_eq!(parsed.user_text.as_deref(), Some("继续 review 那个方案"));
+        assert_eq!(parsed.content_ms, 1_795_398_370_000);
+        assert!(parsed.model_text.is_none());
+    }
+
+    #[test]
+    fn antigravity_parse_step_model_text_and_tools() {
+        let payload = agy_model_step(
+            &["我先看下文件。", "看完了。"],
+            &["read_file", "ask_question"],
+            Some((1402, 35_457, 97, 9_587, 26)),
+            1_795_398_374,
+        );
+        let parsed = antigravity_parse_step_payload(&payload);
+        assert_eq!(parsed.step_type, Some(15));
+        assert_eq!(
+            parsed.model_text.as_deref(),
+            Some("我先看下文件。\n\n看完了。")
+        );
+        assert_eq!(
+            parsed.tool_names,
+            vec!["read_file".to_string(), "ask_question".to_string()]
+        );
+        assert!(parsed.ask_question_called);
+        assert_eq!(parsed.token_input, Some(35_457));
+        assert_eq!(parsed.token_output, Some(97));
+        assert_eq!(parsed.token_cached, Some(9_587));
+        assert_eq!(parsed.token_thoughts, Some(26));
+        assert_eq!(parsed.model_enum, Some(1402));
+    }
+
+    #[test]
+    fn antigravity_parse_step_tool_result_name() {
+        let payload = agy_tool_result_step("edit_file");
+        let parsed = antigravity_parse_step_payload(&payload);
+        assert_eq!(parsed.step_type, Some(132));
+        assert_eq!(parsed.tool_names, vec!["edit_file".to_string()]);
+        assert!(parsed.user_text.is_none());
+        assert!(parsed.model_text.is_none());
+    }
+
+    #[test]
+    fn antigravity_workspace_uri_decoding() {
+        assert_eq!(
+            antigravity_decode_workspace_uri("file:///f%3A/AiProject/adt-scene-agent").as_deref(),
+            Some("f:/AiProject/adt-scene-agent")
+        );
+        assert_eq!(antigravity_decode_workspace_uri("https://example.com/x"), None);
+        assert_eq!(antigravity_decode_workspace_uri("file:///"), None);
+    }
+
+    #[test]
+    fn antigravity_candidate_rows_filters_killed_and_children() {
+        let connection = antigravity_memory_summaries();
+        agy_insert_summary(
+            &connection,
+            "alive-1",
+            "CASCADE_RUN_STATUS_IDLE",
+            0,
+            "",
+            "2026-11-23 01:00:00.0000000+00:00",
+        );
+        agy_insert_summary(
+            &connection,
+            "killed-1",
+            "CASCADE_RUN_STATUS_IDLE",
+            1,
+            "",
+            "2026-11-23 01:30:00.0000000+00:00",
+        );
+        agy_insert_summary(
+            &connection,
+            "child-1",
+            "CASCADE_RUN_STATUS_RUNNING",
+            0,
+            "alive-1",
+            "2026-11-23 02:00:00.0000000+00:00",
+        );
+        agy_insert_summary(
+            &connection,
+            "alive-2",
+            "CASCADE_RUN_STATUS_RUNNING",
+            0,
+            "",
+            "2026-11-23 02:30:00.0000000+00:00",
+        );
+        let options = resolve_scan_options(Some(scan_options_antigravity_only()));
+        let scan_time_ms = iso_timestamp_ms("2026-11-23 03:00:00.0000000+00:00").unwrap();
+        let rows = antigravity_candidate_rows(&connection, &options, scan_time_ms);
+        let ids: Vec<&str> = rows.iter().map(|row| row.conversation_id.as_str()).collect();
+        // killed 与子会话被滤掉，按清单时间倒序。
+        assert_eq!(ids, vec!["alive-2", "alive-1"]);
+        assert_eq!(
+            rows[0].workspace_path.as_deref(),
+            Some("f:/AiProject/adt-scene-agent")
+        );
+        assert!(!rows[0].killed);
+    }
+
+    #[test]
+    fn antigravity_default_include_flag() {
+        assert!(resolve_scan_options(None).include_antigravity);
+        let options = ScanOptions {
+            include_antigravity: Some(false),
+            ..scan_options_antigravity_only()
+        };
+        assert!(!resolve_scan_options(Some(options)).include_antigravity);
+    }
+
+    #[test]
+    fn antigravity_status_running_within_window() {
+        let scan_time_ms = 1_800_000_000_000u64;
+        let options = resolve_scan_options(Some(scan_options_antigravity_only()));
+        let tail = AntigravityTailSummary {
+            latest_event_ms: scan_time_ms - 60_000,
+            ..AntigravityTailSummary::default()
+        };
+        let session = read_antigravity_session_row(
+            &agy_summary_row("run-1", "CASCADE_RUN_STATUS_RUNNING"),
+            tail,
+            None,
+            scan_time_ms,
+            &options,
+        )
+        .unwrap();
+        assert_eq!(session.status, "running");
+        assert_eq!(session.id, "antigravity:run-1");
+        assert_eq!(session.provider, "antigravity");
+        assert_eq!(session.provider_label, "AG");
+    }
+
+    #[test]
+    fn antigravity_status_stale_running_is_idle() {
+        // 状态列会滞留：429 配额停掉的会话仍标 RUNNING，超窗后按闲着处理。
+        let scan_time_ms = 1_800_000_000_000u64;
+        let options = resolve_scan_options(Some(scan_options_antigravity_only()));
+        let tail = AntigravityTailSummary {
+            latest_event_ms: scan_time_ms - 30 * 60_000,
+            ..AntigravityTailSummary::default()
+        };
+        let session = read_antigravity_session_row(
+            &agy_summary_row("stale-1", "CASCADE_RUN_STATUS_RUNNING"),
+            tail,
+            None,
+            scan_time_ms,
+            &options,
+        )
+        .unwrap();
+        assert_eq!(session.status, "idle");
+    }
+
+    #[test]
+    fn antigravity_status_ask_question_pending_is_waiting() {
+        let scan_time_ms = 1_800_000_000_000u64;
+        let options = resolve_scan_options(Some(scan_options_antigravity_only()));
+        let tail = AntigravityTailSummary {
+            latest_event_ms: scan_time_ms - 60_000,
+            last_user_message: Some("帮我看看".to_string()),
+            ask_question_pending: true,
+            ..AntigravityTailSummary::default()
+        };
+        let session = read_antigravity_session_row(
+            &agy_summary_row("wait-1", "CASCADE_RUN_STATUS_RUNNING"),
+            tail,
+            None,
+            scan_time_ms,
+            &options,
+        )
+        .unwrap();
+        assert_eq!(session.status, "waiting");
+        assert_eq!(session.last_user_message.as_deref(), Some("帮我看看"));
+    }
+
+    #[test]
+    fn antigravity_tail_ask_question_pending() {
+        let connection = antigravity_memory_conversation();
+        agy_insert_step(&connection, 14, &agy_user_step("开始", 1_000));
+        agy_insert_step(
+            &connection,
+            15,
+            &agy_model_step(&["要选哪个"], &["ask_question"], None, 1_001),
+        );
+        let (tail, _) = antigravity_summarize_conversation(&connection).unwrap();
+        assert!(tail.ask_question_pending);
+        assert_eq!(tail.last_user_message.as_deref(), Some("开始"));
+        assert_eq!(tail.last_ai_message.as_deref(), Some("要选哪个"));
+
+        // 用户在 ask_question 之后又说了话：等回复解除。
+        let connection = antigravity_memory_conversation();
+        agy_insert_step(
+            &connection,
+            15,
+            &agy_model_step(&["要选哪个"], &["ask_question"], None, 1_000),
+        );
+        agy_insert_step(&connection, 14, &agy_user_step("选 A", 1_001));
+        let (tail, _) = antigravity_summarize_conversation(&connection).unwrap();
+        assert!(!tail.ask_question_pending);
+    }
+
+    #[test]
+    fn antigravity_usage_counts_and_tokens() {
+        let connection = antigravity_memory_conversation();
+        agy_insert_step(&connection, 14, &agy_user_step("第一问", 1_000));
+        agy_insert_step(
+            &connection,
+            15,
+            &agy_model_step(&["答一"], &["read_file"], Some((1402, 100, 10, 50, 5)), 1_010),
+        );
+        agy_insert_step(&connection, 132, &agy_tool_result_step("read_file"));
+        agy_insert_step(&connection, 14, &agy_user_step("第二问", 2_000));
+        agy_insert_step(
+            &connection,
+            15,
+            &agy_model_step(&["答二"], &[], Some((1402, 200, 20, 80, 6)), 2_010),
+        );
+        let (tail, usage) = antigravity_summarize_conversation(&connection).unwrap();
+        assert_eq!(usage.user_turns, 2);
+        assert_eq!(usage.model_calls, 2);
+        // 模型轮里的 read_file + 132 工具结果的 read_file。
+        assert_eq!(usage.tool_calls, 2);
+        assert_eq!(usage.token_input, 300);
+        assert_eq!(usage.token_output, 30);
+        assert_eq!(usage.token_cached, 130);
+        assert_eq!(usage.token_thoughts, 11);
+        assert_eq!(
+            usage
+                .top_tools
+                .first()
+                .map(|(name, count)| (name.as_str(), *count)),
+            Some(("read_file", 2))
+        );
+        assert_eq!(tail.latest_event_ms, 2_010_000);
+        let session_usage = antigravity_usage_to_session_usage(&usage).unwrap();
+        assert_eq!(session_usage.total_input_tokens, Some(300));
+        assert_eq!(session_usage.user_turns, Some(2));
+        assert_eq!(session_usage.models, vec!["1402".to_string()]);
+        assert!(session_usage.active_duration_ms.is_some());
+    }
+
+    #[test]
+    fn antigravity_usage_degrades_when_no_steps() {
+        let connection = antigravity_memory_conversation();
+        let (_, usage) = antigravity_summarize_conversation(&connection).unwrap();
+        assert_eq!(usage.user_turns, 0);
+        assert!(antigravity_usage_to_session_usage(&usage).is_none());
+    }
+
+    #[test]
+    fn antigravity_handoff_collect_and_render() {
+        let connection = antigravity_memory_conversation();
+        agy_insert_step(&connection, 14, &agy_user_step("交接前的问题", 1_000));
+        agy_insert_step(
+            &connection,
+            15,
+            &agy_model_step(&["交接前的回答"], &["edit_file"], None, 1_010),
+        );
+        let (messages, latest_ms) = antigravity_collect_handoff_messages(&connection).unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(latest_ms, 1_010_000);
+        let markdown = render_antigravity_handoff_markdown(
+            "conv-1",
+            Some("标题"),
+            Some("F:/AiProject/x"),
+            &messages,
+        );
+        assert!(markdown.contains("Session ID: conv-1"));
+        assert!(markdown.contains("交接前的问题"));
+        assert!(markdown.contains("交接前的回答"));
+        assert!(markdown.contains("- tool call: edit_file"));
+    }
+
+    #[test]
+    fn antigravity_package_summary_entry_layout() {
+        let connection = antigravity_memory_summaries();
+        agy_insert_summary(
+            &connection,
+            "conv-9",
+            "CASCADE_RUN_STATUS_IDLE",
+            0,
+            "",
+            "2026-11-23 01:00:00.0000000+00:00",
+        );
+        let entry = antigravity_package_summary_entry(
+            &connection,
+            Path::new(r"C:\home\.gemini\antigravity\conversation_summaries.db"),
+            "conv-9",
+        )
+        .unwrap();
+        assert_eq!(entry.zip_path, "raw/antigravity/conv-9-summary.json");
+        match entry.payload {
+            SessionPackagePayload::Bytes(bytes) => {
+                let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(value["conversationId"], "conv-9");
+                assert_eq!(value["status"], "CASCADE_RUN_STATUS_IDLE");
+                assert_eq!(value["stepCount"], 10);
+            }
+            _ => panic!("expected generated bytes payload"),
+        }
+        assert!(antigravity_package_summary_entry(&connection, Path::new("x.db"), "missing").is_none());
+    }
+
 }

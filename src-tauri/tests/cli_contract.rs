@@ -268,6 +268,10 @@ fn skill_list_without_dir_reports_host_candidates() {
         names.contains(&"workbuddy"),
         "workbuddy is a skill host candidate, got {names:?}"
     );
+    assert!(
+        names.contains(&"antigravity"),
+        "antigravity is a skill host candidate, got {names:?}"
+    );
     for host in hosts {
         assert!(host.get("host").is_some(), "entry has host");
         assert!(host.get("path").is_some(), "entry has path");
