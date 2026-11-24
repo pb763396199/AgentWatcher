@@ -1,5 +1,9 @@
 # Changelog
 
+## 未发布
+
+- 修 CLI 裸自然键查不到非 Codex 会话的问题（用户拍板 2026-11-24：裸 UUID 也要能查）：`session show/usage`、`handoff export`、`suggest` 等按 ID 查询的命令，在 provider 前缀精确查与 Codex 归一化解释都落空后，新增自然键兜底——先复用默认窗口扫描（近 7 天，零额外扫描），再对 zcode/opencode/workbuddy/antigravity/codex 逐个走定向全历史查找（索引直查）。典型场景：Antigravity 会话 `ffc7544b-…` 用裸 UUID 查询原先报 session_not_found，现在命中并返回 `antigravity:ffc7544b-…`（id 自带真实前缀）；release 构建实测 5.5 秒（即默认窗口扫描本身的成本，兜底零额外开销）。copilot/claude 的窗口外裸键不在兜底档（长 UUID 极少被裸引），not_found 文案同步提示前缀形态。
+
 ## v0.1.12 - 2026-11-23
 
 - 新增第 8 个会话 provider `antigravity`（徽标 AG）：接入 Google Antigravity 桌面端本机数据（`~/.gemini/antigravity`：`conversation_summaries.db` 会话清单 + `conversations/<会话id>.db` 正文）。正文 `steps.step_payload` 是无 schema 的 protobuf，宿主用自研裸 wire-format 遍历器按字段号取值（不引 schema 依赖，字段错位时该项降级为 null 不崩）：状态卡片（waiting=尾部 `ask_question` 未闭合、running=清单 `CASCADE_RUN_STATUS_RUNNING/BUSY/CANCELING` 且内容时间戳 10 分钟内——状态列会滞留，429 停掉的会话实测仍标 RUNNING，超窗按 idle）、悬浮预览（用户/AI 正文）、用量（轮次/模型调用/工具调用全量计数 + token 桶累加 + topTools）、`get_session_usage_detail` 懒加载。官方无会话级深链（`antigravity://` 只用于登录回调），点击返回明确提示（ZCode 同款口径）；接续照 ZCode 强口径导出可读 Markdown 到 `handoff-sources\antigravity\`（正文库是 protobuf 二进制不能直读）；打包带 conversations 库原件与清单行 JSON。CLI：`session list/show/usage` 同步支持（`--provider antigravity`、`antigravity:<会话id>`），技能分发宿主表新增 `~/.gemini/config/skills`。跳过 `killed=1` 与 `parent_conversation_id` 非空的子会话；未装 Antigravity 的机器零工作。

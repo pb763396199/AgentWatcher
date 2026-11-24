@@ -218,7 +218,7 @@ pub fn session_list(
 /// `codex://threads/<uuid>`（Codex 桌面端的跳转深链）与裸 UUID（suggest 链路同口径）
 /// 都收敛，其余形态原样返回。session show / session usage / handoff export 共用，
 /// 让 find_session 与 session_usage_detail 两条解析路拿到同一规范形态。
-/// 裸 UUID 一律按 Codex 解释；不命中就照常 session_not_found，不做多 provider 猜测。
+/// 裸 UUID 先按 Codex 解释；不命中时 find_session 末尾会按自然键跨 provider 兜底（2026-11-24 用户拍板）。
 /// 注意 codex_session_key 对「任何以 UUID 结尾的串」都放行（如别家应用的 URL），
 /// 这里先限定三种明确形态再交它做形状校验，不把无关串吸进 codex 命名空间。
 fn normalize_lookup_id(id: &str) -> String {
@@ -261,14 +261,45 @@ fn find_session(id: &str) -> Option<AgentSession> {
             }
         }
     }
-    if let Some(session) = scan_sessions_blocking(None)
-        .into_iter()
+    let default_sessions = scan_sessions_blocking(None);
+    if let Some(session) = default_sessions
+        .iter()
         .find(|session| session.id == trimmed)
     {
-        return Some(session);
+        return Some(session.clone());
     }
     // 默认参数查不到：会话可能已归档或在 30 天窗口外，定向兜底再查一次。
-    lookup_session_full_history(trimmed)
+    if let Some(session) = lookup_session_full_history(trimmed) {
+        return Some(session);
+    }
+    // 自然键兜底（用户拍板 2026-11-24）：裸 UUID 按 Codex 解释、带前缀定向查都落空时，
+    // 按「去掉 provider: 前缀的自然键」继续找，返回会话的 id 自带真实 provider 前缀。
+    // 两档：① 复用上面的默认窗口扫描（近 7 天，覆盖刚聊过的会话，零额外扫描）；
+    // ② SQLite 系 provider 逐个按 <provider>:<key> 走各自的定向全历史查找（索引直查，
+    // 覆盖更早的会话）。copilot/claude 的窗口外会话不在此档——自然键是长 UUID 极少被
+    // 裸引，需要时用带前缀 ID 或 session list --active-days 0。
+    let natural_key = trimmed
+        .split_once(':')
+        .map(|(_, key)| key)
+        .unwrap_or(trimmed);
+    if natural_key.is_empty() || natural_key.contains(':') {
+        return None;
+    }
+    if let Some(session) = default_sessions.iter().find(|session| {
+        session
+            .id
+            .split_once(':')
+            .map(|(_, natural)| natural == natural_key)
+            .unwrap_or(false)
+    }) {
+        return Some(session.clone());
+    }
+    for provider in ["zcode", "opencode", "workbuddy", "antigravity", "codex"] {
+        if let Some(session) = lookup_session_full_history(&format!("{provider}:{natural_key}")) {
+            return Some(session);
+        }
+    }
+    None
 }
 
 /// id 前缀里认识的 provider 名单；不认识的前缀直接走全量扫描与兜底。
@@ -324,7 +355,7 @@ pub fn session_show(id: &str, content: bool) {
         output::finish_failure(
             "session show",
             "session_not_found",
-            format!("找不到会话 {id}，先跑 session list 拿有效 ID"),
+            format!("找不到会话 {id}：已按 provider 前缀精确查并按自然键跨 provider 兜底；先跑 session list 拿有效 ID（形如 antigravity:<id>）"),
         );
     };
     let mut data = serde_json::json!({ "session": serialize_session(&session) });
@@ -367,7 +398,7 @@ pub fn session_usage(id: &str) {
         output::finish_failure(
             "session usage",
             "session_not_found",
-            format!("找不到会话 {id}，先跑 session list 拿有效 ID"),
+            format!("找不到会话 {id}：已按 provider 前缀精确查并按自然键跨 provider 兜底；先跑 session list 拿有效 ID（形如 antigravity:<id>）"),
         );
     }
     let detail = session_usage_detail(lookup);
@@ -389,7 +420,7 @@ pub fn handoff_export(id: &str) {
         output::finish_failure(
             "handoff export",
             "session_not_found",
-            format!("找不到会话 {id}，先跑 session list 拿有效 ID"),
+            format!("找不到会话 {id}：已按 provider 前缀精确查并按自然键跨 provider 兜底；先跑 session list 拿有效 ID（形如 antigravity:<id>）"),
         );
     };
     let request = handoff_request_for(&session);
