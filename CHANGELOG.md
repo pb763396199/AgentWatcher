@@ -1,11 +1,8 @@
 # Changelog
 
-## 未发布
-
-- 修 CLI 裸自然键查不到非 Codex 会话的问题（用户拍板 2026-11-24：裸 UUID 也要能查）：`session show/usage`、`handoff export`、`suggest` 等按 ID 查询的命令，在 provider 前缀精确查与 Codex 归一化解释都落空后，新增自然键兜底——先复用默认窗口扫描（近 7 天，零额外扫描），再对 zcode/opencode/workbuddy/antigravity/codex 逐个走定向全历史查找（索引直查）。典型场景：Antigravity 会话 `ffc7544b-…` 用裸 UUID 查询原先报 session_not_found，现在命中并返回 `antigravity:ffc7544b-…`（id 自带真实前缀）；release 构建实测 5.5 秒（即默认窗口扫描本身的成本，兜底零额外开销）。copilot/claude 的窗口外裸键不在兜底档（长 UUID 极少被裸引），not_found 文案同步提示前缀形态。
-
 ## v0.1.12 - 2026-11-23
 
+- 【2026-11-24 热修，原地覆盖本 zip】修 CLI 裸自然键查不到非 Codex 会话的问题（用户拍板：裸 UUID 也要能查）：`session show/usage`、`handoff export`、`suggest` 等按 ID 查询的命令，在 provider 前缀精确查与 Codex 归一化解释都落空后，按自然键兜底——先复用默认窗口扫描（近 7 天，零额外扫描），再对 zcode/opencode/workbuddy/antigravity/codex 逐个走定向全历史查找（索引直查）。典型场景：Antigravity 会话 `ffc7544b-…` 裸查原先报 session_not_found，现在命中并返回 `antigravity:ffc7544b-…`；release 构建实测 5.5 秒（即默认窗口扫描本身的成本）。copilot/claude 的窗口外裸键不在兜底档，not_found 文案同步提示前缀形态。
 - 新增第 8 个会话 provider `antigravity`（徽标 AG）：接入 Google Antigravity 桌面端本机数据（`~/.gemini/antigravity`：`conversation_summaries.db` 会话清单 + `conversations/<会话id>.db` 正文）。正文 `steps.step_payload` 是无 schema 的 protobuf，宿主用自研裸 wire-format 遍历器按字段号取值（不引 schema 依赖，字段错位时该项降级为 null 不崩）：状态卡片（waiting=尾部 `ask_question` 未闭合、running=清单 `CASCADE_RUN_STATUS_RUNNING/BUSY/CANCELING` 且内容时间戳 10 分钟内——状态列会滞留，429 停掉的会话实测仍标 RUNNING，超窗按 idle）、悬浮预览（用户/AI 正文）、用量（轮次/模型调用/工具调用全量计数 + token 桶累加 + topTools）、`get_session_usage_detail` 懒加载。官方无会话级深链（`antigravity://` 只用于登录回调），点击返回明确提示（ZCode 同款口径）；接续照 ZCode 强口径导出可读 Markdown 到 `handoff-sources\antigravity\`（正文库是 protobuf 二进制不能直读）；打包带 conversations 库原件与清单行 JSON。CLI：`session list/show/usage` 同步支持（`--provider antigravity`、`antigravity:<会话id>`），技能分发宿主表新增 `~/.gemini/config/skills`。跳过 `killed=1` 与 `parent_conversation_id` 非空的子会话；未装 Antigravity 的机器零工作。
 - 下线 GUI 的工作流总控入口（用户拍板：本阶段以 CLI 跑通闭环为主线，UI 不再做工作流迭代）：移除标题栏「工作流总控」按钮、只读诊断窗（`ui/index.html`）与 `workflow_snapshot` / `workflow_human_action` 两个 tauri command 及其注册；`test:tauri:flow -- workflow` 真实桌面流程同步删除。workflow 服务与全部 CLI 命令不受影响，需要 UI 时从 git 历史恢复。
 - 持久工作流服务：SQLite 作为路线、执行、交付与授权的事实源（`src-tauri/src/workflow/`），CLI 新增 `workflow apply/snapshot/guide/next/watch` 与 `service status|start|stop`，技能文档升 v5，GUI 增只读工作流窗；通用实现零插件可运行，具体业务归独立插件。
@@ -57,9 +54,9 @@
 
 发布包：`AgentWatcher-v0.1.12-windows-x64.zip`
 
-SHA256：`61D942FF1901C649CF50817093C0A3E92ECBBFDD062CA27FB01F8B88B5452663`
+SHA256：`6A2D9787E1B6B27577A87C6E0B629C2B052D5281A7B89964CBB254A6FF119437`
 
-验证：`cargo test --manifest-path src-tauri/Cargo.toml`（lib 196 + CLI 单元 8 + 契约 14 + 分类学 21 全通过，含 Antigravity 16 项单测与 lookup 列序回归锁）、`npm run test:tauri:flow -- antigravity-session`（真实 Tauri 壳：真实卡片/徽标 AG/点击明确提示，合入 dev 后复跑通过）、`npm run test:tauri:smoke`、Bridge 语法与 handoff 路由测试、`git diff --check`、`npm run package:exe`；最终 VSIX 重复安装两次仅稳定 ID `agentwatcher.agentwatcher-vscode-session-bridge@0.1.12`（无任何 safe*）；发布目录 EXE 独立启动实证；CLI `session show antigravity:<id>` 真实数据端到端通过。已知限制：Antigravity 的 token 桶语义按字段位置推断（f9 四桶），模型名透出内部枚举原值；等回复（waiting）判定按 protobuf 结构推断，真实 ask_question 样本待日常使用观察；四组合（中英文×明暗）人工界面核验经用户授权跳过（自动流程覆盖中文+默认主题）。
+验证：`cargo test --manifest-path src-tauri/Cargo.toml`（lib 196 + CLI 单元 8 + 契约 14 + 分类学 21 全通过，含 Antigravity 16 项单测与 lookup 列序回归锁）、`npm run test:tauri:flow -- antigravity-session`（真实 Tauri 壳：真实卡片/徽标 AG/点击明确提示，合入 dev 后复跑通过）、`npm run test:tauri:smoke`、Bridge 语法与 handoff 路由测试、`git diff --check`、`npm run package:exe`；最终 VSIX 重复安装两次仅稳定 ID `agentwatcher.agentwatcher-vscode-session-bridge@0.1.12`（无任何 safe*）；发布目录 EXE 独立启动实证；CLI `session show antigravity:<id>` 真实数据端到端通过。热修追加：lib 196 / taxonomy 21 / contract 14 复跑全绿，发布包内 CLI 裸 UUID `ffc7544b-…` 实测命中 `antigravity:ffc7544b-…`，发布目录 EXE 独立启动复验。已知限制：Antigravity 的 token 桶语义按字段位置推断（f9 四桶），模型名透出内部枚举原值；等回复（waiting）判定按 protobuf 结构推断，真实 ask_question 样本待日常使用观察；四组合（中英文×明暗）人工界面核验经用户授权跳过（自动流程覆盖中文+默认主题）。
 
 ## v0.1.11 - 2026-11-06
 
